@@ -6,7 +6,7 @@ import { openStore } from './store.mjs';
 
 const config = configuration(process.env, { demo: process.argv.includes('--demo') });
 const store = openStore(config.database);
-if (config.demo) await loadDemo(store);
+if (config.demo) await loadDemo(store, config.timeZone);
 cleanExpired(store);
 const server = createApp(store, config);
 const cleanup = setInterval(() => {

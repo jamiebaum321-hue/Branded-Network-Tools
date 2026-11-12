@@ -1,6 +1,18 @@
 # MCP and the Claude job
 
-The app exposes an authenticated Streamable HTTP endpoint at `https://<app-host>/mcp`. Use the app URL as the resource identifier, including `/mcp`. The Claude scheduled job uses an app-issued bearer credential. Interactive Claude or ChatGPT users use read-only OAuth identities when the operator enables OAuth.
+The app exposes an authenticated Streamable HTTP endpoint at `https://<app-host>/mcp`. Use the app URL as the resource identifier, including `/mcp`. The Claude scheduled job uses an app-issued bearer credential. A manager working in Claude or ChatGPT signs in with an OAuth identity when the operator enables OAuth.
+
+## Find matches for a client
+
+This is the flow a manager runs from a chat with Claude. It needs this app’s connector plus the manager’s own HubSpot, email and Teams connectors.
+
+1. In the app, open the client, go to **Matches** and choose **Find matches with Claude**. Copy the prompt. The same prompt is available inside Claude as the `find_matches` prompt, which takes the client’s name.
+2. Claude calls `get_matching_brief`. It returns what the client sells, their ideal customer profile, the buyers to reach, priority targets, and everyone to leave out: current customers, deals in progress, competitors, named exclusions, and people already matched or already in the introduction pipeline.
+3. Claude searches the manager’s other tools for companies and people who fit.
+4. Claude calls `save_matches` with up to 25 matches per call. Each needs `company`, `reason` and `source`. `person`, `title`, `email`, `relationship`, a 0–100 `score`, `fit`, `evidence` and `candidate_key` are optional. Without a key, the company and the person’s email or name identify the match, so a repeat run saves nothing twice. A match already on an introduction card is skipped.
+5. The matches appear on the client’s **Matches** tab as To review. A manager approves or dismisses each one in the app. Approval creates an introduction card.
+
+The monthly report works the same way. The `build_monthly_report` prompt, or **Build with Claude** on the report, has Claude read `get_monthly_report` and log each post, episode, introduction or email with `add_report_entry`. Each entry carries a stable `source_key`, such as the post URL. Saving the same key again refreshes its numbers. Once a manager edits an entry, later Claude saves leave it alone.
 
 ## Configure the scheduled job
 
@@ -20,8 +32,11 @@ Run the team’s scheduled job twice a day to start. Keep the timing, mailbox cu
 | `list_pipeline_cards`, `get_pipeline_card` | Card state, owner, stage and entry time, last touch, next step, open follow-up, fit reason and draft status. |
 | `list_due_followups` | Due or overdue occurrences with a follow-up ID and available draft ID and status. |
 | `list_card_activity` | Recorded sends, replies, notes, introductions, drafts and stage changes. Includes occurrence time, logged time, actor and source references where available. |
-| `list_suggested_leads` | Searchable proposals with status, source, fit, evidence, relationship and score. |
-| `find_clients` | Client IDs in the caller’s scope. |
+| `list_suggested_leads` | Saved matches with status, source, fit, evidence, relationship and score. |
+| `find_clients` | Clients in the caller’s scope by name, with ID, lifecycle stage, owner and open counts. |
+| `get_client_profile` | Contact details, lifecycle stage and the latest onboarding answers. |
+| `get_matching_brief` | The ideal customer profile, buyers, priority targets and everyone to exclude, shaped for a match search. |
+| `get_monthly_report` | Logged work, pipeline activity and totals for a month. Omit `period` for the current month. |
 | `list_onboarding_submissions`, `get_onboarding_submission` | Archived versions and structured answers with source references. Omit `submission_id` to fetch the latest submission by submission date. |
 | `get_onboarding_pdf_link` | A PDF URL that staff can open with app sign-in and access to the client. |
 | `list_events` | Cursor-based feed of `follow_up_due`, `reply_logged`, `stage_changed` and `onboarding_submitted`. Job credentials also receive the authorized audience. |
@@ -34,6 +49,10 @@ Run the team’s scheduled job twice a day to start. Keep the timing, mailbox cu
 | `log_sent_email` | `card_id`, `mailbox_scope`, `outlook_message_id`, `sent_at` | `subject`, `body` excerpt, `message_reference`, `draft_id` when verified as the draft actually sent |
 | `save_draft` | `card_id`, one of `followup_id` or `draft_slot`, `subject`, `body` | `recipient`, `mailbox_scope` and `outlook_message_id` for a mail-derived draft |
 | `add_suggested_lead` | `client_id`, `company`, `reason`, `source`, `fit`, `evidence`, `branded_relationship`, `score`, `candidate_key` | `person`, `title`, verified `email`, `mailbox_scope` and `outlook_message_id` for a mail-derived lead |
+| `save_matches` | `client_id`, `matches` (1 to 25, each with `company`, `reason`, `source`) | Per match: `person`, `title`, `email`, `relationship`, `score`, `fit`, `evidence`, `candidate_key` |
+| `add_report_entry` | `client_id`, `source_key`, `kind`, `occurred_on` (YYYY-MM-DD), `title` | `detail`, `channel`, `contact`, `url`, `metrics` |
+
+`kind` is one of `introduction`, `meeting`, `social`, `podcast`, `newsletter`, `email`, `event`, `press` or `other`. `metrics` holds whole numbers for `impressions`, `likes`, `comments`, `shares`, `clicks`, `listeners`, `recipients`, `opens` and `attendees`. Numbers that do not belong to the entry’s kind are dropped.
 
 Use RFC 3339 timestamps with an offset or `Z`. `evidence` is an array of objects with `source`, `detail` and optional `reference`. Reuse a canonical mailbox scope and immutable Outlook message ID across polls and imports. The app returns the original saved result for a replay. One stable draft slot identifies one draft on a card. One stable candidate key identifies one lead for a client and preserves its review status across rediscovery. A lead is created as pending review. Approval, dismissal and stage moves require a staff account in the app.
 
@@ -49,10 +68,10 @@ curl --request POST "$APP_ORIGIN/mcp" \
 
 Use the negotiated `MCP-Protocol-Version` header on subsequent requests. Send the `notifications/initialized` notification and then use `tools/list` for input schemas and `tools/call` to invoke a tool. Inspect the returned `isError` and status as well as the HTTP response. This endpoint returns JSON responses and works without a persistent transport session.
 
-## Configure interactive read-only access
+## Configure interactive access
 
-1. Register this MCP resource with a team-owned OAuth authorization server that provides client registration or pre-registration supported by the chosen Claude or ChatGPT client, authorization-code flow with PKCE, and token introspection. Configure `MCP_ISSUER`, `MCP_INTROSPECTION_URL`, `MCP_INTROSPECTION_CLIENT_ID` and `MCP_INTROSPECTION_CLIENT_SECRET` in the app. The authorization server must issue `pipeline:read` tokens with the exact MCP resource URL as their audience and a stable `sub`.
-2. In **Admin → Accounts**, bind each approved reader’s OAuth subject to their active account. The app evaluates that account’s client permissions on each request. A normal member sees their assigned clients, and an admin sees all clients. The interactive identity receives only the read tools.
-3. Add the deployed HTTPS `/mcp` URL in the chosen client and authorize the approved reader. Verify `tools/list`, one permitted card, and denial of access to an unassigned client. If the client sends an `Origin` header, allow its exact trusted origin in `MCP_ALLOWED_ORIGINS`.
+1. Register this MCP resource with a team-owned OAuth authorization server that provides client registration or pre-registration supported by the chosen Claude or ChatGPT client, authorization-code flow with PKCE, and token introspection. Configure `MCP_ISSUER`, `MCP_INTROSPECTION_URL`, `MCP_INTROSPECTION_CLIENT_ID` and `MCP_INTROSPECTION_CLIENT_SECRET` in the app. The authorization server must issue `pipeline:read` tokens with the exact MCP resource URL as their audience and a stable `sub`. Add the `pipeline:write` scope for managers who should save matches and report entries from Claude.
+2. In **Admin → Accounts**, bind each approved reader’s OAuth subject to their active account. The app evaluates that account’s client permissions on each request. A normal member sees their assigned clients, and an admin sees all clients. With `pipeline:read` alone the identity receives only the read tools. With `pipeline:write` it also receives `save_matches` and `add_report_entry`. Mail logging and drafts stay with the scheduled job. Approvals and stage changes stay in the app.
+3. Add the deployed HTTPS `/mcp` URL in the chosen client and authorize the approved reader. Verify `tools/list`, one permitted client’s `get_matching_brief`, and denial of access to an unassigned client. If the client sends an `Origin` header, allow its exact trusted origin in `MCP_ALLOWED_ORIGINS`.
 
 The application exposes OAuth protected resource metadata at `/.well-known/oauth-protected-resource/mcp` when enabled. Configure authorization and registration on the OAuth server. Connector rollout and available authentication settings depend on the workspace. [Claude custom connector setup](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp) · [OpenAI custom MCP guide](https://developers.openai.com/api/docs/guides/custom-mcp-server) · [MCP authorization specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization)

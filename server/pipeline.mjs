@@ -1,5 +1,6 @@
 import { AppError, actorName, audit, canAccessClient, clientFor, clientScope, decode, digest, encode, id, iso, requireHuman, system } from './store.mjs';
 import { emit } from './events.mjs';
+import { advanceStage } from './lifecycle.mjs';
 import { choice, email, int, list, num, object, str, time, validate } from './validation.mjs';
 
 export const stages = ['to_contact', 'reached_out', 'in_conversation', 'closed'];
@@ -12,7 +13,7 @@ const cardCreate = object({ client_id: str(80), ...cardFields }, ['client_id', '
 const cardUpdate = object({ ...cardFields, version: int(1, 1000000000) }, ['version']);
 const bodyText = str(12000, 0);
 const draftFields = { subject: str(300), body: str(12000), recipient: str(254, 0) };
-const staffActivity = object({ kind: choice('sent', 'reply', 'note'), subject: str(300, 0), body: bodyText,
+const staffActivity = object({ kind: choice('sent', 'reply', 'note', 'introduction'), subject: str(300, 0), body: bodyText,
   occurred_at: str(40), mailbox_scope: str(160), outlook_message_id: str(1000), draft_id: str(80) }, ['kind']);
 
 export const mailToolFields = {
@@ -254,8 +255,10 @@ export function manualActivity(store, actor, cardId, input) {
   const data = validate(staffActivity, input);
   checkMailKey(data);
   if (data.kind === 'note' && (!data.body || data.outlook_message_id || data.draft_id)) throw new AppError(400, 'Enter a note.');
+  if (data.kind === 'introduction' && (data.outlook_message_id || data.draft_id)) throw new AppError(400, 'Log the email separately from the introduction.');
   if (data.draft_id && data.kind !== 'sent') throw new AppError(400, 'Link drafts to sent activity.');
   data.occurred_at = data.occurred_at ? time(data.occurred_at) : iso();
+  if (data.kind === 'introduction') data.detail = { status: 'Introduced' };
   return store.tx(() => {
     const card = cardFor(store, actor, cardId);
     return findMail(store, card, data) ?? appendActivity(store, actor, card, data);
@@ -456,6 +459,13 @@ export function listSuggestions(store, actor, input) {
   return { items: rows.slice(0, limit).map(presentSuggestion), next_offset: rows.length > limit ? offset + limit : null };
 }
 
+export function suggestionCounts(store, actor, clientId) {
+  const [scope, args] = clientScope(actor, 's.client_id');
+  const rows = store.all(`SELECT s.status,count(*) AS n FROM suggestions s WHERE (${scope}) AND (? IS NULL OR s.client_id=?)
+    GROUP BY s.status`, ...args, clientId ?? null, clientId ?? null);
+  return Object.fromEntries(['pending', 'approved', 'dismissed'].map(status => [status, rows.find(row => row.status === status)?.n ?? 0]));
+}
+
 // Called by MCP and one-time import inside a transaction.
 export function insertSuggestion(store, actor, data, createdAt = iso()) {
   const previous = store.get('SELECT id FROM suggestions WHERE client_id=? AND candidate_key=?', data.client_id, data.candidate_key);
@@ -497,6 +507,7 @@ export function decideSuggestion(store, actor, suggestionId, decision) {
       title: row.title, email: row.email, branded_relationship: row.branded_relationship,
       next_step: row.person && row.email ? 'Draft first outreach' : row.person ? 'Verify contact details' : 'Find the right contact' },
     { suggestionId: row.id, reason: row.reason });
+    if (decision === 'approved') advanceStage(store, actor, row.client_id, ['matching'], 'delivering', 'First match approved for outreach.');
     audit(store, actor, `suggestion.${decision}`, 'suggestion', row.id, row.client_id);
     return suggestionFor(store, actor, suggestionId);
   });

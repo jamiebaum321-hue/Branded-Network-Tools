@@ -1,7 +1,7 @@
 import { AppError, audit, clientScope, iso, requireHuman } from './store.mjs';
 import { refreshDue, stages } from './pipeline.mjs';
 
-export function today(store, actor) {
+export function today(store, actor, zone = 'UTC') {
   requireHuman(actor);
   const now = iso();
   refreshDue(store, now);
@@ -47,8 +47,15 @@ export function today(store, actor) {
       kind === 'drafts' ? `#draft-${row.id}` : kind === 'replies' ? `#activity-${row.id}` : '#draft'}`;
     groups[kind].push({ ...row, href });
   }
+  // Clients the manager owns that are waiting on them: a dated next step, a signed client to onboard, or a profile with no matches yet.
+  const accounts = store.all(`SELECT c.id,c.name AS company,c.stage,c.next_step,c.next_step_at AS at FROM clients c
+    WHERE c.owner_id=? AND (${scope}) AND c.stage NOT IN ('lost','churned') AND ((c.next_step_at IS NOT NULL AND c.next_step_at<=?)
+      OR c.stage='won' OR (c.stage='matching' AND NOT EXISTS (SELECT 1 FROM suggestions s WHERE s.client_id=c.id)))
+    ORDER BY c.next_step_at IS NULL,c.next_step_at,c.name COLLATE NOCASE LIMIT 40`, actor.id, ...params, localDate(new Date(now), zone))
+    .map(({ next_step: step, ...row }) => ({ ...row, person: '', href: `/clients/${row.id}${row.stage === 'matching' && !row.at ? '?tab=matches' : ''}`,
+      description: row.at ? step || 'Next step due' : row.stage === 'won' ? 'Start onboarding' : 'Profile ready. Find matches with Claude.' }));
   audit(store, actor, 'today.viewed', 'dashboard');
-  return { ...groups, now, reply_cursor: meta.cursor, more_replies: Boolean(meta.more) };
+  return { ...groups, accounts, now, reply_cursor: meta.cursor, more_replies: Boolean(meta.more) };
 }
 
 export function acknowledgeToday(store, actor, cursor) {
@@ -66,12 +73,12 @@ function parts(date, zone, withTime) {
   return Object.fromEntries(new Intl.DateTimeFormat('en-CA', fields).formatToParts(date).map(({ type, value }) => [type, value]));
 }
 
-function localDate(date, zone) {
+export function localDate(date, zone) {
   const p = parts(date, zone);
   return `${p.year}-${p.month}-${p.day}`;
 }
 
-function midnight(date, zone, addDays = 0) {
+export function midnight(date, zone, addDays = 0) {
   if (!/^\d{4}-\d\d-\d\d$/.test(date)) throw new AppError(400, 'Use a valid date.');
   const utc = new Date(`${date}T00:00:00.000Z`);
   if (!Number.isFinite(+utc) || utc.toISOString().slice(0, 10) !== date) throw new AppError(400, 'Use a valid date.');

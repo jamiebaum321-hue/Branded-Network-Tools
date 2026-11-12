@@ -2,8 +2,10 @@
   "version": 1,
   "namespace": "solutions-tracker-example",
   "clients": [
-    { "id": "client-01", "name": "Northline", "created_at": "2026-09-01T15:00:00Z" },
-    { "id": "client-02", "name": "Grove Kitchen", "created_at": "2026-09-03T15:00:00Z" }
+    { "id": "client-01", "name": "Northline", "created_at": "2026-09-01T15:00:00Z", "stage": "delivering", "monthly_value": 15000,
+      "contact_name": "Taylor Example", "contact_email": "taylor@example.test", "started_on": "2026-09-01" },
+    { "id": "client-02", "name": "Grove Kitchen", "created_at": "2026-09-03T15:00:00Z", "stage": "matching" },
+    { "id": "client-03", "name": "Kettle & Crate", "stage": "proposal", "next_step": "Walk through the proposal", "next_step_at": "2026-11-20" }
   ],
   "partners": [
     {
