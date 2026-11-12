@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+.data/
+*.sqlite*
+*.db*
+node_modules/
+__pycache__/
+*.pyc
+test-results/
+coverage/
