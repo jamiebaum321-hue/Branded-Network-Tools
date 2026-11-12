@@ -9,7 +9,6 @@ const chrome = document.querySelector('#shell');
 const dialog = document.querySelector('#dialog');
 const status = document.querySelector('#toast');
 let user = null;
-let demo = false;
 let zone = 'America/New_York';
 let context = null;
 let revision = 0;
@@ -132,7 +131,7 @@ function showError(error, focus = false) {
     user = null;
     if (dialog.open) dialog.close();
     chrome.replaceChildren();
-    show(signInPage(demo), true);
+    show(signInPage(), true);
     return;
   }
   const title = error.code === 404 ? 'Page not found' : error.code === 403 ? 'Access required' : 'Couldn’t open this page';
@@ -162,7 +161,7 @@ async function render({ focus = false } = {}) {
         wizard = { key, info, answers: info.draft, step: 0 };
       }
       html = intakePage(wizard.info, key, wizard.step, wizard.answers);
-    } else if (!user) html = signInPage(demo);
+    } else if (!user) html = signInPage();
     else if (path === '/' || path === '/signin' || path === '/today') {
       if (path !== '/today') history.replaceState(null, '', '/today');
       todayResult = await api('/api/today');
@@ -671,6 +670,5 @@ try {
   const session = await api('/api/session');
   user = session.user;
   zone = session.time_zone;
-  demo = session.demo;
   await render();
 } catch (error) { showError(error, true); }

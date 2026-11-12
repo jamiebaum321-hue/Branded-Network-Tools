@@ -1,6 +1,6 @@
 # Import existing Solutions records
 
-The one-time import accepts version 1 JSON. Start with the [fictional example](../examples/seed.example.json). Keep the actual exports in private storage. Invite owners and reviewers before using their email addresses in the file.
+The one-time import accepts version 1 JSON: an object with `"version": 1`, a `namespace` string, and any of the record-set arrays below. Keep the actual exports in private storage. Invite owners and reviewers before using their email addresses in the file.
 
 | Record set | Required fields | Mapping |
 | --- | --- | --- |
@@ -13,6 +13,6 @@ The one-time import accepts version 1 JSON. Start with the [fictional example](.
 
 Normalize stages to `to_contact`, `reached_out`, `in_conversation` or `closed`. Include a closure outcome for closed cards and omit their follow-up dates. For incomplete legacy submissions, include the fields present in the export. For repeatable fields, map linked lists to the field’s `link` value. Use ISO timestamps with an offset or `Z`. Place earlier onboarding snapshots first for each client so local version numbers follow the submission history.
 
-Open **Admin → Import JSON**, choose the file and select **Preview import**. Verify added, skipped and invalid counts and resolve errors before applying. Each apply is atomic. The `namespace`, record set and stable source `id` identify a record across runs. Use the same identifiers on a retry. Imports with the same IDs preserve existing data and decisions. Use up to 5,000 records and 5 MiB per batch. Keep the same namespace for related batches and import referenced clients and partners first.
+Open **Admin → Import JSON**, choose the file and select **Preview import**. Verify added, skipped and invalid counts and resolve errors before applying. Each apply is atomic. The `namespace`, record set and stable source `id` identify a record across runs. Use the same identifiers on a retry. Imports with the same IDs preserve existing data and decisions. Use up to 5,000 records and 4 MiB per batch (Vercel's request size limit). Keep the same namespace for related batches and import referenced clients and partners first.
 
 Imported submissions and historical replies appear in the archive or card activity. Imported replies contribute to historical metrics. Existing due follow-ups and open suggestions enter the normal work queues. Reconcile sample cards, stage dates, past PDFs and pending leads before enabling the scheduled job.

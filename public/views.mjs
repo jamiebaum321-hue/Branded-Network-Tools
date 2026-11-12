@@ -20,12 +20,11 @@ function illustratedState(art, title, detail, action = '') {
     <div class="state-copy"><strong>${h(title)}</strong><p>${h(detail)}</p>${action}</div></div>`;
 }
 
-export function signInPage(demo) {
+export function signInPage() {
   return `<div class="auth-page"><div class="auth-content">${brand()}${heading('Sign in', 'Use your Branded Network account.')}
-    ${subjectForm('signin', '', `${field('Email', 'email', demo ? 'demo@branded.example' : '', { type: 'email', autocomplete: 'username', required: true })}
-    ${field('Password', 'password', demo ? 'Local-Demo-Pipeline-24' : '', { type: 'password', autocomplete: 'current-password', required: true, max: 256 })}
-    ${btn('Sign in', { kind: 'primary', type: 'submit', endGlyph: 'arrow' })}`)}
-    ${demo ? '<p class="demo-note muted small">Local demo · Fictional records reset when the server stops.</p>' : ''}</div>
+    ${subjectForm('signin', '', `${field('Email', 'email', '', { type: 'email', autocomplete: 'username', required: true })}
+    ${field('Password', 'password', '', { type: 'password', autocomplete: 'current-password', required: true, max: 256 })}
+    ${btn('Sign in', { kind: 'primary', type: 'submit', endGlyph: 'arrow' })}`)}</div>
     <div class="auth-art" aria-hidden="true"><img src="/assets/artwork/signal-welcome.webp" width="540" height="540" alt="" decoding="async"></div></div>`;
 }
 

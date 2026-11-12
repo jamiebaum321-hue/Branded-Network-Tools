@@ -1,22 +1,22 @@
 import { AppError, audit, clientScope, iso, requireHuman } from './store.mjs';
 import { refreshDue, stages } from './pipeline.mjs';
 
-export function today(store, actor) {
+export async function today(store, actor) {
   requireHuman(actor);
   const now = iso();
-  refreshDue(store, now);
+  await refreshDue(store, now);
   const [scope, params] = clientScope(actor, 'c.id');
-  const rows = store.all(`WITH
-    owner AS (SELECT ? AS id, ? AS now),
+  const rows = await store.all(`WITH
+    owner AS (SELECT ?::text AS id, ?::text AS now),
     accessible AS (SELECT c.id,c.name,c.owner_id FROM clients c WHERE ${scope}),
     bounds AS (SELECT (SELECT coalesce(max(seq),0) FROM activity) AS cutoff,
       (SELECT reply_cursor FROM today_visits WHERE user_id=owner.id) AS previous FROM owner),
     first_visit AS (SELECT min(seq)-1 AS cursor FROM (
       SELECT a.seq FROM activity a JOIN cards p ON p.id=a.card_id JOIN accessible c ON c.id=a.client_id, owner
-      WHERE p.owner_id=owner.id AND a.kind='reply' AND json_extract(a.detail,'$.imported') IS NOT 1 ORDER BY a.seq DESC LIMIT 40)),
+      WHERE p.owner_id=owner.id AND a.kind='reply' AND (a.detail::jsonb->'imported') IS DISTINCT FROM 'true'::jsonb ORDER BY a.seq DESC LIMIT 40) recent),
     replies AS (SELECT a.seq,a.id,a.card_id,p.person,p.company,a.subject,a.logged_at
       FROM activity a JOIN cards p ON p.id=a.card_id JOIN accessible c ON c.id=a.client_id, owner, bounds, first_visit
-      WHERE p.owner_id=owner.id AND a.kind='reply' AND json_extract(a.detail,'$.imported') IS NOT 1
+      WHERE p.owner_id=owner.id AND a.kind='reply' AND (a.detail::jsonb->'imported') IS DISTINCT FROM 'true'::jsonb
         AND a.seq>coalesce(bounds.previous,first_visit.cursor,bounds.cutoff)
         AND a.seq<=bounds.cutoff ORDER BY a.seq LIMIT 41),
     shown_replies AS (SELECT * FROM replies ORDER BY seq LIMIT 40),
@@ -32,8 +32,8 @@ export function today(store, actor) {
       FROM suggestions s JOIN accessible c ON c.id=s.client_id, owner
       WHERE s.status='pending' AND coalesce(s.reviewer_id,c.owner_id)=owner.id
       ORDER BY s.score DESC NULLS LAST,s.created_at,s.id LIMIT 40)
-    SELECT 'meta' AS kind, NULL AS id, NULL AS card_id, NULL AS person,NULL AS company,NULL AS description,
-      NULL AS at,NULL AS extra,NULL AS status,
+    SELECT 'meta' AS kind, NULL::text AS id, NULL::text AS card_id, NULL::text AS person,NULL::text AS company,NULL::text AS description,
+      NULL::text AS at,NULL::text AS extra,NULL::text AS status,
       CASE WHEN (SELECT count(*) FROM replies)>40 THEN (SELECT max(seq) FROM shown_replies) ELSE cutoff END AS cursor,
       ((SELECT count(*) FROM replies)>40) AS more FROM bounds
     UNION ALL SELECT 'followups',id,card_id,person,company,next_step,due_at,NULL,NULL,NULL,NULL FROM due
@@ -47,16 +47,16 @@ export function today(store, actor) {
       kind === 'drafts' ? `#draft-${row.id}` : kind === 'replies' ? `#activity-${row.id}` : '#draft'}`;
     groups[kind].push({ ...row, href });
   }
-  audit(store, actor, 'today.viewed', 'dashboard');
+  await audit(store, actor, 'today.viewed', 'dashboard');
   return { ...groups, now, reply_cursor: meta.cursor, more_replies: Boolean(meta.more) };
 }
 
-export function acknowledgeToday(store, actor, cursor) {
+export async function acknowledgeToday(store, actor, cursor) {
   requireHuman(actor);
-  const max = store.get('SELECT coalesce(max(seq),0) AS max FROM activity').max;
+  const max = (await store.get('SELECT coalesce(max(seq),0) AS max FROM activity')).max;
   if (!Number.isSafeInteger(cursor) || cursor < 0 || cursor > max) throw new AppError(400, 'Invalid reply cursor.');
-  store.run(`INSERT INTO today_visits VALUES(?,?) ON CONFLICT(user_id)
-    DO UPDATE SET reply_cursor=max(reply_cursor,excluded.reply_cursor)`, actor.id, cursor);
+  await store.run(`INSERT INTO today_visits VALUES(?,?) ON CONFLICT(user_id)
+    DO UPDATE SET reply_cursor=greatest(today_visits.reply_cursor,excluded.reply_cursor)`, actor.id, cursor);
   return { ok: true };
 }
 
@@ -93,7 +93,7 @@ function median(values) {
   return Math.round((values.length % 2 ? values[index] : (values[index - 1] + values[index]) / 2) * 10) / 10;
 }
 
-export function metrics(store, actor, input, zone, now = new Date()) {
+export async function metrics(store, actor, input, zone, now = new Date()) {
   const from = input.from || localDate(new Date(+now - 29 * 86400000), zone);
   const to = input.to || localDate(now, zone);
   const start = midnight(from, zone);
@@ -101,16 +101,16 @@ export function metrics(store, actor, input, zone, now = new Date()) {
   if (start >= end) throw new AppError(400, 'The start date must be before or equal to the end date.');
   const snapshotAt = new Date(Math.min(+now, end - 1)).toISOString();
   const [scope, params] = clientScope(actor, 'p.client_id');
-  const rows = store.all(`WITH snapshot AS (
+  const rows = await store.all(`WITH snapshot AS (
     SELECT h.*,row_number() OVER(PARTITION BY h.card_id ORDER BY h.recorded_at DESC,h.seq DESC) AS rn
     FROM card_states h JOIN cards p ON p.id=h.card_id
-    WHERE h.recorded_at<=? AND (${scope}) AND (? IS NULL OR p.client_id=?))
-    SELECT stage,entered_at,due_at FROM snapshot WHERE rn=1 AND (? IS NULL OR owner_id=?)`,
+    WHERE h.recorded_at<=? AND (${scope}) AND (?::text IS NULL OR p.client_id=?::text))
+    SELECT stage,entered_at,due_at FROM snapshot WHERE rn=1 AND (?::text IS NULL OR owner_id=?::text)`,
   snapshotAt, ...params, input.client_id ?? null, input.client_id ?? null, input.owner_id ?? null, input.owner_id ?? null);
   const [activityScope, activityParams] = clientScope(actor, 'a.client_id');
-  const counts = store.all(`SELECT kind,count(*) AS n FROM activity a
+  const counts = await store.all(`SELECT kind,count(*) AS n FROM activity a
     WHERE (${activityScope}) AND a.kind IN ('sent','reply') AND occurred_at>=? AND occurred_at<=?
-      AND (? IS NULL OR client_id=?) AND (? IS NULL OR owner_id=?) GROUP BY kind`, ...activityParams,
+      AND (?::text IS NULL OR client_id=?::text) AND (?::text IS NULL OR owner_id=?::text) GROUP BY kind`, ...activityParams,
   new Date(start).toISOString(), snapshotAt, input.client_id ?? null, input.client_id ?? null, input.owner_id ?? null, input.owner_id ?? null);
   return {
     from, to, snapshot_at: snapshotAt, contacts: rows.length,

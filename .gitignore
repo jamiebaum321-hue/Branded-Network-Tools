@@ -9,3 +9,5 @@ __pycache__/
 *.pyc
 test-results/
 coverage/
+.vercel-static/
+.vercel/

@@ -23,15 +23,15 @@ const definitions = {
     source_ref: str(600, 0), answers: object({}, []) }, ['id', 'client_id', 'submitted_at', 'answers']),
 };
 
-function accountId(store, address) {
+async function accountId(store, address) {
   if (!address) return undefined;
-  const row = store.get('SELECT id FROM users WHERE email=? AND enabled=1', email(address));
+  const row = await store.get('SELECT id FROM users WHERE email=? AND enabled=1', email(address));
   if (!row) throw new AppError(400, 'The specified owner or reviewer does not have an active account.');
   return row.id;
 }
 
-function imported(store, namespace, kind, sourceId) {
-  return store.get('SELECT local_id FROM imported_records WHERE namespace=? AND kind=? AND source_id=?', namespace, kind, sourceId)?.local_id;
+async function imported(store, namespace, kind, sourceId) {
+  return (await store.get('SELECT local_id FROM imported_records WHERE namespace=? AND kind=? AND source_id=?', namespace, kind, sourceId))?.local_id;
 }
 
 function normalizedInput(kind, raw) {
@@ -42,45 +42,45 @@ function normalizedInput(kind, raw) {
   return validated;
 }
 
-function writeRow(store, actor, namespace, kind, row) {
-  if (kind === 'clients') return insertClient(store, actor, { name: row.name, owner_id: accountId(store, row.owner_email) },
-    row.created_at ? time(row.created_at) : undefined).id;
-  const clientId = imported(store, namespace, 'clients', row.client_id);
+async function writeRow(store, actor, namespace, kind, row) {
+  if (kind === 'clients') return (await insertClient(store, actor, { name: row.name, owner_id: await accountId(store, row.owner_email) },
+    row.created_at ? time(row.created_at) : undefined)).id;
+  const clientId = await imported(store, namespace, 'clients', row.client_id);
   if (!clientId) throw new AppError(400, `Client reference ${row.client_id} was not found in this import namespace.`);
-  const client = clientFor(store, actor, clientId);
+  const client = await clientFor(store, actor, clientId);
   if (kind === 'onboarding_submissions') {
-    return insertSubmission(store, actor, clientId, row.answers, { imported: true, submittedAt: time(row.submitted_at),
-      formVersion: row.form_version, sourceRef: row.source_ref || `${namespace}:${row.id}` }).id;
+    return (await insertSubmission(store, actor, clientId, row.answers, { imported: true, submittedAt: time(row.submitted_at),
+      formVersion: row.form_version, sourceRef: row.source_ref || `${namespace}:${row.id}` })).id;
   }
   if (kind === 'suggested_leads') {
-    return insertSuggestion(store, actor, { ...row, client_id: clientId, reviewer_id: accountId(store, row.reviewer_email),
+    return (await insertSuggestion(store, actor, { ...row, client_id: clientId, reviewer_id: await accountId(store, row.reviewer_email),
       candidate_key: row.candidate_key ?? `${namespace}:${row.id}`, fit: row.fit ?? 'Unknown', evidence: row.evidence ?? [],
-      branded_relationship: row.branded_relationship ?? 'Unknown' }, row.created_at ? time(row.created_at) : undefined).id;
+      branded_relationship: row.branded_relationship ?? 'Unknown' }, row.created_at ? time(row.created_at) : undefined)).id;
   }
-  const createPipelineCard = () => {
+  const createPipelineCard = async () => {
     if (!row.company) throw new AppError(400, 'A company is required when an introduction has no partner reference.');
     const createdAt = row.created_at ? time(row.created_at) : row.occurred_at ? time(row.occurred_at) : undefined;
     const enteredAt = row.entered_at ? time(row.entered_at) : createdAt;
     if (createdAt && enteredAt && enteredAt < createdAt) throw new AppError(400, 'The stage date is earlier than the card creation date.');
-    return insertCard(store, actor, { ...row, client_id: clientId, owner_id: accountId(store, row.owner_email) ?? client.owner_id,
+    return insertCard(store, actor, { ...row, client_id: clientId, owner_id: (await accountId(store, row.owner_email)) ?? client.owner_id,
       stage: row.stage ?? (kind === 'introductions' ? 'in_conversation' : 'to_contact') }, { createdAt, enteredAt, reason: row.fit_reason ?? '' });
   };
-  if (kind === 'partners') return createPipelineCard().id;
-  const partnerId = row.partner_id ? imported(store, namespace, 'partners', row.partner_id) : null;
+  if (kind === 'partners') return (await createPipelineCard()).id;
+  const partnerId = row.partner_id ? await imported(store, namespace, 'partners', row.partner_id) : null;
   if (row.partner_id && !partnerId) throw new AppError(400, `Partner reference ${row.partner_id} was not found.`);
-  const pipelineCard = partnerId ? store.get('SELECT * FROM cards WHERE id=? AND client_id=?', partnerId, clientId) : createPipelineCard();
+  const pipelineCard = partnerId ? await store.get('SELECT * FROM cards WHERE id=? AND client_id=?', partnerId, clientId) : await createPipelineCard();
   if (!pipelineCard) throw new AppError(400, 'The partner reference belongs to a different client.');
-  if (kind === 'outreach_activity') return importOutreach(store, actor, pipelineCard, { ...row, occurred_at: time(row.occurred_at) }).id;
-  return appendActivity(store, actor, pipelineCard, { kind: 'introduction', body: row.notes ?? '',
+  if (kind === 'outreach_activity') return (await importOutreach(store, actor, pipelineCard, { ...row, occurred_at: time(row.occurred_at) })).id;
+  return (await appendActivity(store, actor, pipelineCard, { kind: 'introduction', body: row.notes ?? '',
     occurred_at: row.occurred_at ? time(row.occurred_at) : row.created_at ? time(row.created_at) : undefined,
-    detail: { status: row.status ?? '', source_id: row.id, outcome: row.outcome ?? '' } }, { emitReply: false }).id;
+    detail: { status: row.status ?? '', source_id: row.id, outcome: row.outcome ?? '' } }, { emitReply: false })).id;
 }
 
 class Preview extends Error {
   constructor(result) { super('Import preview'); this.result = result; }
 }
 
-export function importSeed(store, actor, input, preview = false) {
+export async function importSeed(store, actor, input, preview = false) {
   requireAdmin(actor);
   const kinds = Object.keys(definitions);
   if (!input || typeof input !== 'object' || Array.isArray(input) || input.version !== 1
@@ -93,37 +93,37 @@ export function importSeed(store, actor, input, preview = false) {
     throw new AppError(413, 'Use a maximum of 5,000 records per batch. Keep the same namespace across batches.');
   }
   try {
-    return store.tx(() => {
+    return await store.tx(async () => {
       const result = { namespace, counts: {}, errors: [] };
       for (const kind of kinds) {
         const counts = result.counts[kind] = { added: 0, skipped: 0, invalid: 0 };
         const seen = new Set();
         const rows = input[kind] ?? [];
         for (let index = 0; index < rows.length; index++) {
-          store.db.exec('SAVEPOINT seed_row');
+          await store.exec('SAVEPOINT seed_row');
           try {
             const row = normalizedInput(kind, rows[index]);
             if (seen.has(row.id)) throw new AppError(400, 'The export contains a duplicate source ID.');
             seen.add(row.id);
-            if (imported(store, namespace, kind, row.id)) counts.skipped++;
+            if (await imported(store, namespace, kind, row.id)) counts.skipped++;
             else {
-              const localId = writeRow(store, actor, namespace, kind, row);
-              store.run('INSERT INTO imported_records VALUES(?,?,?,?)', namespace, kind, row.id, localId);
+              const localId = await writeRow(store, actor, namespace, kind, row);
+              await store.run('INSERT INTO imported_records VALUES(?,?,?,?)', namespace, kind, row.id, localId);
               counts.added++;
             }
           } catch (error) {
-            store.db.exec('ROLLBACK TO seed_row');
+            await store.exec('ROLLBACK TO seed_row');
             if (!(error instanceof AppError)) throw error;
             counts.invalid++;
             if (result.errors.length < 100) result.errors.push({ set: kind, row: index + 1, message: error.message });
           } finally {
-            store.db.exec('RELEASE seed_row');
+            await store.exec('RELEASE seed_row');
           }
         }
       }
       if (preview) throw new Preview(result);
       if (result.errors.length) throw new AppError(400, 'Fix the import errors before loading the data.', result);
-      audit(store, actor, 'seed.imported', 'import', null, null, { namespace, counts: result.counts });
+      await audit(store, actor, 'seed.imported', 'import', null, null, { namespace, counts: result.counts });
       return result;
     });
   } catch (error) {

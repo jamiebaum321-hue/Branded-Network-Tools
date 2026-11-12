@@ -1,12 +1,27 @@
-import { test } from 'node:test';
+import { test as nodeTest } from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { mkdtempSync, rmSync, rmdirSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
-import { bootstrap } from '../server/accounts.mjs';
+import { randomBytes } from 'node:crypto';
+import pg from 'pg';
+import { bootstrap, bootstrapFromEnv } from '../server/accounts.mjs';
 import { createApp } from '../server/app.mjs';
 import { openStore } from '../server/store.mjs';
+
+// Each test gets its own Postgres schema in TEST_DATABASE_URL, dropped afterwards.
+const databaseUrl = process.env.TEST_DATABASE_URL;
+const test = (name, fn) => nodeTest(name, { skip: !databaseUrl && 'Set TEST_DATABASE_URL to a disposable Postgres database.' }, fn);
+
+async function isolatedSchema(t) {
+  const schema = `test_${randomBytes(6).toString('hex')}`;
+  const admin = new pg.Client({ connectionString: databaseUrl });
+  await admin.connect();
+  await admin.query(`CREATE SCHEMA ${schema}`);
+  t.after(async () => {
+    await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+    await admin.end();
+  });
+  return schema;
+}
 
 const adminEmail = 'admin@example.test';
 const password = 'Example-Test-Password-24';
@@ -14,10 +29,9 @@ const past = () => new Date(Date.now() - 86400000).toISOString();
 const future = () => new Date(Date.now() + 86400000).toISOString();
 
 async function fixture(t) {
-  const store = openStore(':memory:');
-  const config = { production: false, demo: false, origin: new URL('http://127.0.0.1:1'), timeZone: 'America/New_York',
-    linkSecret: 'disposable-test-link-secret-0123456789', oauth: null, mcpOrigins: new Set(),
-    pdfPython: process.env.PDF_PYTHON || (process.platform === 'win32' ? 'python' : 'python3'), pdfFont: process.env.PDF_FONT_PATH };
+  const store = await openStore(databaseUrl, { schema: await isolatedSchema(t) });
+  const config = { production: false, origin: new URL('http://127.0.0.1:1'), timeZone: 'America/New_York',
+    linkSecret: 'disposable-test-link-secret-0123456789', oauth: null, mcpOrigins: new Set(), trustProxy: false, cronSecret: null };
   const server = createApp(store, config);
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
@@ -27,7 +41,7 @@ async function fixture(t) {
     const closed = new Promise(resolve => server.close(resolve));
     server.closeAllConnections();
     await closed;
-    store.db.close();
+    await store.close();
   });
   const request = (path, { method = 'GET', body, cookie, headers = {} } = {}) => fetch(new URL(path, config.origin), {
     method, headers: { ...(cookie ? { Cookie: cookie } : {}), ...(body !== undefined ? { 'Content-Type': 'application/json', Origin: config.origin.origin } : {}), ...headers },
@@ -39,7 +53,7 @@ async function fixture(t) {
     assert.equal(res.status, expected, `${path}: ${JSON.stringify(result)}`);
     return { result, res };
   };
-  const setup = bootstrap(store, 'First Admin', adminEmail);
+  const setup = await bootstrap(store, 'First Admin', adminEmail);
   const activate = async (link) => {
     const { result, res } = await check(`/api${link}`, { method: 'POST', body: { password } });
     return { user: result.user, cookie: res.headers.get('set-cookie').split(';')[0] };
@@ -277,20 +291,26 @@ test('one-time seed preview and atomic repeat import across clients', async t =>
   assert.equal((await f.admin('/api/metrics')).replies, 1);
 });
 
-test('persistent store keeps accounts across restarts and only runs migrations once', () => {
-  const temp = mkdtempSync(join(tmpdir(), 'branded-network-test-'));
-  const file = join(temp, 'test.sqlite');
+test('persistent store keeps accounts across restarts and only runs migrations once', async t => {
+  const schema = await isolatedSchema(t);
+  const first = await openStore(databaseUrl, { schema });
+  await bootstrap(first, 'Persistent Admin', adminEmail);
+  await first.close();
+  const reopened = await openStore(databaseUrl, { schema });
   try {
-    const first = openStore(file);
-    bootstrap(first, 'Persistent Admin', adminEmail);
-    first.db.close();
-    const reopened = openStore(file);
-    try {
-      assert.equal(reopened.get('SELECT email FROM users').email, adminEmail);
-      assert.equal(reopened.get('PRAGMA user_version').user_version, 1);
-    } finally { reopened.db.close(); }
-  } finally {
-    for (const suffix of ['', '-wal', '-shm']) rmSync(`${file}${suffix}`, { force: true });
-    rmdirSync(temp);
-  }
+    assert.equal((await reopened.get('SELECT email FROM users')).email, adminEmail);
+    assert.deepEqual((await reopened.all('SELECT version FROM schema_migrations')).map(row => row.version), [1]);
+  } finally { await reopened.close(); }
+});
+
+test('environment bootstrap issues one known setup link until an admin sets a password', async t => {
+  const f = await fixture(t);
+  const env = { BOOTSTRAP_ADMIN_NAME: 'Env Admin', BOOTSTRAP_ADMIN_EMAIL: 'env@example.test', BOOTSTRAP_SETUP_TOKEN: 'A'.repeat(43) };
+  assert.equal(await bootstrapFromEnv(f.store, env), false);
+  const schema = await isolatedSchema(t);
+  const store = await openStore(databaseUrl, { schema });
+  t.after(() => store.close());
+  assert.equal(await bootstrapFromEnv(store, env), true);
+  assert.equal(await bootstrapFromEnv(store, env), false);
+  assert.equal((await store.get('SELECT count(*) AS n FROM setup_tokens')).n, 1);
 });

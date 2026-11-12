@@ -64,3 +64,12 @@ export function readSession(req, config) {
 export function sessionCookie(config, value, maxAge) {
   return `${cookieName(config)}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${config.origin.protocol === 'https:' ? '; Secure' : ''}`;
 }
+
+// Vercel replaces X-Forwarded-For with the real client address; elsewhere only trust it when configured.
+export function clientIp(req, config) {
+  if (config.trustProxy) {
+    const forwarded = req.headers['x-forwarded-for']?.split(',')[0]?.trim();
+    if (forwarded) return forwarded;
+  }
+  return req.socket?.remoteAddress ?? 'unknown';
+}

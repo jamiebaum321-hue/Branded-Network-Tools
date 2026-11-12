@@ -5,7 +5,7 @@ import { eventTypes, listEvents } from './events.mjs';
 import { addSuggestionSchema, cardFor, dueFollowups, listActivity, listCards, listSuggestions, logReplySchema, logSentSchema,
   mcpAddSuggestion, mcpLogMail, mcpSaveDraft, refreshDue, saveDraftSchema, stages } from './pipeline.mjs';
 import { choice, int, list, object, str, validate } from './validation.mjs';
-import { empty, json, readJson } from './http.mjs';
+import { clientIp, empty, json, readJson } from './http.mjs';
 
 const versions = ['2025-11-25', '2025-06-18', '2025-03-26'];
 const paging = { limit: int(1, 100), offset: int(0, 1000000) };
@@ -17,7 +17,7 @@ const catalog = {
   list_pipeline_cards: tool('List authorized pipeline cards with optional client, owner, stage and search filters.', object(cardFilters, []),
     (s, a, d) => listCards(s, a, d)),
   get_pipeline_card: tool('Read one pipeline card, its saved fit reason and follow-up state.', object({ card_id: str(80) }),
-    (s, a, d) => ({ card: cardFor(s, a, d.card_id) })),
+    async (s, a, d) => ({ card: await cardFor(s, a, d.card_id) })),
   list_due_followups: tool('List current due or overdue follow-ups and their draft status.', object(cardFilters, []),
     (s, a, d) => dueFollowups(s, a, d)),
   list_card_activity: tool('Read ordered sent, reply, note, stage, draft and introduction activity for one card.',
@@ -33,19 +33,19 @@ const catalog = {
     (s, a, d) => listSubmissions(s, a, d.client_id, d)),
   get_onboarding_submission: tool('Read the latest or a selected saved onboarding response, including the ICP and already named targets.',
     object({ client_id: str(80), submission_id: str(80) }, ['client_id']),
-    (s, a, d) => ({ submission: getSubmission(s, a, d.client_id, d.submission_id) })),
+    async (s, a, d) => ({ submission: await getSubmission(s, a, d.client_id, d.submission_id) })),
   get_onboarding_pdf_link: tool('Get a PDF link for the selected onboarding response. Opening it requires app sign-in and client access.',
     object({ client_id: str(80), submission_id: str(80) }, ['client_id']),
-    (s, a, d, config) => {
-      const row = getSubmission(s, a, d.client_id, d.submission_id);
+    async (s, a, d, config) => {
+      const row = await getSubmission(s, a, d.client_id, d.submission_id);
       return { url: new URL(relativePdf(row.client_id, row.id), config.origin).href, version: row.version };
     }),
   list_events: tool('Read events after a durable cursor. The caller manages email delivery and its own checkpoint.',
     object({ after: int(0, Number.MAX_SAFE_INTEGER), limit: paging.limit, types: list(choice(...eventTypes), 4), client_id: str(80) }, []),
-    (s, a, d, config) => {
-      if (d.client_id) clientFor(s, a, d.client_id);
-      refreshDue(s);
-      const page = listEvents(s, a, d);
+    async (s, a, d, config) => {
+      if (d.client_id) await clientFor(s, a, d.client_id);
+      await refreshDue(s);
+      const page = await listEvents(s, a, d);
       return { ...page, items: page.items.map(event => ({ ...event, url: new URL(event.href, config.origin).href })) };
     }),
   log_reply: tool('Record one received email on an authorized card, keyed by mailbox scope and stable Outlook message ID.', logReplySchema,
@@ -76,7 +76,7 @@ async function getActor(req, store, config) {
   if (!token) return null;
   if (token.startsWith('bnt_')) return jobActor(store, token);
   if (!config.oauth) return null;
-  rateLimit(store, `oauth:${req.socket.remoteAddress}`, 400, 60000);
+  await rateLimit(store, `oauth:${clientIp(req, config)}`, 400, 60000);
   const formEncode = (value) => new URLSearchParams({ v: value }).toString().slice(2);
   const credential = Buffer.from(`${formEncode(config.oauth.clientId)}:${formEncode(config.oauth.secret)}`).toString('base64');
   let result;
@@ -94,7 +94,7 @@ async function getActor(req, store, config) {
   const audiences = Array.isArray(result.aud) ? result.aud : [result.aud];
   if (!audiences.includes(new URL('/mcp', config.origin).href)) return null;
   if (typeof result.sub !== 'string' || !String(result.scope ?? '').split(/\s+/).includes('pipeline:read')) return false;
-  return oauthReader(store, result.sub) ?? false;
+  return (await oauthReader(store, result.sub)) ?? false;
 }
 
 function rpcError(res, id, code, message, status = 200) {
@@ -120,11 +120,11 @@ export async function mcpHttp(req, res, store, config) {
   let message;
   try { message = await readJson(req); }
   catch (error) { return rpcError(res, null, -32700, error.message, error.status ?? 400); }
-  if (actor.kind === 'claude' && !store.get('SELECT 1 FROM mcp_tokens WHERE id=? AND revoked_at IS NULL AND expires_at>?', actor.id, Date.now())) {
+  if (actor.kind === 'claude' && !await store.get('SELECT 1 FROM mcp_tokens WHERE id=? AND revoked_at IS NULL AND expires_at>?', actor.id, Date.now())) {
     return challenge(res, config);
   }
   if (actor.kind === 'user') {
-    actor = oauthReader(store, actor.oauthSubject);
+    actor = await oauthReader(store, actor.oauthSubject);
     if (!actor) return challenge(res, config, true);
   }
   if (!message || Array.isArray(message) || message.jsonrpc !== '2.0' || typeof message.method !== 'string') {
@@ -152,8 +152,8 @@ export async function mcpHttp(req, res, store, config) {
   if (!selected || (selected.write && actor.kind !== 'claude')) return rpcError(res, requestId, -32602, 'Tool is not available to this credential.');
   try {
     const args = validate(selected.schema, message.params.arguments ?? {});
-    const result = selected.run(store, actor, args, config);
-    if (!selected.write) audit(store, actor, 'mcp.read', 'mcp_tool', null, null, { tool: name });
+    const result = await selected.run(store, actor, args, config);
+    if (!selected.write) await audit(store, actor, 'mcp.read', 'mcp_tool', null, null, { tool: name });
     return finish({ content: [{ type: 'text', text: JSON.stringify(result) }], structuredContent: result });
   } catch (error) {
     if (!(error instanceof AppError)) throw error;

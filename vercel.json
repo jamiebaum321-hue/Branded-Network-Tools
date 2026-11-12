@@ -1,0 +1,24 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "node scripts/build-static.mjs",
+  "outputDirectory": ".vercel-static",
+  "regions": ["iad1"],
+  "functions": {
+    "api/index.mjs": {
+      "maxDuration": 60,
+      "includeFiles": "{public/**,server/schema.sql,server/fonts/**}"
+    }
+  },
+  "rewrites": [{ "source": "/(.*)", "destination": "/api/index" }],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "Referrer-Policy", "value": "no-referrer" },
+        { "key": "X-Frame-Options", "value": "DENY" }
+      ]
+    }
+  ],
+  "crons": [{ "path": "/api/cron/cleanup", "schedule": "17 7 * * *" }]
+}

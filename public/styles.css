@@ -323,7 +323,6 @@ progress::-moz-progress-bar { border-radius: 999px; background: linear-gradient(
 .auth-content .brand { margin-bottom: 24px; }
 .auth-content .heading { margin-bottom: 22px; }
 .auth-content form { gap: 16px; }
-.auth-content .demo-note { margin-top: 14px; }
 .auth-art { position: relative; isolation: isolate; display: grid; place-items: center; min-height: 150px; overflow: hidden; border-top: 1px solid #3b3067;
   background: radial-gradient(ellipse at 62% 43%, #7152c4, transparent 67%), linear-gradient(145deg, #302057, #17132f); }
 .auth-art::before { content: ''; position: absolute; z-index: -1; inset: 0; opacity: .82; background: url('/assets/accents/network-orbits.svg') center / cover no-repeat; }

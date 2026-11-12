@@ -14,7 +14,8 @@ import { attachMailId, board, cardDetail, completeFollowup, createCard, decideSu
 import { submissionPdf } from './pdf.mjs';
 import { importSeed } from './seed.mjs';
 import { boundedInt, choice, int, list, object, str, validate } from './validation.mjs';
-import { assertWebOrigin, empty, json, protect, readJson, readSession, sessionCookie } from './http.mjs';
+import { cleanExpired } from './accounts.mjs';
+import { assertWebOrigin, clientIp, empty, json, protect, readJson, readSession, sessionCookie } from './http.mjs';
 
 const assets = new Map(Object.entries({
   '/styles.css': ['styles.css', 'text/css; charset=utf-8'],
@@ -61,7 +62,7 @@ function boardQuery(url) {
     due: selectQuery(url, 'due', choice('due', 'scheduled')) };
 }
 
-function visibleOwners(store, actor) {
+async function visibleOwners(store, actor) {
   if (actor.role === 'admin') return store.all('SELECT id,name,enabled FROM users ORDER BY name');
   const [where, args] = clientScope(actor, 'c.id');
   return store.all(`WITH accessible AS (SELECT c.id,c.owner_id FROM clients c WHERE ${where})
@@ -70,7 +71,7 @@ function visibleOwners(store, actor) {
       UNION SELECT p.owner_id FROM cards p JOIN accessible a ON a.id=p.client_id) ORDER BY u.name`, ...args, actor.id);
 }
 
-export function createApp(store, config) {
+export function createHandler(store, config) {
   const routes = [];
   const route = (method, path, handle, policy = {}) => routes.push({ method, regex: new RegExp(`^${path}$`), handle, policy });
   const staticFiles = new Map([...assets].map(([path, [name, type]]) => [path, {
@@ -80,20 +81,25 @@ export function createApp(store, config) {
   const shareImage = new URL('/assets/brand/social-share.png', config.origin).href;
   const shell = { bytes: Buffer.from(shellTemplate.replace('{{SHARE_IMAGE_URL}}', shareImage)), type: 'text/html; charset=utf-8' };
 
-  route('GET', '/api/health', () => ({ ok: store.get('SELECT 1 AS ok').ok === 1 }), options);
-  route('GET', '/api/session', ({ actor }) => ({ user: actor, demo: config.demo, time_zone: config.timeZone }), options);
+  route('GET', '/api/health', async () => ({ ok: (await store.get('SELECT 1 AS ok')).ok === 1 }), options);
+  route('GET', '/api/session', ({ actor }) => ({ user: actor, time_zone: config.timeZone }), options);
+  route('GET', '/api/cron/cleanup', async ({ req }) => {
+    if (!config.cronSecret || req.headers.authorization !== `Bearer ${config.cronSecret}`) throw new AppError(401, 'Cron authorization required.');
+    await cleanExpired(store);
+    return { ok: true };
+  }, options);
   route('POST', '/api/session', async ({ res, data, ip, session }) => {
     const auth = await signIn(store, data, ip, session);
     res.setHeader('Set-Cookie', sessionCookie(config, auth.value, auth.maxAge));
     return { user: auth.user };
   }, options);
-  route('POST', '/api/session/logout', ({ res, actor, session }) => {
-    signOut(store, actor, session);
+  route('POST', '/api/session/logout', async ({ res, actor, session }) => {
+    await signOut(store, actor, session);
     res.setHeader('Set-Cookie', sessionCookie(config, '', 0));
     return { ok: true };
   });
-  route('GET', '/api/setup/([\\w-]{43})', ({ ids, ip }) => {
-    rateLimit(store, `setup-read:${ip}`, 80, 900000);
+  route('GET', '/api/setup/([\\w-]{43})', async ({ ids, ip }) => {
+    await rateLimit(store, `setup-read:${ip}`, 80, 900000);
     return setupInfo(store, ids[0]);
   }, options);
   route('POST', '/api/setup/([\\w-]{43})', async ({ ids, data, ip, res }) => {
@@ -102,29 +108,29 @@ export function createApp(store, config) {
     return { user: auth.user };
   }, options);
 
-  route('GET', '/api/context', ({ actor }) => ({ clients: listClients(store, actor, { limit: 500 }).items, owners: visibleOwners(store, actor) }));
+  route('GET', '/api/context', async ({ actor }) => ({ clients: (await listClients(store, actor, { limit: 500 })).items, owners: await visibleOwners(store, actor) }));
   route('GET', '/api/today', ({ actor }) => today(store, actor));
   route('POST', '/api/today/seen', ({ actor, data }) => acknowledgeToday(store, actor,
     validate(object({ reply_cursor: int(0, Number.MAX_SAFE_INTEGER) }), data).reply_cursor));
-  route('GET', '/api/alerts', ({ actor }) => { refreshDue(store); return alerts(store, actor); });
+  route('GET', '/api/alerts', async ({ actor }) => { await refreshDue(store); return alerts(store, actor); });
   route('POST', '/api/alerts/seen', ({ actor, data }) => seeAlerts(store, actor,
     validate(object({ ids: list(str(80), 30) }), data).ids));
-  route('GET', '/api/board', ({ actor, url }) => ({ groups: board(store, actor, boardQuery(url)) }));
+  route('GET', '/api/board', async ({ actor, url }) => ({ groups: await board(store, actor, boardQuery(url)) }));
   route('GET', '/api/cards', ({ actor, url }) => listCards(store, actor, boardQuery(url)));
-  route('POST', '/api/cards', ({ actor, data }) => ({ card: createCard(store, actor, data) }));
-  route('GET', `/api/cards/${ident}`, ({ actor, ids, url }) => {
-    refreshDue(store);
-    const result = cardDetail(store, actor, ids[0], selectQuery(url, 'activity_id', str(80)));
-    audit(store, actor, 'card.viewed', 'card', result.card.id, result.card.client_id);
+  route('POST', '/api/cards', async ({ actor, data }) => ({ card: await createCard(store, actor, data) }));
+  route('GET', `/api/cards/${ident}`, async ({ actor, ids, url }) => {
+    await refreshDue(store);
+    const result = await cardDetail(store, actor, ids[0], selectQuery(url, 'activity_id', str(80)));
+    await audit(store, actor, 'card.viewed', 'card', result.card.id, result.card.client_id);
     return result;
   });
-  route('PATCH', `/api/cards/${ident}`, ({ actor, ids, data }) => ({ card: updateCard(store, actor, ids[0], data) }));
-  route('POST', `/api/cards/${ident}/followups/${ident}/complete`, ({ actor, ids }) => ({ card: completeFollowup(store, actor, ...ids) }));
+  route('PATCH', `/api/cards/${ident}`, async ({ actor, ids, data }) => ({ card: await updateCard(store, actor, ids[0], data) }));
+  route('POST', `/api/cards/${ident}/followups/${ident}/complete`, async ({ actor, ids }) => ({ card: await completeFollowup(store, actor, ...ids) }));
   route('GET', `/api/cards/${ident}/activity`, ({ actor, ids, url }) => listActivity(store, actor, ids[0],
     { before: boundedInt(url.searchParams.get('before'), undefined, Number.MAX_SAFE_INTEGER) }));
-  route('POST', `/api/cards/${ident}/activity`, ({ actor, ids, data }) => ({ activity: manualActivity(store, actor, ids[0], data) }));
+  route('POST', `/api/cards/${ident}/activity`, async ({ actor, ids, data }) => ({ activity: await manualActivity(store, actor, ids[0], data) }));
   route('POST', `/api/cards/${ident}/activity/${ident}/source`, ({ actor, ids, data }) => attachMailId(store, actor, ...ids, data));
-  route('POST', `/api/cards/${ident}/drafts`, ({ actor, ids, data }) => ({ draft: staffDraft(store, actor, ids[0], data) }));
+  route('POST', `/api/cards/${ident}/drafts`, async ({ actor, ids, data }) => ({ draft: await staffDraft(store, actor, ids[0], data) }));
   route('POST', `/api/cards/${ident}/drafts/${ident}/review`, ({ actor, ids, data }) => reviewDraft(store, actor, ...ids,
     validate(object({ updated_at: str(40) }), data).updated_at));
   route('GET', '/api/metrics', ({ actor, url }) => metrics(store, actor, { ...boardQuery(url),
@@ -133,54 +139,54 @@ export function createApp(store, config) {
   route('GET', '/api/suggestions', ({ actor, url }) => listSuggestions(store, actor, { ...pageQuery(url, 35),
     client_id: selectQuery(url, 'client_id', str(80)), q: selectQuery(url, 'q'), fit: selectQuery(url, 'fit', str(120)),
     source: selectQuery(url, 'source', str(160)), status: selectQuery(url, 'status', choice('pending','approved','dismissed')) }));
-  route('GET', `/api/suggestions/${ident}`, ({ actor, ids }) => {
-    const result = suggestionFor(store, actor, ids[0]);
-    audit(store, actor, 'suggestion.viewed', 'suggestion', result.id, result.client_id);
+  route('GET', `/api/suggestions/${ident}`, async ({ actor, ids }) => {
+    const result = await suggestionFor(store, actor, ids[0]);
+    await audit(store, actor, 'suggestion.viewed', 'suggestion', result.id, result.client_id);
     return { suggestion: result };
   });
-  route('POST', `/api/suggestions/${ident}/decision`, ({ actor, ids, data }) => ({ suggestion: decideSuggestion(store, actor, ids[0],
+  route('POST', `/api/suggestions/${ident}/decision`, async ({ actor, ids, data }) => ({ suggestion: await decideSuggestion(store, actor, ids[0],
     validate(object({ decision: choice('approved','dismissed') }), data).decision) }));
 
   route('GET', '/api/clients', ({ actor, url }) => listClients(store, actor, { ...pageQuery(url), q: selectQuery(url, 'q') }));
-  route('POST', '/api/clients', ({ actor, data }) => ({ client: createClient(store, actor, data) }));
+  route('POST', '/api/clients', async ({ actor, data }) => ({ client: await createClient(store, actor, data) }));
   route('GET', `/api/clients/${ident}`, ({ actor, ids }) => clientDetail(store, actor, ids[0]));
-  route('PATCH', `/api/clients/${ident}`, ({ actor, ids, data }) => ({ client: updateClient(store, actor, ids[0], data) }));
+  route('PATCH', `/api/clients/${ident}`, async ({ actor, ids, data }) => ({ client: await updateClient(store, actor, ids[0], data) }));
   route('POST', `/api/clients/${ident}/form-link`, ({ actor, ids }) => copyFormLink(store, actor, ids[0], config.linkSecret));
   route('POST', `/api/clients/${ident}/form-link/revoke`, ({ actor, ids }) => revokeFormLinks(store, actor, ids[0]));
   route('GET', `/api/clients/${ident}/submissions`, ({ actor, ids, url }) => listSubmissions(store, actor, ids[0],
     { before: boundedInt(url.searchParams.get('before'), undefined, Number.MAX_SAFE_INTEGER) }));
-  route('GET', `/api/clients/${ident}/submissions/${ident}`, ({ actor, ids }) => {
-    const result = getSubmission(store, actor, ...ids);
-    audit(store, actor, 'intake.viewed', 'submission', result.id, result.client_id);
+  route('GET', `/api/clients/${ident}/submissions/${ident}`, async ({ actor, ids }) => {
+    const result = await getSubmission(store, actor, ...ids);
+    await audit(store, actor, 'intake.viewed', 'submission', result.id, result.client_id);
     return { submission: result };
   });
   route('GET', `/api/clients/${ident}/submissions/${ident}/pdf`, async ({ actor, ids, res }) => {
-    const result = getSubmission(store, actor, ...ids);
-    const document = await submissionPdf(result, config);
+    const result = await getSubmission(store, actor, ...ids);
+    const document = await submissionPdf(result);
     const filename = result.client_name.replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 65) || 'client';
-    audit(store, actor, 'intake.pdf_exported', 'submission', result.id, result.client_id);
+    await audit(store, actor, 'intake.pdf_exported', 'submission', result.id, result.client_id);
     res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="${filename}-onboarding-v${result.version}.pdf"`,
       'Content-Length': document.length, 'Cache-Control': 'no-store' });
     res.end(document);
   });
-  route('GET', '/api/onboard/([\\w.-]{80})', ({ ids, ip }) => {
-    rateLimit(store, `form-read:${ip}`, 150, 900000);
+  route('GET', '/api/onboard/([\\w.-]{80})', async ({ ids, ip }) => {
+    await rateLimit(store, `form-read:${ip}`, 150, 900000);
     return publicForm(store, ids[0], config.linkSecret);
   }, options);
-  route('POST', '/api/onboard/([\\w.-]{80})/draft', ({ ids, data, ip }) => {
-    rateLimit(store, `form-write:${ip}`, 150, 900000);
+  route('POST', '/api/onboard/([\\w.-]{80})/draft', async ({ ids, data, ip }) => {
+    await rateLimit(store, `form-write:${ip}`, 150, 900000);
     return saveIntake(store, ids[0], data, config.linkSecret);
   }, options);
-  route('POST', '/api/onboard/([\\w.-]{80})/submit', ({ ids, data, ip }) => {
-    rateLimit(store, `form-submit:${ip}`, 40, 900000);
-    return { submission: submitIntake(store, ids[0], data, config.linkSecret) };
+  route('POST', '/api/onboard/([\\w.-]{80})/submit', async ({ ids, data, ip }) => {
+    await rateLimit(store, `form-submit:${ip}`, 40, 900000);
+    return { submission: await submitIntake(store, ids[0], data, config.linkSecret) };
   }, options);
 
-  route('GET', '/api/admin/accounts', ({ actor }) => ({ items: listAccounts(store, actor) }));
+  route('GET', '/api/admin/accounts', async ({ actor }) => ({ items: await listAccounts(store, actor) }));
   route('POST', '/api/admin/accounts', ({ actor, data }) => inviteAccount(store, actor, data));
-  route('PATCH', `/api/admin/accounts/${ident}`, ({ actor, ids, data }) => ({ user: changeAccount(store, actor, ids[0], data) }));
-  route('POST', `/api/admin/accounts/${ident}/setup`, ({ actor, ids }) => ({ setup: resetAccount(store, actor, ids[0]) }));
-  route('GET', '/api/admin/job-tokens', ({ actor }) => ({ items: listJobTokens(store, actor) }));
+  route('PATCH', `/api/admin/accounts/${ident}`, async ({ actor, ids, data }) => ({ user: await changeAccount(store, actor, ids[0], data) }));
+  route('POST', `/api/admin/accounts/${ident}/setup`, async ({ actor, ids }) => ({ setup: await resetAccount(store, actor, ids[0]) }));
+  route('GET', '/api/admin/job-tokens', async ({ actor }) => ({ items: await listJobTokens(store, actor) }));
   route('POST', '/api/admin/job-tokens', ({ actor, data }) => createJobToken(store, actor, data));
   route('POST', `/api/admin/job-tokens/${ident}/revoke`, ({ actor, ids }) => revokeJobToken(store, actor, ids[0]));
   route('GET', '/api/admin/audit', ({ actor, url }) => auditPage(store, actor, {
@@ -188,12 +194,12 @@ export function createApp(store, config) {
     user_id: selectQuery(url, 'user_id', str(80)), action: selectQuery(url, 'action', str(100)),
   }));
   route('POST', '/api/admin/import/(preview|apply)', ({ actor, ids, data }) => importSeed(store, actor, data, ids[0] === 'preview'),
-    { bodyLimit: 5 * 1024 * 1024 });
+    { bodyLimit: 4 * 1024 * 1024 });
 
-  const server = createServer({ requestTimeout: 30000, headersTimeout: 10000, maxHeaderSize: 16384 }, async (req, res) => {
+  return async function handle(req, res) {
     protect(res, config);
     try {
-      if (req.headers.host?.toLowerCase() !== config.origin.host.toLowerCase()) {
+      if (!(config.hosts ?? new Set([config.origin.host.toLowerCase()])).has(req.headers.host?.toLowerCase())) {
         req.resume();
         throw new AppError(421, 'Use the configured app address.');
       }
@@ -212,17 +218,17 @@ export function createApp(store, config) {
           throw new AppError(404, 'This endpoint does not exist.');
         }
         const session = readSession(req, config);
-        const actor = sessionUser(store, session);
+        const actor = await sessionUser(store, session);
         if (!actor && !found.policy.public) { req.resume(); throw new AppError(401, 'Sign in to continue.'); }
         if (path.startsWith('/api/admin/') && actor?.role !== 'admin') { req.resume(); throw new AppError(403, 'Admin access is required.'); }
         const isWrite = req.method !== 'GET';
         if (isWrite) assertWebOrigin(req, config);
         const data = isWrite ? await readJson(req, found.policy.bodyLimit) : undefined;
         // Revalidate after receiving a body so account revocation during a slow upload takes effect.
-        const current = isWrite && actor ? sessionUser(store, session) : actor;
+        const current = isWrite && actor ? await sessionUser(store, session) : actor;
         if (!current && !found.policy.public) throw new AppError(401, 'Sign in to continue.');
-        const response = await found.handle({ res, actor: current, data, session, url,
-          ids: found.regex.exec(path).slice(1), ip: req.socket.remoteAddress ?? 'unknown' });
+        const response = await found.handle({ req, res, actor: current, data, session, url,
+          ids: found.regex.exec(path).slice(1), ip: clientIp(req, config) });
         if (!res.writableEnded) json(res, 200, response);
         return;
       }
@@ -236,11 +242,15 @@ export function createApp(store, config) {
       if (error instanceof AppError) json(res, error.status, { error: error.message, ...(error.details ? { details: error.details } : {}) });
       else {
         const incident = randomUUID();
-        console.error(`[${incident}] ${error.name}: ${error.code ?? 'unexpected'}\n${error.stack?.split('\n').slice(1, 4).join('\n')}`);
+        console.error(`[${incident}] ${error.name}: ${error.code ?? 'unexpected'} ${process.env.DEBUG_ERRORS ? error.message : ''}\n${error.stack?.split('\n').slice(1, 4).join('\n')}`);
         json(res, 500, { error: 'Something went wrong. Try again or share the reference with an admin.', incident });
       }
     }
-  });
+  };
+}
+
+export function createApp(store, config) {
+  const server = createServer({ requestTimeout: 30000, headersTimeout: 10000, maxHeaderSize: 16384 }, createHandler(store, config));
   server.keepAliveTimeout = 5000;
   server.maxRequestsPerSocket = 1000;
   return server;

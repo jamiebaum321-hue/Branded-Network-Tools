@@ -1,7 +1,7 @@
-import { DatabaseSync } from 'node:sqlite';
-import { readFileSync, mkdirSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { readFileSync } from 'node:fs';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import pg from 'pg';
 
 export class AppError extends Error {
   constructor(status, message, details) {
@@ -18,49 +18,99 @@ export const digest = (value) => createHash('sha256').update(value).digest('hex'
 export const encode = (value) => JSON.stringify(value);
 export const decode = (value) => JSON.parse(value);
 
-export function openStore(path) {
-  if (!path) throw new Error('Set DATABASE_PATH before starting the app.');
-  const file = path === ':memory:' ? path : resolve(path);
-  if (file !== ':memory:') mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
-  const db = new DatabaseSync(file, { timeout: 5000, enableForeignKeyConstraints: true });
-  db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA trusted_schema=OFF;');
-  const version = db.prepare('PRAGMA user_version').get().user_version;
-  if (version > 1) {
-    db.close();
-    throw new Error('The database requires a newer app version.');
+// BIGINT millisecond timestamps, identity sequences and count(*) all fit in a safe JS integer.
+pg.types.setTypeParser(pg.types.builtins.INT8, Number);
+pg.types.setTypeParser(pg.types.builtins.NUMERIC, Number);
+
+const migrations = [
+  { version: 1, sql: () => readFileSync(new URL('./schema.sql', import.meta.url), 'utf8') },
+];
+
+// Queries are written with `?` placeholders; translate them to $1..$n outside string literals.
+const translated = new Map();
+function placeholders(sql) {
+  let result = translated.get(sql);
+  if (result) return result;
+  let index = 0;
+  let quoted = false;
+  result = '';
+  for (const char of sql) {
+    if (char === "'") quoted = !quoted;
+    result += char === '?' && !quoted ? `$${++index}` : char;
   }
+  if (translated.size < 2000) translated.set(sql, result);
+  return result;
+}
+
+const retryable = new Set(['40001', '40P01']);
+const pause = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+export async function openStore(connectionString, { schema, max = Number(process.env.DATABASE_POOL_MAX || 5) } = {}) {
+  if (!connectionString) throw new Error('Set DATABASE_URL before starting the app.');
+  const pool = new pg.Pool({ connectionString, max, idleTimeoutMillis: 10000, connectionTimeoutMillis: 10000,
+    ...(schema ? { options: `-c search_path=${schema}` } : {}) });
+  pool.on('error', error => console.error('Idle database client error:', error.code ?? error.message));
+  if (process.env.VERCEL) {
+    try { (await import('@vercel/functions')).attachDatabasePool(pool); } catch { /* optional helper */ }
+  }
+  const scope = new AsyncLocalStorage();
+  const query = async (sql, params) => (scope.getStore() ?? pool).query(placeholders(sql), params);
   const store = {
-    db,
-    get: (sql, ...params) => db.prepare(sql).get(...params),
-    all: (sql, ...params) => db.prepare(sql).all(...params),
-    run: (sql, ...params) => db.prepare(sql).run(...params),
-    tx(work) {
-      db.exec('BEGIN IMMEDIATE');
-      try {
-        const value = work();
-        if (value instanceof Promise) throw new Error('A transaction must be synchronous.');
-        db.exec('COMMIT');
-        return value;
-      } catch (error) {
-        db.exec('ROLLBACK');
-        throw error;
+    pool,
+    get: async (sql, ...params) => (await query(sql, params)).rows[0],
+    all: async (sql, ...params) => (await query(sql, params)).rows,
+    run: async (sql, ...params) => ({ changes: (await query(sql, params)).rowCount }),
+    exec: async (sql) => { await (scope.getStore() ?? pool).query(sql); },
+    // Serializable transactions keep the read-then-write checks equivalent to a single-writer database.
+    async tx(work) {
+      if (scope.getStore()) return work();
+      for (let attempt = 1; ; attempt++) {
+        const client = await pool.connect();
+        let broken = false;
+        try {
+          await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
+          const value = await scope.run(client, work);
+          await client.query('COMMIT');
+          return value;
+        } catch (error) {
+          try { await client.query('ROLLBACK'); } catch { broken = true; }
+          if (retryable.has(error.code) && attempt < 8) {
+            await pause(Math.random() * 20 * attempt);
+            continue;
+          }
+          throw error;
+        } finally {
+          client.release(broken);
+        }
       }
     },
+    close: () => pool.end(),
   };
-  if (version === 0) store.tx(() => {
-    if (store.get('PRAGMA user_version').user_version === 0) {
-      db.exec(readFileSync(new URL('./schema.sql', import.meta.url), 'utf8'));
-      db.exec('PRAGMA user_version=1');
+  await migrate(store);
+  return store;
+}
+
+async function migrate(store) {
+  await store.exec('CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)');
+  const latest = migrations.at(-1).version;
+  const current = (await store.get('SELECT coalesce(max(version),0) AS version FROM schema_migrations')).version;
+  if (current > latest) throw new Error('The database requires a newer app version.');
+  if (current === latest) return;
+  await store.tx(async () => {
+    await store.exec("SELECT pg_advisory_xact_lock(hashtext('branded_network_migrations'))");
+    const applied = (await store.get('SELECT coalesce(max(version),0) AS version FROM schema_migrations')).version;
+    for (const migration of migrations.filter(row => row.version > applied)) {
+      await store.exec(migration.sql());
+      await store.run('INSERT INTO schema_migrations VALUES(?,?)', migration.version, iso());
     }
   });
-  return store;
 }
 
 export const system = Object.freeze({ kind: 'system', id: null, name: 'System' });
 export const actorName = (actor) => actor.kind === 'claude' ? 'claude' : actor.name;
 
-export function audit(store, actor, action, entity, entityId = null, clientId = null, details = {}) {
-  store.run(`INSERT INTO audit_log(actor,actor_id,action,entity,entity_id,client_id,details,at)
+export async function audit(store, actor, action, entity, entityId = null, clientId = null, details = {}) {
+  await store.run(`INSERT INTO audit_log(actor,actor_id,action,entity,entity_id,client_id,details,at)
     VALUES(?,?,?,?,?,?,?,?)`, actorName(actor), actor.id, action, entity, entityId, clientId, encode(details), iso());
 }
 
@@ -88,17 +138,17 @@ export function clientScope(actor, column) {
   return ['0=1', []];
 }
 
-export function clientFor(store, actor, clientId) {
+export async function clientFor(store, actor, clientId) {
   const [where, args] = clientScope(actor, 'c.id');
-  const client = store.get(`SELECT c.*, u.name AS owner_name FROM clients c
+  const client = await store.get(`SELECT c.*, u.name AS owner_name FROM clients c
     JOIN users u ON u.id=c.owner_id WHERE c.id=? AND (${where})`, clientId, ...args);
   if (!client) throw new AppError(404, 'Client not found.');
   return client;
 }
 
-export function canAccessClient(store, userId, clientId) {
-  const user = store.get('SELECT id, role FROM users WHERE id=? AND enabled=1', userId);
+export async function canAccessClient(store, userId, clientId) {
+  const user = await store.get('SELECT id, role FROM users WHERE id=? AND enabled=1', userId);
   if (!user) return false;
   const [where, params] = clientScope({ kind: 'user', ...user }, 'c.id');
-  return Boolean(store.get(`SELECT 1 FROM clients c WHERE c.id=? AND (${where})`, clientId, ...params));
+  return Boolean(await store.get(`SELECT 1 FROM clients c WHERE c.id=? AND (${where})`, clientId, ...params));
 }
