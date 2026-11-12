@@ -3,10 +3,10 @@ export const h = value => String(value ?? '').replace(/[&<>"']/g, character => (
 })[character]);
 
 export const stages = {
-  to_contact: { label: 'To Contact', tone: 'blue' },
-  reached_out: { label: 'Reached Out', tone: 'amber' },
-  in_conversation: { label: 'In Conversation', tone: 'violet' },
-  closed: { label: 'Closed', tone: 'green' },
+  to_contact: { label: 'To Contact', tone: 'blue', glyph: 'leads' },
+  reached_out: { label: 'Reached Out', tone: 'amber', glyph: 'mail' },
+  in_conversation: { label: 'In Conversation', tone: 'violet', glyph: 'reply' },
+  closed: { label: 'Closed', tone: 'green', glyph: 'check' },
 };
 
 const icons = {
@@ -25,6 +25,24 @@ const icons = {
   mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>',
   download: '<path d="M12 3v12m-4-4 4 4 4-4M4 16v4h16v-4"/>',
   logout: '<path d="M10 4H5v16h5m4-4 4-4-4-4m-5 4h9"/>',
+  user: '<circle cx="12" cy="8" r="3.5"/><path d="M5 21v-2a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v2"/>',
+  team: '<circle cx="9" cy="8" r="3"/><path d="M3 20v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2m1-15a3 3 0 0 1 0 6m2 3a4 4 0 0 1 3 4v2"/>',
+  building: '<rect x="4" y="4" width="16" height="17" rx="2"/><path d="M9 21v-4h6v4M8 8h2m4 0h2m-8 4h2m4 0h2"/>',
+  board: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16m6-16v16M5.5 8h1m5 0h1m5 0h1"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  flag: '<path d="M5 21V4m0 1c4-3 7 3 14 0v9c-7 3-10-3-14 0"/>',
+  grip: '<path d="M9 5h.01M15 5h.01M9 12h.01M15 12h.01M9 19h.01M15 19h.01" stroke-width="3"/>',
+  copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M15 5a1 1 0 0 0-1-1H6a2 2 0 0 0-2 2v8a1 1 0 0 0 1 1"/>',
+  history: '<path d="M3 8h4V4m-4 4a9 9 0 1 1 0 8m9-9v5l3 2"/>',
+  edit: '<path d="M13 20H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h7m3-1 4 4m-9 7-1 .2.2-4L17 4a2 2 0 0 1 3 3l-8 8Z"/>',
+  target: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/>',
+  stack: '<path d="m12 3 9 5-9 5-9-5 9-5Zm-9 9 9 5 9-5M3 16l9 5 9-5"/>',
+  settings: '<path d="M4 6h16M4 12h16M4 18h16"/><circle cx="8" cy="6" r="2" fill="white"/><circle cx="15" cy="12" r="2" fill="white"/><circle cx="10" cy="18" r="2" fill="white"/>',
+  lock: '<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 5v2"/>',
+  bell: '<path d="M18 9a6 6 0 0 0-12 0c0 5-2 6-2 8h16c0-2-2-3-2-8m-8 11a2 2 0 0 0 4 0"/>',
+  info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5m0-8h.01"/>',
+  down: '<path d="m6 9 6 6 6-6"/>',
+  upload: '<path d="M12 16V4m-4 4 4-4 4 4M4 16v4h16v-4"/>',
 };
 
 export function icon(name) {
@@ -34,8 +52,8 @@ export function icon(name) {
 export const kitIcon = (name, active = false) =>
   `<img class="icon" src="/assets/icons/${h(name)}-${active ? 'iris' : 'ink'}.png" width="20" height="20" alt="">`;
 
-export const badge = (label, tone = 'neutral') => `<span class="badge ${h(tone)}">${h(label)}</span>`;
-export const stageBadge = key => badge(stages[key]?.label ?? key, stages[key]?.tone);
+export const badge = (label, tone = 'neutral', glyph) => `<span class="badge ${h(tone)}">${glyph ? icon(glyph) : ''}${h(label)}</span>`;
+export const stageBadge = key => badge(stages[key]?.label ?? key, stages[key]?.tone, stages[key]?.glyph);
 export const pathId = value => encodeURIComponent(String(value));
 export const initials = name => String(name ?? '').trim().split(/\s+/).slice(0, 2).map(part => part[0]).join('').toUpperCase();
 export const formatDate = (value, zone, options = {}) => value ? new Intl.DateTimeFormat(undefined,
@@ -57,11 +75,14 @@ export function localInput(value) {
   return new Date(+date - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 }
 
-export const field = (label, key, value = '', { type = 'text', required = false, max = 300, placeholder = '', min, hint, autocomplete } = {}) =>
-  `<label class="field"><span>${h(label)}${required ? '<span class="required" aria-hidden="true"> *</span>' : ''}</span>${type === 'textarea'
+export function field(label, key, value = '', { type = 'text', required = false, max = 300, placeholder = '', min, hint, autocomplete, glyph } = {}) {
+  const input = type === 'textarea'
     ? `<textarea name="${h(key)}" rows="4" maxlength="${max}" ${required ? 'required' : ''} placeholder="${h(placeholder)}">${h(value)}</textarea>`
     : `<input name="${h(key)}" type="${h(type)}" value="${h(value)}" maxlength="${max}" ${required ? 'required' : ''}
-      ${min !== undefined ? `min="${min}"` : ''} ${autocomplete ? `autocomplete="${h(autocomplete)}"` : ''} placeholder="${h(placeholder)}">`}${hint ? `<small>${h(hint)}</small>` : ''}</label>`;
+      ${min !== undefined ? `min="${min}"` : ''} ${autocomplete ? `autocomplete="${h(autocomplete)}"` : ''} placeholder="${h(placeholder)}">`;
+  return `<label class="field"><span>${h(label)}${required ? '<span class="required" aria-hidden="true"> *</span>' : ''}</span>
+    ${glyph ? `<span class="field-control">${icon(glyph)}${input}</span>` : input}${hint ? `<small>${h(hint)}</small>` : ''}</label>`;
+}
 
 export function select(label, key, rows, selected = '', emptyLabel) {
   const choices = [...(emptyLabel ? [{ id: '', name: emptyLabel }] : []), ...rows];
@@ -71,8 +92,8 @@ export function select(label, key, rows, selected = '', emptyLabel) {
 
 export const stageOptions = Object.entries(stages).map(([id, info]) => ({ id, name: info.label }));
 export const hidden = (name, value) => `<input type="hidden" name="${h(name)}" value="${h(value)}">`;
-export const btn = (label, { kind = '', action, data = '', glyph, type = 'button' } = {}) =>
-  `<button type="${type}" class="button ${h(kind)}"${action ? ` data-action="${h(action)}"` : ''}${data ? ` ${data}` : ''}>${glyph ? icon(glyph) : ''}${h(label)}</button>`;
+export const btn = (label, { kind = '', action, data = '', glyph, endGlyph, type = 'button' } = {}) =>
+  `<button type="${type}" class="button ${h(kind)}"${action ? ` data-action="${h(action)}"` : ''}${data ? ` ${data}` : ''}>${glyph ? icon(glyph) : ''}${h(label)}${endGlyph ? `<span class="button-end">${icon(endGlyph)}</span>` : ''}</button>`;
 export const link = (href, label, glyph, extra = '') => `<a href="${h(href)}" class="text-link ${h(extra)}">${glyph ? icon(glyph) : ''}${h(label)}</a>`;
 export const emptyState = (title, detail = '') => `<div class="empty"><strong>${h(title)}</strong>${detail ? `<p>${h(detail)}</p>` : ''}</div>`;
 export function heading(title, detail = '', action = '', { art, date, compact = false } = {}) {
