@@ -4,14 +4,16 @@ import { randomUUID } from 'node:crypto';
 import { AppError, audit, clientScope } from './store.mjs';
 import { auditPage, changeAccount, createJobToken, finishSetup, inviteAccount, listAccounts, listJobTokens, rateLimit,
   resetAccount, revokeJobToken, sessionUser, setupInfo, signIn, signOut } from './accounts.mjs';
-import { clientDetail, copyFormLink, createClient, getSubmission, listClients, listSubmissions, publicForm,
-  revokeFormLinks, saveIntake, submitIntake, updateClient } from './clients.mjs';
+import { addClientNote, clientBoard, clientDetail, clientTimeline, copyFormLink, createClient, getSubmission, listClients, listSubmissions,
+  publicForm, revokeFormLinks, saveIntake, saveProfile, startOnboarding, submitIntake, updateClient } from './clients.mjs';
 import { acknowledgeToday, metrics, today } from './dashboard.mjs';
 import { alerts, seeAlerts } from './events.mjs';
 import { metadata, mcpHttp } from './mcp.mjs';
 import { attachMailId, board, cardDetail, completeFollowup, createCard, decideSuggestion, listActivity, listCards,
-  listSuggestions, manualActivity, refreshDue, reviewDraft, staffDraft, stages, suggestionFor, updateCard } from './pipeline.mjs';
-import { submissionPdf } from './pdf.mjs';
+  listSuggestions, manualActivity, refreshDue, reviewDraft, staffDraft, stages, suggestionCounts, suggestionFor, updateCard } from './pipeline.mjs';
+import { reportPdf, submissionPdf } from './pdf.mjs';
+import { addEntry, currentPeriod, deleteEntry, monthlyReport, reportDocument, reportsOverview, saveSummary, updateEntry } from './reports.mjs';
+import { stageIds } from '../public/lifecycle.mjs';
 import { importSeed } from './seed.mjs';
 import { boundedInt, choice, int, list, object, str, validate } from './validation.mjs';
 import { assertWebOrigin, empty, json, protect, readJson, readSession, sessionCookie } from './http.mjs';
@@ -22,10 +24,14 @@ const assets = new Map(Object.entries({
   '/ui.mjs': ['ui.mjs', 'text/javascript; charset=utf-8'],
   '/views.mjs': ['views.mjs', 'text/javascript; charset=utf-8'],
   '/intake-fields.mjs': ['intake-fields.mjs', 'text/javascript; charset=utf-8'],
+  '/lifecycle.mjs': ['lifecycle.mjs', 'text/javascript; charset=utf-8'],
+  '/client-views.mjs': ['client-views.mjs', 'text/javascript; charset=utf-8'],
   '/favicon.svg': ['favicon.svg', 'image/svg+xml'],
 }));
-const shellPath = /^(?:\/|\/today|\/signin|\/pipeline(?:\/(?:metrics|cards\/[\w-]+|suggestions(?:\/[\w-]+)?))?|\/clients(?:\/[\w-]+(?:\/submissions\/[\w-]+)?)?|\/admin|\/setup\/[\w-]+|\/onboard\/[\w.-]+)$/;
+const shellPath = /^(?:\/|\/today|\/signin|\/opportunities|\/reports|\/pipeline(?:\/(?:metrics|cards\/[\w-]+|suggestions(?:\/[\w-]+)?))?|\/clients(?:\/[\w-]+(?:\/submissions\/[\w-]+)?)?|\/admin|\/setup\/[\w-]+|\/onboard\/[\w.-]+)$/;
 const ident = '([a-zA-Z0-9_-]{1,80})';
+const month = '(\\d{4}-\\d\\d)';
+const fileName = (value) => value.replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 65) || 'client';
 const options = { public: true };
 
 function selectQuery(url, key, schema = str(180)) {
@@ -51,6 +57,12 @@ function visibleOwners(store, actor) {
     SELECT DISTINCT u.id,u.name,u.enabled FROM users u WHERE u.id=? OR u.id IN (
       SELECT owner_id FROM accessible UNION SELECT m.user_id FROM client_members m JOIN accessible a ON a.id=m.client_id
       UNION SELECT p.owner_id FROM cards p JOIN accessible a ON a.id=p.client_id) ORDER BY u.name`, ...args, actor.id);
+}
+
+function sendPdf(res, document, filename) {
+  res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="${filename}"`,
+    'Content-Length': document.length, 'Cache-Control': 'no-store' });
+  res.end(document);
 }
 
 export function createApp(store, config) {
@@ -84,7 +96,7 @@ export function createApp(store, config) {
   }, options);
 
   route('GET', '/api/context', ({ actor }) => ({ clients: listClients(store, actor, { limit: 500 }).items, owners: visibleOwners(store, actor) }));
-  route('GET', '/api/today', ({ actor }) => today(store, actor));
+  route('GET', '/api/today', ({ actor }) => today(store, actor, config.timeZone));
   route('POST', '/api/today/seen', ({ actor, data }) => acknowledgeToday(store, actor,
     validate(object({ reply_cursor: int(0, Number.MAX_SAFE_INTEGER) }), data).reply_cursor));
   route('GET', '/api/alerts', ({ actor }) => { refreshDue(store); return alerts(store, actor); });
@@ -114,6 +126,7 @@ export function createApp(store, config) {
   route('GET', '/api/suggestions', ({ actor, url }) => listSuggestions(store, actor, { ...pageQuery(url, 35),
     client_id: selectQuery(url, 'client_id', str(80)), q: selectQuery(url, 'q'), fit: selectQuery(url, 'fit', str(120)),
     source: selectQuery(url, 'source', str(160)), status: selectQuery(url, 'status', choice('pending','approved','dismissed')) }));
+  route('GET', '/api/suggestion-counts', ({ actor, url }) => suggestionCounts(store, actor, selectQuery(url, 'client_id', str(80))));
   route('GET', `/api/suggestions/${ident}`, ({ actor, ids }) => {
     const result = suggestionFor(store, actor, ids[0]);
     audit(store, actor, 'suggestion.viewed', 'suggestion', result.id, result.client_id);
@@ -122,10 +135,18 @@ export function createApp(store, config) {
   route('POST', `/api/suggestions/${ident}/decision`, ({ actor, ids, data }) => ({ suggestion: decideSuggestion(store, actor, ids[0],
     validate(object({ decision: choice('approved','dismissed') }), data).decision) }));
 
-  route('GET', '/api/clients', ({ actor, url }) => listClients(store, actor, { ...pageQuery(url), q: selectQuery(url, 'q') }));
+  const clientQuery = url => ({ q: selectQuery(url, 'q'), owner_id: selectQuery(url, 'owner_id', str(80)),
+    stage: selectQuery(url, 'stage', choice(...stageIds)), phase: selectQuery(url, 'phase', choice('sales', 'delivery', 'closed')) });
+  route('GET', '/api/clients', ({ actor, url }) => listClients(store, actor, { ...pageQuery(url), ...clientQuery(url) }));
+  route('GET', '/api/client-board', ({ actor, url }) => ({ groups: clientBoard(store, actor, { phase: 'sales', ...clientQuery(url), stage: undefined }) }));
   route('POST', '/api/clients', ({ actor, data }) => ({ client: createClient(store, actor, data) }));
   route('GET', `/api/clients/${ident}`, ({ actor, ids }) => clientDetail(store, actor, ids[0]));
   route('PATCH', `/api/clients/${ident}`, ({ actor, ids, data }) => ({ client: updateClient(store, actor, ids[0], data) }));
+  route('POST', `/api/clients/${ident}/onboarding`, ({ actor, ids }) => startOnboarding(store, actor, ids[0], config.linkSecret));
+  route('POST', `/api/clients/${ident}/notes`, ({ actor, ids, data }) => addClientNote(store, actor, ids[0], data));
+  route('GET', `/api/clients/${ident}/timeline`, ({ actor, ids, url }) => clientTimeline(store, actor, ids[0],
+    { before: boundedInt(url.searchParams.get('before'), undefined, Number.MAX_SAFE_INTEGER) }));
+  route('POST', `/api/clients/${ident}/profile`, ({ actor, ids, data }) => ({ submission: saveProfile(store, actor, ids[0], data) }));
   route('POST', `/api/clients/${ident}/form-link`, ({ actor, ids }) => copyFormLink(store, actor, ids[0], config.linkSecret));
   route('POST', `/api/clients/${ident}/form-link/revoke`, ({ actor, ids }) => revokeFormLinks(store, actor, ids[0]));
   route('GET', `/api/clients/${ident}/submissions`, ({ actor, ids, url }) => listSubmissions(store, actor, ids[0],
@@ -138,12 +159,23 @@ export function createApp(store, config) {
   route('GET', `/api/clients/${ident}/submissions/${ident}/pdf`, async ({ actor, ids, res }) => {
     const result = getSubmission(store, actor, ...ids);
     const document = await submissionPdf(result, config);
-    const filename = result.client_name.replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 65) || 'client';
     audit(store, actor, 'intake.pdf_exported', 'submission', result.id, result.client_id);
-    res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="${filename}-onboarding-v${result.version}.pdf"`,
-      'Content-Length': document.length, 'Cache-Control': 'no-store' });
-    res.end(document);
+    sendPdf(res, document, `${fileName(result.client_name)}-onboarding-v${result.version}.pdf`);
   });
+
+  route('GET', '/api/reports', ({ actor, url }) => reportsOverview(store, actor,
+    selectQuery(url, 'period', str(7)) ?? currentPeriod(config.timeZone), config.timeZone));
+  route('GET', `/api/clients/${ident}/reports/${month}`, ({ actor, ids }) => monthlyReport(store, actor, ...ids, config.timeZone));
+  route('POST', `/api/clients/${ident}/reports/${month}`, ({ actor, ids, data }) => saveSummary(store, actor, ...ids, data));
+  route('GET', `/api/clients/${ident}/reports/${month}/pdf`, async ({ actor, ids, res }) => {
+    const report = monthlyReport(store, actor, ...ids, config.timeZone);
+    const document = await reportPdf(reportDocument(report), config);
+    audit(store, actor, 'report.pdf_exported', 'report', null, report.client.id, { period: report.period });
+    sendPdf(res, document, `${fileName(report.client.name)}-report-${report.period}.pdf`);
+  });
+  route('POST', `/api/clients/${ident}/report-entries`, ({ actor, ids, data }) => ({ entry: addEntry(store, actor, ids[0], data) }));
+  route('PATCH', `/api/report-entries/${ident}`, ({ actor, ids, data }) => ({ entry: updateEntry(store, actor, ids[0], data) }));
+  route('POST', `/api/report-entries/${ident}/delete`, ({ actor, ids }) => deleteEntry(store, actor, ids[0]));
   route('GET', '/api/onboard/([\\w.-]{80})', ({ ids, ip }) => {
     rateLimit(store, `form-read:${ip}`, 150, 900000);
     return publicForm(store, ids[0], config.linkSecret);

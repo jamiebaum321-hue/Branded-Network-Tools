@@ -10,8 +10,11 @@ export const object = (properties, required = Object.keys(properties)) => ({
   type: 'object', properties, required, additionalProperties: false,
 });
 
+export const nullable = (schema) => ({ ...schema, nullable: true });
+
 export function validate(schema, value, label = 'Input') {
   const fail = (message) => { throw new AppError(400, `${label} ${message}`); };
+  if (value === null && schema.nullable) return null;
   switch (schema.type) {
     case 'object': {
       if (typeof value !== 'object' || value === null || Array.isArray(value)) fail('must be an object.');
@@ -61,6 +64,24 @@ export function time(value, optional = false) {
     throw new AppError(400, 'Enter a date and time with its time zone.');
   }
   return new Date(value).toISOString();
+}
+
+export function day(value, optional = false) {
+  if (!value && optional) return null;
+  if (typeof value !== 'string' || !/^\d{4}-\d\d-\d\d$/.test(value) || new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) !== value) {
+    throw new AppError(400, 'Enter a valid date.');
+  }
+  return value;
+}
+
+export function webLink(value, label = 'Link') {
+  if (!value) return '';
+  let url;
+  try { url = new URL(/^[a-z][a-z0-9+.-]*:/i.test(value) ? value : `https://${value}`); } catch { throw new AppError(400, `${label} must be a web address.`); }
+  if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || !url.hostname.includes('.')) {
+    throw new AppError(400, `${label} must be a web address.`);
+  }
+  return url.href;
 }
 
 export function boundedInt(value, fallback, max) {

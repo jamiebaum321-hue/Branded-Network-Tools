@@ -1,8 +1,10 @@
 import { sections } from './intake-fields.mjs';
-import { btn, emptyState, h, heading, icon, link, pathId, shell, stages } from './ui.mjs';
-import { activityItems, adminPage, alertRows, auditRows, boardCard, boardPage, cardPage, clientForm, clientPage,
-  clientRows, clientsPage, createCardForm, intakePage, inviteForm, jobTokenForm, metricsPage, setupPage, signInPage,
-  submissionPage, submissionRows, suggestionPage, suggestionRows, suggestionsPage, todayPage } from './views.mjs';
+import { isPeriod, stageInfo } from './lifecycle.mjs';
+import { btn, formatDate, h, heading, icon, link, pathId, shell, stages, todayIn } from './ui.mjs';
+import { accountRows, accountsPage, clientForm, clientPage, entryForm, matchDialog, matchRows, reportDialog, reportsPage,
+  timelineItems, versionRows } from './client-views.mjs';
+import { activityItems, adminPage, alertRows, auditRows, boardCard, boardPage, cardPage, createCardForm, intakePage, inviteForm,
+  jobTokenForm, metricsPage, setupPage, signInPage, submissionPage, suggestionPage, suggestionsPage, todayPage } from './views.mjs';
 
 const main = document.querySelector('#main');
 const chrome = document.querySelector('#shell');
@@ -13,7 +15,10 @@ let demo = false;
 let zone = 'America/New_York';
 let context = null;
 let revision = 0;
-let stage = 'to_contact';
+// The column shown on a phone, per board.
+const boardStage = { pipeline: 'to_contact', sales: 'prospect', delivery: 'onboarding' };
+// Data behind the current page, for dialogs opened from it.
+let page = {};
 let wizard = null;
 let imported = null;
 let seed = null;
@@ -46,7 +51,8 @@ function notify(message) {
   toastTimer = setTimeout(() => { status.hidden = true; }, 4200);
 }
 
-function showDialog(title, body, flush = false) {
+function showDialog(title, body, flush = false, wide = false) {
+  dialog.classList.toggle('wide', wide);
   dialog.innerHTML = `<div class="dialog-head"><h2 id="dialog-title">${h(title)}</h2><button type="button" class="icon-button" data-action="close-dialog" aria-label="Close">${icon('close')}</button></div>
     <div class="dialog-body ${flush ? 'flush' : ''}">${body}</div>`;
   if (!dialog.open) dialog.showModal();
@@ -84,7 +90,7 @@ function navigate(path, { replace = false } = {}) {
   const target = new URL(path, location.origin);
   if (target.origin !== location.origin) return;
   if (dialog.open) dialog.close();
-  if (!target.pathname.startsWith('/onboard/')) wizard = null;
+  if (!target.pathname.startsWith('/onboard/') && target.searchParams.get('edit') !== '1') wizard = null;
   if (target.pathname !== '/admin' || target.searchParams.get('tab') !== 'import') { seed = null; imported = null; }
   const url = `${target.pathname}${target.search}${target.hash}`;
   if (replace) history.replaceState(null, '', url);
@@ -107,6 +113,9 @@ function show(html, focus, hash) {
     }
   }
   if (focus) { window.scrollTo(0, 0); main.focus({ preventScroll: true }); }
+  // On a phone the journey scrolls sideways, so bring the current stage into view.
+  const current = main.querySelector('.stepper .current');
+  if (current) current.parentElement.scrollLeft = current.offsetLeft - current.parentElement.offsetLeft - 40;
 }
 
 function updateDot(data) {
@@ -118,6 +127,12 @@ function refreshAlertDot() {
   if (!user || document.hidden || !document.querySelector('#alert-dot')) return;
   const accountId = user.id;
   void api('/api/alerts').then(data => { if (user?.id === accountId) updateDot(data); }).catch(() => {});
+  void api('/api/suggestion-counts').then(data => {
+    const count = document.querySelector('#nav-matches');
+    if (!count || user?.id !== accountId) return;
+    count.textContent = data.pending;
+    count.hidden = !data.pending;
+  }).catch(() => {});
 }
 
 function showError(error, focus = false) {
@@ -125,6 +140,7 @@ function showError(error, focus = false) {
     user = null;
     if (dialog.open) dialog.close();
     chrome.replaceChildren();
+    document.body.classList.remove('app');
     show(signInPage(demo), true);
     return;
   }
@@ -138,8 +154,10 @@ async function render({ focus = false } = {}) {
   const query = queryHere();
   const hash = location.hash;
   const publicRoute = path.startsWith('/setup/') || path.startsWith('/onboard/');
-  chrome.innerHTML = publicRoute ? '' : shell(user, path);
+  chrome.innerHTML = publicRoute ? '' : shell(user, path, path.startsWith('/clients/') ? page.section : undefined);
+  document.body.classList.toggle('app', Boolean(user) && !publicRoute);
   main.setAttribute('aria-busy', 'true');
+  let section;
   if (focus) main.innerHTML = '<p class="loading" role="status">Loading…</p>';
   try {
     let html;
@@ -156,15 +174,30 @@ async function render({ focus = false } = {}) {
       }
       html = intakePage(wizard.info, key, wizard.step, wizard.answers);
     } else if (!user) html = signInPage(demo);
+    else if (path === '/opportunities' || path === '/clients') {
+      const phase = path === '/clients' ? 'delivery' : 'sales';
+      const list = query.get('view') === 'list';
+      const filters = new URLSearchParams([...query].filter(([key]) => ['q', 'owner_id'].includes(key)));
+      if (list && query.get('show') === 'closed') filters.set('stage', phase === 'sales' ? 'lost' : 'churned');
+      else filters.set('phase', phase);
+      const [data, ctx] = await Promise.all([api(queryPath(list ? '/api/clients' : '/api/client-board', filters)), getContext()]);
+      if (current !== revision) return;
+      context = ctx;
+      page = { filters, phase };
+      html = accountsPage(phase, data, ctx, query, zone, boardStage[phase]);
+    } else if (path === '/reports') {
+      const period = isPeriod(query.get('period')) ? query.get('period') : '';
+      html = reportsPage(await api(`/api/reports${period ? `?period=${period}` : ''}`));
+    }
     else if (path === '/' || path === '/signin' || path === '/today') {
       if (path !== '/today') history.replaceState(null, '', '/today');
       todayResult = await api('/api/today');
-      html = todayPage(todayResult, zone);
+      html = todayPage(todayResult, zone, user);
     } else if (path === '/pipeline') {
       const [data, ctx] = await Promise.all([api(queryPath('/api/board', query)), getContext()]);
       if (current !== revision) return;
       context = ctx;
-      html = boardPage(data.groups, ctx, query, zone, stage);
+      html = boardPage(data.groups, ctx, query, zone, boardStage.pipeline);
     } else if (path === '/pipeline/metrics') {
       const [data, ctx] = await Promise.all([api(queryPath('/api/metrics', query)), getContext()]);
       html = metricsPage(data, ctx, query, zone);
@@ -179,18 +212,27 @@ async function render({ focus = false } = {}) {
       html = cardPage(data, zone, Object.hasOwn(stages, chosen ?? '') ? chosen : '', hash);
     } else if (path.startsWith('/pipeline/suggestions/')) {
       html = suggestionPage((await api(`/api/suggestions/${pathId(path.split('/').at(-1))}`)).suggestion);
-    } else if (path === '/clients') {
-      const [data, ctx] = await Promise.all([api(queryPath('/api/clients', query)), getContext()]);
-      if (current !== revision) return;
-      context = ctx;
-      html = clientsPage(data, query, user, zone);
     } else if (/^\/clients\/[\w-]+\/submissions\/[\w-]+$/.test(path)) {
       html = submissionPage((await api(`/api${path}`)).submission, zone);
     } else if (path.startsWith('/clients/')) {
-      const [data, ctx] = await Promise.all([api(`/api${path}`), getContext()]);
+      const clientId = pathId(path.split('/')[2]);
+      const tab = ['profile', 'matches', 'introductions', 'report'].includes(query.get('tab')) ? query.get('tab') : 'overview';
+      const status = ['approved', 'dismissed'].includes(query.get('status')) ? `&status=${query.get('status')}` : query.get('status') === 'all' ? '' : '&status=pending';
+      const period = isPeriod(query.get('period')) ? query.get('period') : todayIn(zone).slice(0, 7);
+      const extra = tab === 'matches' ? Promise.all([api(`/api/suggestions?client_id=${clientId}${status}`), api(`/api/suggestion-counts?client_id=${clientId}`)])
+        : tab === 'introductions' ? api(`/api/cards?client_id=${clientId}&limit=100`)
+          : tab === 'report' ? api(`/api/clients/${clientId}/reports/${period}`) : null;
+      const [data, ctx, loaded] = await Promise.all([api(`/api/clients/${clientId}`), getContext(), extra]);
       if (current !== revision) return;
       context = ctx;
-      html = clientPage(data, ctx, zone);
+      section = stageInfo[data.client.stage].phase === 'sales' || data.client.stage === 'lost' ? 'opportunities' : 'clients';
+      page = { client: data.client, report: tab === 'report' ? loaded : null, section };
+      if (tab === 'profile' && query.get('edit') === '1') {
+        if (wizard?.key !== data.client.id || !wizard.staff) wizard = { key: data.client.id, staff: true, step: 0,
+          info: { client_name: data.client.name, submitted: false }, answers: structuredClone(data.profile?.answers ?? { company: data.client.name }) };
+        html = intakePage(wizard.info, wizard.key, wizard.step, wizard.answers, true);
+      } else html = clientPage({ ...data, ...(tab === 'matches' ? { matches: loaded[0], matchCounts: loaded[1] } : {}),
+        cards: tab === 'introductions' ? loaded : null, report: tab === 'report' ? loaded : null }, ctx, zone, tab, query);
     } else if (path === '/admin') {
       if (user.role !== 'admin') throw new RequestError(403, { error: 'Ask an admin for access.' });
       const tab = ['audit','import','mcp'].includes(query.get('tab')) ? query.get('tab') : 'accounts';
@@ -206,6 +248,8 @@ async function render({ focus = false } = {}) {
       html = adminPage(tab, data, ctx, query, zone, imported);
     } else throw new RequestError(404, { error: 'This page doesn’t exist.' });
     if (current !== revision) return;
+    if (!path.startsWith('/clients/')) page = { ...page, section: undefined, client: undefined, report: undefined };
+    else if (section) chrome.innerHTML = shell(user, path, section);
     show(html, focus, hash);
     if (todayResult) todayAcknowledgement = api('/api/today/seen', 'POST', { reply_cursor: todayResult.reply_cursor }).catch(() => {});
     if (user && !publicRoute) refreshAlertDot();
@@ -233,7 +277,8 @@ function readWizard(form) {
         (rows[Number(index)] ??= {})[child] = value;
       }
       wizard.answers[def.key] = rows.filter(Boolean);
-    } else {
+    } else if (def.type === 'multi') wizard.answers[def.key] = data.getAll(def.key);
+    else {
       const value = data.get(def.key);
       if (def.type === 'number' && value !== '') wizard.answers[def.key] = Number(value);
       else if (def.type === 'number') delete wizard.answers[def.key];
@@ -242,8 +287,28 @@ function readWizard(form) {
   }
 }
 
-async function advanceWizard(form, how) {
+async function advanceWizard(form, how, step) {
   readWizard(form);
+  if (how === 'jump') {
+    if (!wizard.staff) await api(`/api/onboard/${pathId(wizard.key)}/draft`, 'POST', wizard.answers);
+    wizard.step = step;
+    await render({ focus: true });
+    return;
+  }
+  if (wizard.staff) {
+    // A manager's edit is kept in memory between steps and saved once, as a new profile version.
+    if (how === 'save' || (how === 'next' && wizard.step === sections.length - 1)) {
+      const target = `/clients/${pathId(wizard.key)}?tab=profile`;
+      await api(`/api/clients/${pathId(wizard.key)}/profile`, 'POST', wizard.answers);
+      wizard = null;
+      notify('Profile saved.');
+      navigate(target, { replace: true });
+      return;
+    }
+    wizard.step += how === 'next' ? 1 : -1;
+    await render({ focus: true });
+    return;
+  }
   const path = `/api/onboard/${pathId(wizard.key)}`;
   if (how === 'next' && wizard.step === sections.length - 1) {
     await api(`${path}/submit`, 'POST', wizard.answers);
@@ -253,7 +318,7 @@ async function advanceWizard(form, how) {
     await api(`${path}/draft`, 'POST', wizard.answers);
     if (how === 'next') wizard.step++;
     if (how === 'back') wizard.step--;
-    if (how === 'save') { notify('Draft saved.'); return; }
+    if (how === 'save') { notify('Saved. You can come back to this link any time.'); return; }
   }
   await render({ focus: true });
 }
@@ -291,7 +356,8 @@ const forms = {
   async activity(form, data) {
     const value = Object.fromEntries(data);
     const input = { kind: value.kind, body: value.body };
-    if (value.kind !== 'note') {
+    if (value.kind === 'introduction' && value.occurred_at) input.occurred_at = dateFromInput(value.occurred_at);
+    if (['sent', 'reply'].includes(value.kind)) {
       input.subject = value.subject;
       if (value.occurred_at) input.occurred_at = dateFromInput(value.occurred_at);
       if (value.mailbox_scope) input.mailbox_scope = value.mailbox_scope;
@@ -317,15 +383,39 @@ const forms = {
     notify('Draft saved.');
     navigate(`${location.pathname}#draft-${pathId(draft.id)}`, { replace: true });
   },
-  async 'add-client'(form, data) {
-    const { client } = await api('/api/clients', 'POST', { name: data.get('name'), owner_id: data.get('owner_id'), member_ids: data.getAll('member_ids') });
-    notify('Client added.');
+  async 'client-create'(form, data) {
+    const { client } = await api('/api/clients', 'POST', clientInput(data));
+    notify(`${client.name} added.`);
     navigate(`/clients/${pathId(client.id)}`);
   },
   async 'client-edit'(form, data) {
-    await api(`/api/clients/${pathId(form.dataset.id)}`, 'PATCH', { name: data.get('name'), owner_id: data.get('owner_id'), member_ids: data.getAll('member_ids') });
-    notify('Client settings saved.');
+    await api(`/api/clients/${pathId(form.dataset.id)}`, 'PATCH', { ...clientInput(data), started_on: data.get('started_on') || null });
+    notify('Changes saved.');
+    dialog.close();
     await render();
+  },
+  async 'client-access'(form, data) {
+    await api(`/api/clients/${pathId(form.dataset.id)}`, 'PATCH', { owner_id: data.get('owner_id'), member_ids: data.getAll('member_ids') });
+    notify('Access saved.');
+    await render();
+  },
+  async 'client-note'(form, data) {
+    await api(`/api/clients/${pathId(form.dataset.id)}/notes`, 'POST', { body: data.get('body') });
+    notify('Note added.');
+    await render();
+  },
+  async 'report-summary'(form, data) {
+    await api(`/api/clients/${pathId(form.dataset.id)}/reports/${pathId(data.get('period'))}`, 'POST',
+      { headline: data.get('headline'), summary: data.get('summary'), next_steps: data.get('next_steps') });
+    notify('Summary saved.');
+    await render();
+  },
+  async entry(form, data) {
+    const { clientId, input } = entryInput(data);
+    if (form.dataset.id) await api(`/api/report-entries/${pathId(form.dataset.id)}`, 'PATCH', input);
+    else await api(`/api/clients/${pathId(clientId)}/report-entries`, 'POST', input);
+    notify(form.dataset.id ? 'Entry saved.' : 'Added to the report.');
+    navigate(`/clients/${pathId(clientId)}?tab=report&period=${input.occurred_on.slice(0, 7)}`, { replace: true });
   },
   async intake(form) { await advanceWizard(form, 'next'); },
   async 'invite-account'(form, data) {
@@ -358,6 +448,21 @@ const forms = {
     await render();
   },
 };
+
+function clientInput(data) {
+  const value = Object.fromEntries(data);
+  return { name: value.name, stage: value.stage, website: value.website, contact_name: value.contact_name, contact_title: value.contact_title,
+    contact_email: value.contact_email, contact_phone: value.contact_phone, source: value.source, next_step: value.next_step,
+    closed_reason: stageInfo[value.stage]?.phase === 'closed' ? value.closed_reason : '',
+    monthly_value: value.monthly_value === '' ? null : Number(value.monthly_value), next_step_at: value.next_step_at || null };
+}
+
+function entryInput(data) {
+  const value = Object.fromEntries(data);
+  const metrics = Object.fromEntries([...data].filter(([key, amount]) => key.startsWith('metric_') && amount !== '').map(([key, amount]) => [key.slice(7), Number(amount)]));
+  return { clientId: value.client_id, input: { kind: value.kind, occurred_on: value.occurred_on, title: value.title, detail: value.detail ?? '',
+    channel: value.channel ?? '', contact: value.contact ?? '', url: value.url ?? '', metrics } };
+}
 
 function formError(form, message) {
   let error = form.querySelector('[data-form-error]');
@@ -425,21 +530,29 @@ async function moreRows(button, type) {
     html = result.items.map(row => boardCard(row, zone)).join('');
     cursor = result.next_offset;
   } else if (type === 'suggestions') {
-    q.set('offset', next);
-    result = await api(queryPath('/api/suggestions', suggestionQuery(q)));
+    const onClient = button.dataset.id;
+    const filters = onClient ? new URLSearchParams({ client_id: onClient, status: q.get('status') ?? 'pending' }) : q;
+    filters.set('offset', next);
+    result = await api(queryPath('/api/suggestions', suggestionQuery(filters)));
     target = document.querySelector('#suggestion-list');
-    html = suggestionRows(result.items);
+    html = matchRows(result.items, { showClient: !onClient, stay: true });
     cursor = result.next_offset;
-  } else if (type === 'clients') {
-    q.set('offset', next);
-    result = await api(queryPath('/api/clients', q));
-    target = document.querySelector('#client-list');
-    html = clientRows(result.items, zone);
+  } else if (type === 'accounts') {
+    const filters = new URLSearchParams(page.filters);
+    filters.set('offset', next);
+    result = await api(queryPath('/api/clients', filters));
+    target = document.querySelector('#account-list');
+    html = accountRows(result.items, button.dataset.phase, zone);
     cursor = result.next_offset;
+  } else if (type === 'timeline') {
+    result = await api(`/api/clients/${pathId(button.dataset.id)}/timeline?before=${pathId(next)}`);
+    target = document.querySelector('#timeline-list');
+    html = timelineItems(result.items, zone);
+    cursor = result.next_cursor;
   } else if (type === 'submissions') {
     result = await api(`/api/clients/${pathId(button.dataset.id)}/submissions?before=${pathId(next)}`);
     target = document.querySelector('#submission-list');
-    html = submissionRows(result.items, button.dataset.id, zone);
+    html = versionRows(result.items, button.dataset.id, zone);
     cursor = result.next_cursor;
   } else if (type === 'activity') {
     result = await api(`/api/cards/${pathId(button.dataset.id)}/activity?before=${pathId(next)}`);
@@ -455,15 +568,15 @@ async function moreRows(button, type) {
   }
   if (!button.isConnected || !target) return;
   target.insertAdjacentHTML('beforeend', html);
-  if (cursor === null) button.closest('.pagination').remove();
+  if (cursor === null) (button.closest('.pagination') ?? button.parentElement).remove();
   else button.dataset.next = String(cursor);
 }
 
 function pickStage(value) {
-  if (!Object.hasOwn(stages, value)) return;
-  stage = value;
-  document.querySelectorAll('[data-action="pick-stage"]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.stage === stage)));
-  document.querySelectorAll('[data-column]').forEach(column => column.classList.toggle('active', column.dataset.column === stage));
+  if (!document.querySelector(`[data-column="${CSS.escape(value)}"]`)) return;
+  boardStage[location.pathname === '/pipeline' ? 'pipeline' : page.phase ?? 'sales'] = value;
+  document.querySelectorAll('[data-action="pick-stage"]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.stage === value)));
+  document.querySelectorAll('[data-column]').forEach(column => column.classList.toggle('active', column.dataset.column === value));
 }
 
 function changeRepeater(button, remove) {
@@ -475,7 +588,7 @@ function changeRepeater(button, remove) {
     if (rows.length >= 40) throw new Error('Use a list link for more than 40 entries.');
     rows.push({});
   }
-  show(intakePage(wizard.info, wizard.key, wizard.step, wizard.answers));
+  show(intakePage(wizard.info, wizard.key, wizard.step, wizard.answers, wizard.staff));
   const entry = remove ? null : main.querySelector(`[name^="rows|${button.dataset.key}|${rows.length - 1}|"]`);
   (entry ?? main.querySelector(`[data-action="add-row"][data-key="${button.dataset.key}"]`))?.focus();
 }
@@ -485,13 +598,41 @@ const actions = {
   alerts: showAlerts,
   'mark-alerts': async button => { await api('/api/alerts/seen', 'POST', { ids: button.dataset.ids.split(',') }); await showAlerts(); },
   account: () => showDialog('Account', `<div class="stack"><div><strong>${h(user.name)}</strong><p class="muted">${h(user.email)}</p></div>
+    <div class="actions">${link('/pipeline/suggestions', 'Matches', 'sparkles')}${user.role === 'admin' ? link('/admin', 'Admin', 'admin') : ''}</div>
     <div>${btn('Sign out', { action: 'logout', glyph: 'logout' })}</div></div>`),
   logout: async () => { await api('/api/session/logout', 'POST'); user = null; context = null; navigate('/signin', { replace: true }); },
   'close-dialog': () => dialog.close(),
   'clear-filters': () => navigate(location.pathname),
   'pick-stage': button => pickStage(button.dataset.stage),
-  'add-card': () => showDialog('Add contact', createCardForm(context)),
-  'add-client': () => showDialog('Add client', clientForm(context)),
+  'add-card': button => showDialog('Add contact', createCardForm(context, button.dataset.id)),
+  'add-account': button => showDialog(button.dataset.stage === 'won' ? 'Add client' : 'Add opportunity', clientForm(context, null, button.dataset.stage), false, true),
+  'edit-client': () => showDialog(`Edit ${page.client.name}`, clientForm(context, page.client), false, true),
+  'move-client': async button => {
+    await api(`/api/clients/${pathId(button.dataset.id)}`, 'PATCH', { stage: button.dataset.stage });
+    notify(`Moved to ${stageInfo[button.dataset.stage].label}.`); await render();
+  },
+  'start-onboarding': async button => {
+    const value = await api(`/api/clients/${pathId(button.dataset.id)}/onboarding`, 'POST');
+    await render();
+    revealValue('Onboarding link', new URL(value.path, location.origin).href,
+      `Send this private link to ${value.client.contact_name || 'your contact'} at ${value.client.name}. Their answers fill in the profile. It expires ${formatDate(value.expires_at, zone, { year: 'numeric' })}.`);
+  },
+  'mail-link': async button => {
+    const value = await api(`/api/clients/${pathId(button.dataset.id)}/form-link`, 'POST');
+    const client = page.client;
+    const body = `Hi ${client.contact_name.split(/\s+/)[0] || 'there'},\r\n\r\nWelcome aboard. To get started, please fill in our onboarding form. It saves as you go, so you can come back to it:\r\n\r\n${new URL(value.path, location.origin).href}\r\n\r\nThe link is private to you and expires ${formatDate(value.expires_at, zone)}.\r\n\r\nThanks,\r\n${user.name}`;
+    location.href = `mailto:${encodeURIComponent(client.contact_email).replaceAll('%40', '@')}?subject=${encodeURIComponent('Your Branded Network onboarding')}&body=${encodeURIComponent(body)}`;
+  },
+  'match-prompt': () => showDialog('Find matches with Claude', matchDialog(page.client), false, true),
+  'report-prompt': () => showDialog('Build this report with Claude', reportDialog(page.client, page.report.period), false, true),
+  'copy-prompt': () => clipboard(dialog.querySelector('#prompt-text').textContent, 'Prompt copied. Paste it into Claude.'),
+  'add-entry': button => showDialog('Add to report', entryForm(page.client.id, page.report.period, { kind: button.dataset.kind }, zone), false, true),
+  'edit-entry': button => showDialog('Edit entry', entryForm(page.client.id, page.report.period, page.report.entries.find(entry => entry.id === button.dataset.id), zone), false, true),
+  'delete-entry': async button => {
+    if (!confirm('Remove this entry from the report?')) return;
+    await api(`/api/report-entries/${pathId(button.dataset.id)}/delete`, 'POST');
+    notify('Entry removed.'); await render();
+  },
   'invite-account': () => showDialog('Invite user', inviteForm()),
   'new-job': () => showDialog('Create Claude job credential', jobTokenForm(context)),
   'copy-dialog-value': () => clipboard(dialog.querySelector('textarea').value, 'Copied.'),
@@ -513,19 +654,20 @@ const actions = {
   },
   decide: async button => {
     const data = await api(`/api/suggestions/${pathId(button.dataset.id)}/decision`, 'POST', { decision: button.dataset.decision });
-    notify(data.suggestion.card_id ? 'Added to To Contact.' : 'Suggestion dismissed.');
-    if (data.suggestion.card_id) navigate(`/pipeline/cards/${pathId(data.suggestion.card_id)}`);
-    else navigate('/pipeline/suggestions');
+    notify(data.suggestion.card_id ? 'Approved. Added to introductions.' : 'Match dismissed.');
+    if (button.hasAttribute('data-stay')) await render();
+    else if (data.suggestion.card_id) navigate(`/pipeline/cards/${pathId(data.suggestion.card_id)}`);
+    else navigate(`/clients/${pathId(data.suggestion.client_id)}?tab=matches`);
   },
   'form-link': async button => {
     const value = await api(`/api/clients/${pathId(button.dataset.id)}/form-link`, 'POST');
     await render();
-    await clipboard(new URL(value.path, location.origin).href, 'Form link copied.');
+    await clipboard(new URL(value.path, location.origin).href, 'Onboarding link copied.');
   },
   'revoke-form': async button => {
-    if (!confirm('Revoke the active link and discard its unfinished draft?')) return;
+    if (!confirm('Revoke the active link? Any unfinished answers on it are discarded.')) return;
     await api(`/api/clients/${pathId(button.dataset.id)}/form-link/revoke`, 'POST');
-    notify('Form link revoked.'); await render();
+    notify('Link revoked.'); await render();
   },
   'setup-link': async button => {
     const result = await api(`/api/admin/accounts/${pathId(button.dataset.id)}/setup`, 'POST');
@@ -545,11 +687,13 @@ const actions = {
   },
   'intake-back': button => advanceWizard(button.closest('form'), 'back'),
   'intake-save': button => advanceWizard(button.closest('form'), 'save'),
+  'intake-step': button => advanceWizard(main.querySelector('form[data-form="intake"]'), 'jump', Number(button.dataset.step)),
   'add-row': button => changeRepeater(button, false),
   'remove-row': button => changeRepeater(button, true),
   'more-cards': button => moreRows(button, 'cards'),
   'more-suggestions': button => moreRows(button, 'suggestions'),
-  'more-clients': button => moreRows(button, 'clients'),
+  'more-accounts': button => moreRows(button, 'accounts'),
+  'more-timeline': button => moreRows(button, 'timeline'),
   'more-submissions': button => moreRows(button, 'submissions'),
   'more-activity': button => moreRows(button, 'activity'),
   'more-audit': button => moreRows(button, 'audit'),
@@ -561,7 +705,7 @@ async function exportPdf(anchor) {
   const objectUrl = URL.createObjectURL(await response.blob());
   const download = document.createElement('a');
   download.href = objectUrl;
-  download.download = response.headers.get('content-disposition')?.match(/filename="([a-zA-Z0-9.-]+)"/)?.[1] || 'onboarding.pdf';
+  download.download = response.headers.get('content-disposition')?.match(/filename="([a-zA-Z0-9.-]+)"/)?.[1] || 'export.pdf';
   document.body.append(download);
   download.click();
   download.remove();
@@ -597,8 +741,18 @@ document.addEventListener('change', event => {
   if (!form) return;
   if (form.dataset.form === 'card-edit' && event.target.name === 'stage') form.querySelector('[data-outcome]').hidden = event.target.value !== 'closed';
   if (form.dataset.form === 'activity' && event.target.name === 'kind') {
-    form.querySelector('[data-mail-fields]').hidden = event.target.value === 'note';
+    form.querySelector('[data-when-field]').hidden = event.target.value === 'note';
+    form.querySelector('[data-mail-fields]').hidden = !['sent', 'reply'].includes(event.target.value);
     form.querySelector('[data-sent-field]').hidden = event.target.value !== 'sent';
+  }
+  if (['client-create', 'client-edit'].includes(form.dataset.form) && event.target.name === 'stage') {
+    form.querySelector('[data-closed]').hidden = stageInfo[event.target.value].phase !== 'closed';
+  }
+  if (form.dataset.form === 'entry' && event.target.name === 'kind') {
+    // Each kind of work has its own labels and numbers, so redraw the form and keep what was typed.
+    const { clientId, input } = entryInput(new FormData(form));
+    form.outerHTML = entryForm(clientId, page.report.period, { ...input, id: form.dataset.id || undefined }, zone);
+    dialog.querySelector('[name="title"]')?.focus();
   }
   if (form.dataset.form === 'preview-import' && event.target.name === 'file') {
     imported = null;
@@ -613,8 +767,9 @@ document.addEventListener('change', event => {
 document.addEventListener('dragstart', event => {
   const card = event.target.closest('.board-card');
   if (!card || !matchMedia('(min-width: 900px) and (pointer: fine)').matches) { if (card) event.preventDefault(); return; }
-  dragged = { id: card.dataset.card, version: Number(card.dataset.version), stage: card.dataset.stage };
-  event.dataTransfer.setData('text/plain', card.dataset.card);
+  dragged = card.dataset.client ? { client: card.dataset.client, stage: card.dataset.stage }
+    : { id: card.dataset.card, version: Number(card.dataset.version), stage: card.dataset.stage };
+  event.dataTransfer.setData('text/plain', card.dataset.client ?? card.dataset.card);
   event.dataTransfer.effectAllowed = 'move';
 });
 document.addEventListener('dragover', event => {
@@ -635,6 +790,14 @@ document.addEventListener('drop', async event => {
   column.classList.remove('drag-over');
   dragged = null;
   if (card.stage === target) return;
+  if (card.client) {
+    try {
+      await api(`/api/clients/${pathId(card.client)}`, 'PATCH', { stage: target });
+      notify(`Moved to ${stageInfo[target].label}.`);
+      await render();
+    } catch (error) { notify(error.message); }
+    return;
+  }
   if (target === 'closed') { navigate(`/pipeline/cards/${pathId(card.id)}?stage=closed#edit-card`); return; }
   try {
     await api(`/api/cards/${pathId(card.id)}`, 'PATCH', { stage: target, version: card.version });

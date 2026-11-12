@@ -18,6 +18,9 @@ export const digest = (value) => createHash('sha256').update(value).digest('hex'
 export const encode = (value) => JSON.stringify(value);
 export const decode = (value) => JSON.parse(value);
 
+const migrations = ['schema.sql', 'schema-2.sql'];
+export const schemaVersion = migrations.length;
+
 export function openStore(path) {
   if (!path) throw new Error('Set DATABASE_PATH before starting the app.');
   const file = path === ':memory:' ? path : resolve(path);
@@ -25,7 +28,7 @@ export function openStore(path) {
   const db = new DatabaseSync(file, { timeout: 5000, enableForeignKeyConstraints: true });
   db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA trusted_schema=OFF;');
   const version = db.prepare('PRAGMA user_version').get().user_version;
-  if (version > 1) {
+  if (version > migrations.length) {
     db.close();
     throw new Error('The database requires a newer app version.');
   }
@@ -47,10 +50,11 @@ export function openStore(path) {
       }
     },
   };
-  if (version === 0) store.tx(() => {
-    if (store.get('PRAGMA user_version').user_version === 0) {
-      db.exec(readFileSync(new URL('./schema.sql', import.meta.url), 'utf8'));
-      db.exec('PRAGMA user_version=1');
+  // Each file upgrades the database by one version. A new database runs them all in order.
+  if (version < migrations.length) store.tx(() => {
+    for (let next = store.get('PRAGMA user_version').user_version; next < migrations.length; next++) {
+      db.exec(readFileSync(new URL(`./${migrations[next]}`, import.meta.url), 'utf8'));
+      db.exec(`PRAGMA user_version=${next + 1}`);
     }
   });
   return store;
@@ -70,6 +74,13 @@ export function requireAdmin(actor) {
 
 export function requireHuman(actor) {
   if (actor.kind !== 'user' || actor.readOnly) throw new AppError(403, 'Use a manager account to make this change.');
+}
+
+// Matches and report entries may be saved by the Claude job or by a signed-in manager working through Claude.
+export function requireAssistant(actor) {
+  if (actor.kind !== 'claude' && !(actor.kind === 'user' && actor.assistantWrites)) {
+    throw new AppError(403, 'This credential cannot save records.');
+  }
 }
 
 // The expression is supplied by callers, never interpolated from a request.

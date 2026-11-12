@@ -2,6 +2,7 @@ import { AppError, audit, clientFor, requireAdmin } from './store.mjs';
 import { insertClient, insertSubmission, intakeAnswers } from './clients.mjs';
 import { appendActivity, evidenceSchema, importOutreach, insertCard, insertSuggestion, stages } from './pipeline.mjs';
 import { choice, email, int, num, object, str, time, validate } from './validation.mjs';
+import { stageIds } from '../public/lifecycle.mjs';
 
 const identity = { id: str(250), client_id: str(250) };
 const dates = { created_at: str(40), entered_at: str(40) };
@@ -9,7 +10,9 @@ const card = { company: str(180), person: str(150, 0), title: str(160, 0), email
   owner_email: str(254), stage: choice(...stages), next_step: str(300, 0), outcome: str(300, 0), due_at: str(40, 0),
   branded_relationship: str(600, 0), ...dates };
 const definitions = {
-  clients: object({ id: str(250), name: str(180), owner_email: str(254), created_at: str(40) }, ['id', 'name']),
+  clients: object({ id: str(250), name: str(180), owner_email: str(254), created_at: str(40), stage: choice(...stageIds), website: str(600, 0),
+    contact_name: str(150, 0), contact_title: str(160, 0), contact_email: str(254, 0), contact_phone: str(70, 0), monthly_value: int(0, 100000000),
+    source: str(200, 0), next_step: str(300, 0), next_step_at: str(10, 0), started_on: str(10, 0), closed_reason: str(600, 0) }, ['id', 'name']),
   partners: object({ ...identity, ...card, fit_reason: str(2500, 0) }, ['id', 'client_id', 'company']),
   introductions: object({ ...identity, ...card, partner_id: str(250), occurred_at: str(40), status: str(150, 0), notes: str(4000, 0) }, ['id', 'client_id']),
   outreach_activity: object({ ...identity, partner_id: str(250), kind: choice('sent', 'reply', 'note'), occurred_at: str(40),
@@ -43,8 +46,11 @@ function normalizedInput(kind, raw) {
 }
 
 function writeRow(store, actor, namespace, kind, row) {
-  if (kind === 'clients') return insertClient(store, actor, { name: row.name, owner_id: accountId(store, row.owner_email) },
-    row.created_at ? time(row.created_at) : undefined).id;
+  if (kind === 'clients') {
+    // Existing records are active clients unless the export says otherwise.
+    const { id: sourceId, owner_email: ownerEmail, created_at: createdAt, ...details } = row;
+    return insertClient(store, actor, { ...details, owner_id: accountId(store, ownerEmail) }, createdAt ? time(createdAt) : undefined).id;
+  }
   const clientId = imported(store, namespace, 'clients', row.client_id);
   if (!clientId) throw new AppError(400, `Client reference ${row.client_id} was not found in this import namespace.`);
   const client = clientFor(store, actor, clientId);
