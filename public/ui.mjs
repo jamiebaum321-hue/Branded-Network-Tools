@@ -75,7 +75,13 @@ export const btn = (label, { kind = '', action, data = '', glyph, type = 'button
   `<button type="${type}" class="button ${h(kind)}"${action ? ` data-action="${h(action)}"` : ''}${data ? ` ${data}` : ''}>${glyph ? icon(glyph) : ''}${h(label)}</button>`;
 export const link = (href, label, glyph, extra = '') => `<a href="${h(href)}" class="text-link ${h(extra)}">${glyph ? icon(glyph) : ''}${h(label)}</a>`;
 export const emptyState = (title, detail = '') => `<div class="empty"><strong>${h(title)}</strong>${detail ? `<p>${h(detail)}</p>` : ''}</div>`;
-export const heading = (title, detail = '', action = '') => `<div class="heading"><div><h1>${h(title)}</h1>${detail ? `<p>${h(detail)}</p>` : ''}</div>${action}</div>`;
+export function heading(title, detail = '', action = '', { art, date, compact = false } = {}) {
+  const copy = `${date ? `<span class="date-label">${h(date)}</span>` : ''}<h1>${h(title)}</h1>${detail ? `<p>${h(detail)}</p>` : ''}`;
+  if (!art) return `<div class="heading"><div>${copy}</div>${action}</div>`;
+  return `<div class="heading page-hero${compact ? ' compact' : ''}" data-art="${h(art)}">
+    <div class="hero-copy">${copy}${action ? `<div class="hero-actions">${action}</div>` : ''}</div>
+    <div class="hero-visual" aria-hidden="true"><img src="/assets/artwork/${h(art)}.webp" width="240" height="136" alt="" decoding="async"></div></div>`;
+}
 export const brand = () => '<a class="brand" href="/today"><img width="36" height="36" src="/assets/brand/favicon-48.png" alt=""><span>Branded Network<small>Solutions Pipeline</small></span></a>';
 
 export function outboundLink(value) {

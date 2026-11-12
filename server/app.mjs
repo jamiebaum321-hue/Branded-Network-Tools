@@ -32,7 +32,8 @@ const imageAssets = [
     .flatMap(name => ['ink', 'iris'].map(tone => [`icons/${name}-${tone}.png`, 'image/png'])),
   ['icons/alerts-ink.png', 'image/png'],
   ['icons/onboarding-iris.png', 'image/png'],
-  ...['pipeline-board', 'client-onboarding', 'suggested-connections', 'pipeline-insights', 'today-caught-up']
+  ...['pipeline-board', 'client-onboarding', 'suggested-connections', 'pipeline-insights', 'today-caught-up',
+    'day-planner', 'pipeline-flow', 'client-portfolio', 'contact-profile', 'workspace-controls', 'onboarding-flow']
     .map(name => [`artwork/${name}.webp`, 'image/webp']),
 ];
 for (const [path, type] of imageAssets) assets.set(`/assets/${path}`, [`assets/${path}`, type]);

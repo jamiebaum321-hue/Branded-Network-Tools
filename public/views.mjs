@@ -27,7 +27,7 @@ export function signInPage(demo) {
 }
 
 export function setupPage(info, key) {
-  return `<div class="form-page narrow">${brand()}${heading('Set your password', `${info.name} · ${info.email}`)}
+  return `<div class="form-page narrow">${brand()}${heading('Set your password', `${info.name} · ${info.email}`, '', { art: 'workspace-controls', compact: true })}
     <div class="panel">${subjectForm('setup', key, `${field('Password', 'password', '', { type: 'password', autocomplete: 'new-password', required: true, max: 256, hint: 'Use at least 12 characters.' })}
     ${field('Confirm password', 'confirmation', '', { type: 'password', autocomplete: 'new-password', required: true, max: 256 })}
     ${btn('Activate account', { kind: 'primary', type: 'submit' })}`)}</div></div>`;
@@ -43,7 +43,7 @@ export function todayPage(data, zone) {
     { key: 'replies', title: 'Replies since last visit', glyph: 'reply', tone: 'green', empty: 'No new replies since your last visit.', label: row => badge(timeLabel(row.at, zone), 'green') },
     { key: 'leads', title: 'Suggested leads', glyph: 'leads', tone: 'blue', empty: 'No leads are waiting for your review.', label: row => badge(row.extra, 'blue') },
   ];
-  const title = `<div class="heading today-heading"><div><span class="date-label">${h(currentDate(zone))}</span><h1>Today</h1></div></div>`;
+  const title = heading('Today', '', '', { art: 'day-planner', date: currentDate(zone) });
   if (!data.more_replies && panels.every(panel => !data[panel.key].length)) {
     return `${title}<section class="panel flush">${illustratedState('today-caught-up', 'You’re caught up',
       'There are no follow-ups, drafts, replies, or leads waiting for you.', link('/pipeline', 'Open pipeline', 'arrow'))}</section>`;
@@ -78,7 +78,8 @@ function filters(kind, query, context, expanded = Boolean(query.size)) {
 export function boardCard(row, zone) {
   const due = row.due_at && new Date(row.due_at) <= new Date();
   return `<a class="board-card" href="/pipeline/cards/${pathId(row.id)}" draggable="true" data-card="${h(row.id)}" data-version="${row.version}" data-stage="${h(row.stage)}">
-    ${identity(row)}<div class="chips">${due ? badge('Follow-up due', 'amber') : row.suggestion_id ? badge('Approved lead', 'green') : row.outcome ? badge(row.outcome, 'green') : ''}</div>
+    <div class="board-identity"><span class="contact-avatar ${stages[row.stage].tone}" aria-hidden="true">${h(initials(row.person || row.company))}</span>${identity(row)}</div>
+    <div class="chips">${due ? badge('Follow-up due', 'amber') : row.suggestion_id ? badge('Approved lead', 'green') : row.outcome ? badge(row.outcome, 'green') : ''}</div>
     <dl><dt>Owner</dt><dd>${h(row.owner_name)}</dd><dt>Last touch</dt><dd>${h(formatDate(row.last_touch, zone))}</dd>
     <dt>Next step</dt><dd>${h(row.next_step || '—')}</dd><dt>In stage</dt><dd>${h(stageDuration(row.entered_at))}</dd>
     ${row.due_at ? `<dt>Follow-up</dt><dd>${h(formatDate(row.due_at, zone))}</dd>` : ''}</dl></a>`;
@@ -87,7 +88,8 @@ export function boardCard(row, zone) {
 export function boardPage(groups, context, query, zone, currentStage) {
   const addContact = btn('Add contact', { kind: 'primary', glyph: 'plus', action: 'add-card' });
   const emptyBoard = !context.clients.length || (!query.size && groups.every(group => group.total === 0));
-  const top = `${heading('Partner pipeline', '', emptyBoard ? '' : addContact)}${pipelineTabs('board')}${filters('board', query, context)}`;
+  const top = `${heading('Partner pipeline', '', emptyBoard ? '' : addContact, { art: emptyBoard ? undefined : 'pipeline-flow' })}
+    ${pipelineTabs('board')}${filters('board', query, context)}`;
   if (emptyBoard) {
     return `${top}<section class="panel flush">${context.clients.length
       ? illustratedState('pipeline-board', 'No contacts yet', 'Add a contact to start tracking introductions.', addContact)
@@ -95,11 +97,13 @@ export function boardPage(groups, context, query, zone, currentStage) {
         ? 'Add a client before creating a pipeline card.' : 'Pipeline cards appear here when you have access to a client.',
       link('/clients', 'Open clients', 'arrow'))}</section>`;
   }
+  const stageIcons = { to_contact: 'leads', reached_out: 'mail', in_conversation: 'reply', closed: 'check' };
   return `${top}
     <div class="stage-picker" aria-label="Visible stage">${groups.map(group => `<button type="button" class="button" data-action="pick-stage"
       data-stage="${h(group.stage)}" aria-pressed="${group.stage === currentStage}">${h(stages[group.stage].label)} ${badge(group.total)}</button>`).join('')}</div>
     <div class="board">${groups.map(group => `<section class="board-column ${group.stage === currentStage ? 'active' : ''}" data-column="${h(group.stage)}">
-      <div class="column-heading"><h2>${h(stages[group.stage].label)}</h2><span data-stage-count>${badge(group.total, stages[group.stage].tone)}</span></div>
+      <div class="column-heading"><span class="stage-icon ${stages[group.stage].tone}">${icon(stageIcons[group.stage])}</span>
+        <h2>${h(stages[group.stage].label)}</h2><span data-stage-count>${badge(group.total, stages[group.stage].tone)}</span></div>
       <div class="column-list">${group.items.length ? group.items.map(row => boardCard(row, zone)).join('') : emptyState('No contacts in this stage.')}</div>
       ${group.total > group.items.length ? `<div class="pagination">${btn('Load more', { action: 'more-cards', data: `data-stage="${h(group.stage)}" data-next="${group.items.length}"` })}</div>` : ''}
     </section>`).join('')}</div>`;
@@ -174,7 +178,8 @@ export function cardPage(data, zone, toStage, hash) {
   const { card, drafts, history } = data;
   const fields = [['Client', card.client_name], ['Owner', card.owner_name], ['Next step', card.next_step || '—'], ['Time in stage', stageDuration(card.entered_at)],
     ['Last touch', timeLabel(card.last_touch, zone)], ['Follow-up', timeLabel(card.due_at, zone)], ['Closure outcome', card.outcome || '—']];
-  return `${link('/pipeline', 'Back to pipeline', 'back', 'back-link')}${heading(card.person || card.company, card.person ? card.company : '', stageBadge(card.stage))}
+  return `${link('/pipeline', 'Back to pipeline', 'back', 'back-link')}${heading(card.person || card.company, card.person ? card.company : '',
+    stageBadge(card.stage), { art: 'contact-profile', compact: true })}
     <div class="detail-grid"><div class="stack"><section class="panel stack"><dl class="summary-grid">${fields.filter(([key]) => key !== 'Closure outcome' || card.stage === 'closed').map(([label, value]) =>
       `<div><dt>${h(label)}</dt><dd>${h(value)}</dd></div>`).join('')}</dl>
       ${card.fit_reason ? `<div><h3>Why it fit</h3><p class="muted multiline">${h(card.fit_reason)}</p>
@@ -191,10 +196,13 @@ export function metricsPage(data, context, query, zone) {
   const applied = new URLSearchParams(query);
   if (!applied.has('from')) applied.set('from', data.from);
   if (!applied.has('to')) applied.set('to', data.to);
-  const top = `${heading('Pipeline metrics')}${pipelineTabs('metrics')}${filters('metrics', applied, context, Boolean(query.size))}
-    <div class="stat-grid">${[['Contacts', data.contacts], ['Overdue follow-ups', data.overdue], ['Sends logged', data.sent], ['Replies logged', data.replies]]
-      .map(([label, value]) => `<div class="panel stat"><strong>${value}</strong><span>${label}</span></div>`).join('')}</div>`;
-  if (data.contacts === 0 && data.sent === 0 && data.replies === 0) {
+  const noActivity = data.contacts === 0 && data.sent === 0 && data.replies === 0;
+  const top = `${heading('Pipeline metrics', '', '', { art: noActivity ? undefined : 'pipeline-insights' })}${pipelineTabs('metrics')}${filters('metrics', applied, context, Boolean(query.size))}
+    <div class="stat-grid">${[
+      ['Contacts', data.contacts, 'blue', kitIcon('clients', true)], ['Overdue follow-ups', data.overdue, 'amber', icon('today')],
+      ['Sends logged', data.sent, 'violet', icon('mail')], ['Replies logged', data.replies, 'green', icon('reply')],
+    ].map(([label, value, tone, glyph]) => `<div class="panel stat"><span class="panel-icon ${tone}">${glyph}</span><div><strong>${value}</strong><span class="stat-label">${label}</span></div></div>`).join('')}</div>`;
+  if (noActivity) {
     return `${top}<section class="panel flush">${illustratedState('pipeline-insights', 'No activity in this view',
       context.clients.length ? 'Change the filters to see other dates, clients, or owners.' : 'Track contacts and outreach to see metrics here.')}</section>`;
   }
@@ -216,13 +224,15 @@ export function suggestionRows(rows) {
 export function suggestionsPage(data, context, query) {
   const empty = query.size ? emptyState('No matching suggestions.')
     : illustratedState('suggested-connections', 'No suggestions to review', 'New leads will appear here when they’re ready for review.');
-  return `${heading('Suggested leads', 'Review the fit and source before adding a contact to the pipeline.')}${pipelineTabs('suggestions')}${filters('suggestions', query, context)}
+  return `${heading('Suggested leads', 'Review the fit and source before adding a contact to the pipeline.', '',
+    { art: data.items.length || query.size ? 'suggested-connections' : undefined })}${pipelineTabs('suggestions')}${filters('suggestions', query, context)}
     <section class="panel flush"><div id="suggestion-list">${data.items.length ? suggestionRows(data.items) : empty}</div>${pageMore('more-suggestions', data.next_offset)}</section>`;
 }
 
 export function suggestionPage(row) {
   return `${link('/pipeline/suggestions', 'Back to suggested leads', 'back', 'back-link')}
-    ${heading(row.person || row.company, row.person ? [row.title, row.company].filter(Boolean).join(' · ') : row.client_name, badge(statusName(row.status), row.status === 'approved' ? 'green' : 'blue'))}
+    ${heading(row.person || row.company, row.person ? [row.title, row.company].filter(Boolean).join(' · ') : row.client_name,
+      badge(statusName(row.status), row.status === 'approved' ? 'green' : 'blue'), { art: 'contact-profile', compact: true })}
     <div class="detail-grid"><section class="panel stack"><div><h2>Why it fits</h2><p class="multiline">${h(row.reason)}</p></div>
     <dl class="summary-grid">${[['Client', row.client_name], ['Source', row.source], ['Fit', row.fit], ['Score', row.score ?? '—'], ['Branded relationship', row.branded_relationship]]
       .map(([label, value]) => `<div><dt>${label}</dt><dd>${h(value)}</dd></div>`).join('')}</dl>
@@ -239,7 +249,8 @@ export function clientRows(rows, zone) {
 }
 
 export function clientsPage(data, query, user, zone) {
-  return `${heading('Clients', '', user.role === 'admin' ? btn('Add client', { action: 'add-client', glyph: 'plus', kind: 'primary' }) : '')}
+  return `${heading('Clients', '', user.role === 'admin' ? btn('Add client', { action: 'add-client', glyph: 'plus', kind: 'primary' }) : '',
+    { art: 'client-portfolio' })}
     <form class="filters" data-form="filter"><div class="search">${field('Search clients', 'q', query.get('q'), { type: 'search', placeholder: 'Client name', max: 180 })}</div>
     <div class="actions">${btn('Search', { type: 'submit' })}${query.size ? btn('Clear', { action: 'clear-filters', kind: 'quiet' }) : ''}</div></form>
     <section class="panel flush"><div id="client-list">${data.items.length ? clientRows(data.items, zone) : emptyState('No matching clients.')}</div>${pageMore('more-clients', data.next_offset)}</section>`;
@@ -263,8 +274,9 @@ export function submissionRows(rows, clientId, zone) {
 
 export function clientPage(data, context, zone) {
   const { client, submissions, link: active } = data;
-  return `${link('/clients', 'Back to clients', 'back', 'back-link')}${heading(client.name, `Owner · ${client.owner_name}`)}
-    <div class="grid-two"><section class="panel stack"><div><h2>Solutions Partner Onboarding</h2><p class="muted">Share a form link so the client can enter their answers.</p></div>
+  return `${link('/clients', 'Back to clients', 'back', 'back-link')}${heading(client.name, `Owner · ${client.owner_name}`, '', { art: 'client-portfolio', compact: true })}
+    <div class="grid-two"><section class="panel stack"><div class="onboarding-entry"><div><h2>Solutions Partner Onboarding</h2><p class="muted">Share a form link so the client can enter their answers.</p></div>
+    <img src="/assets/artwork/onboarding-flow.webp" width="96" height="64" loading="lazy" decoding="async" alt=""></div>
     <div class="actions">${btn('Copy form link', { action: 'form-link', glyph: 'link', kind: 'primary', data: `data-id="${h(client.id)}"` })}</div>
     ${active ? `<div class="muted">Active link expires ${h(formatDate(active.expires_at, zone))}.</div><details><summary class="small">Link settings</summary>
       ${btn('Revoke active link', { action: 'revoke-form', kind: 'danger', data: `data-id="${h(client.id)}"` })}</details>` : ''}</section>
@@ -283,7 +295,8 @@ function answerValue(value) {
 export function submissionPage(row, zone) {
   const clientPath = `/clients/${pathId(row.client_id)}`;
   return `${link(clientPath, 'Back to client', 'back', 'back-link')}${heading(`${row.client_name} onboarding`,
-    `Submission ${row.version} · ${timeLabel(row.submitted_at, zone)}`, `<a class="button" href="/api${clientPath}/submissions/${pathId(row.id)}/pdf" download>${icon('download')}Export PDF</a>`)}
+    `Submission ${row.version} · ${timeLabel(row.submitted_at, zone)}`, `<a class="button" href="/api${clientPath}/submissions/${pathId(row.id)}/pdf" download>${icon('download')}Export PDF</a>`,
+    { art: 'onboarding-flow', compact: true })}
     <div class="grid-two">${sections.map(section => `<section class="panel submission-section"><h2>${h(section.title)}</h2><dl>${section.fields.map(field => {
       const answer = row.answers[field.key];
       const value = field.rows && Array.isArray(answer) && answer.length ? answer.map(item => `<div class="evidence">${field.rows.filter(child => item[child.key]).map(child =>
@@ -303,7 +316,7 @@ export function intakePage(info, key, step, answers) {
   if (info.submitted) return `<div class="form-page">${brand()}${heading('Response submitted', info.client_name)}
     <section class="panel flush">${illustratedState('client-onboarding', 'Thank you', 'Your responses have been saved and shared with the Solutions team.')}</section></div>`;
   const section = sections[step];
-  return `<div class="form-page">${brand()}${heading('Solutions Partner Onboarding', info.client_name)}<div class="step-bar"><span class="muted">Step ${step + 1} of ${sections.length}</span>
+  return `<div class="form-page">${brand()}${heading('Solutions Partner Onboarding', info.client_name, '', { art: 'onboarding-flow', compact: true })}<div class="step-bar"><span class="muted">Step ${step + 1} of ${sections.length}</span>
     <progress value="${step + 1}" max="${sections.length}" aria-label="Onboarding progress"></progress></div>
     <section class="panel"><div class="section-head"><h2>${h(section.title)}</h2></div>${subjectForm('intake', key, `${fieldset(section.fields.map(definition =>
       definition.rows ? `<div class="wide">${repeatField(definition, answers[definition.key] ?? [])}</div>` :
@@ -379,5 +392,5 @@ export function adminPage(tab, data, context, query, zone, preview) {
   else if (tab === 'mcp') content = `<div class="stack"><section class="panel stack"><div class="section-head"><h2>Claude job credentials</h2>${btn('Create credential', { action: 'new-job', kind: 'primary' })}</div>
     <p class="muted wrap">Endpoint · <code>${h(location.origin)}/mcp</code></p></section><div class="panel flush">${tokenList(data.items, context, zone)}</div></div>`;
   else content = `<div class="stack"><div class="section-head"><h2>Team accounts</h2>${btn('Invite user', { action: 'invite-account', glyph: 'plus', kind: 'primary' })}</div>${accountList(data.items)}</div>`;
-  return `${heading('Admin')}${nav}${content}`;
+  return `${heading('Admin', '', '', { art: 'workspace-controls' })}${nav}${content}`;
 }
