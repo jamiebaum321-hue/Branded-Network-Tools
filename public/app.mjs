@@ -18,6 +18,7 @@ let wizard = null;
 let imported = null;
 let seed = null;
 let dragged = null;
+let dropColumn = null;
 let toastTimer;
 let todayAcknowledgement = Promise.resolve();
 
@@ -41,13 +42,19 @@ async function api(path, method = 'GET', body) {
 
 function notify(message) {
   clearTimeout(toastTimer);
-  status.textContent = message;
+  status.innerHTML = `${icon('info')}<span>${h(message)}</span>`;
   status.hidden = false;
   toastTimer = setTimeout(() => { status.hidden = true; }, 4200);
 }
 
-function showDialog(title, body, flush = false) {
-  dialog.innerHTML = `<div class="dialog-head"><h2 id="dialog-title">${h(title)}</h2><button type="button" class="icon-button" data-action="close-dialog" aria-label="Close">${icon('close')}</button></div>
+function showDialog(title, body, { flush = false, glyph = 'draft' } = {}) {
+  const currentBody = dialog.querySelector('.dialog-body');
+  if (dialog.open && currentBody && dialog.querySelector('#dialog-title')?.textContent === title) {
+    currentBody.classList.toggle('flush', flush);
+    currentBody.innerHTML = body;
+    return;
+  }
+  dialog.innerHTML = `<div class="dialog-head"><span class="dialog-icon">${icon(glyph)}</span><h2 id="dialog-title">${h(title)}</h2><button type="button" class="icon-button" data-action="close-dialog" aria-label="Close">${icon('close')}</button></div>
     <div class="dialog-body ${flush ? 'flush' : ''}">${body}</div>`;
   if (!dialog.open) dialog.showModal();
 }
@@ -59,14 +66,14 @@ async function clipboard(value, message) {
     await navigator.clipboard.writeText(value);
     notify(message);
   } catch {
-    showDialog('Copy text', `<label class="field"><span>Select and copy</span><textarea readonly rows="4">${h(value)}</textarea></label>`);
+    showDialog('Copy text', `<label class="field"><span>Select and copy</span><textarea readonly rows="4">${h(value)}</textarea></label>`, { glyph: 'copy' });
     dialog.querySelector('textarea').select();
   }
 }
 
 function revealValue(title, value, detail) {
   showDialog(title, `<div class="stack"><p class="muted">${h(detail)}</p><label class="field"><span>${h(title)}</span><textarea rows="3" readonly>${h(value)}</textarea></label>
-    <div>${btn('Copy', { kind: 'primary', action: 'copy-dialog-value' })}</div></div>`);
+    <div>${btn('Copy', { kind: 'primary', action: 'copy-dialog-value', glyph: 'copy' })}</div></div>`, { glyph: 'copy' });
 }
 
 const queryPath = (path, query) => `${path}${query.size ? `?${query}` : ''}`;
@@ -393,11 +400,11 @@ document.addEventListener('submit', async event => {
 });
 
 async function showAlerts() {
-  showDialog('Alerts', '<p class="loading">Loading alerts…</p>');
+  showDialog('Alerts', '<p class="loading">Loading alerts…</p>', { glyph: 'bell' });
   const data = await api('/api/alerts');
   if (!dialog.open || dialog.querySelector('#dialog-title')?.textContent !== 'Alerts') return;
   const unseen = data.items.filter(item => !item.seen_at).map(item => item.id);
-  showDialog('Alerts', `${alertRows(data, zone)}${unseen.length ? `<div class="pagination">${btn('Mark these as read', { action: 'mark-alerts', data: `data-ids="${h(unseen.join(','))}"` })}</div>` : ''}`, true);
+  showDialog('Alerts', `${alertRows(data, zone)}${unseen.length ? `<div class="pagination">${btn('Mark these as read', { action: 'mark-alerts', glyph: 'check', data: `data-ids="${h(unseen.join(','))}"` })}</div>` : ''}`, { flush: true, glyph: 'bell' });
   updateDot(data);
 }
 
@@ -485,15 +492,15 @@ const actions = {
   alerts: showAlerts,
   'mark-alerts': async button => { await api('/api/alerts/seen', 'POST', { ids: button.dataset.ids.split(',') }); await showAlerts(); },
   account: () => showDialog('Account', `<div class="stack"><div><strong>${h(user.name)}</strong><p class="muted">${h(user.email)}</p></div>
-    <div>${btn('Sign out', { action: 'logout', glyph: 'logout' })}</div></div>`),
+    <div>${btn('Sign out', { action: 'logout', glyph: 'logout' })}</div></div>`, { glyph: 'user' }),
   logout: async () => { await api('/api/session/logout', 'POST'); user = null; context = null; navigate('/signin', { replace: true }); },
   'close-dialog': () => dialog.close(),
   'clear-filters': () => navigate(location.pathname),
   'pick-stage': button => pickStage(button.dataset.stage),
-  'add-card': () => showDialog('Add contact', createCardForm(context)),
-  'add-client': () => showDialog('Add client', clientForm(context)),
-  'invite-account': () => showDialog('Invite user', inviteForm()),
-  'new-job': () => showDialog('Create Claude job credential', jobTokenForm(context)),
+  'add-card': () => showDialog('Add contact', createCardForm(context), { glyph: 'leads' }),
+  'add-client': () => showDialog('Add client', clientForm(context), { glyph: 'building' }),
+  'invite-account': () => showDialog('Invite user', inviteForm(), { glyph: 'team' }),
+  'new-job': () => showDialog('Create Claude job credential', jobTokenForm(context), { glyph: 'lock' }),
   'copy-dialog-value': () => clipboard(dialog.querySelector('textarea').value, 'Copied.'),
   'copy-draft': button => {
     const data = new FormData(button.closest('form'));
@@ -610,30 +617,43 @@ document.addEventListener('change', event => {
   }
 });
 
+function highlightDrop(column = null) {
+  if (dropColumn === column) return;
+  dropColumn?.classList.remove('drag-over');
+  dropColumn = column;
+  dropColumn?.classList.add('drag-over');
+}
+
+function finishDrag() {
+  dragged?.element.classList.remove('is-dragging');
+  dragged = null;
+  highlightDrop();
+}
+
 document.addEventListener('dragstart', event => {
   const card = event.target.closest('.board-card');
   if (!card || !matchMedia('(min-width: 900px) and (pointer: fine)').matches) { if (card) event.preventDefault(); return; }
-  dragged = { id: card.dataset.card, version: Number(card.dataset.version), stage: card.dataset.stage };
+  dragged = { id: card.dataset.card, version: Number(card.dataset.version), stage: card.dataset.stage, element: card };
   event.dataTransfer.setData('text/plain', card.dataset.card);
   event.dataTransfer.effectAllowed = 'move';
+  card.classList.add('is-dragging');
 });
 document.addEventListener('dragover', event => {
+  if (!dragged) return;
   const column = event.target.closest('[data-column]');
-  if (!column || !dragged) return;
+  if (!column || column.dataset.column === dragged.stage) { highlightDrop(); return; }
   event.preventDefault();
   event.dataTransfer.dropEffect = 'move';
-  document.querySelectorAll('.drag-over').forEach(item => { if (item !== column) item.classList.remove('drag-over'); });
-  column.classList.add('drag-over');
+  highlightDrop(column);
 });
-document.addEventListener('dragend', () => { dragged = null; document.querySelectorAll('.drag-over').forEach(item => item.classList.remove('drag-over')); });
+document.addEventListener('dragend', finishDrag);
 document.addEventListener('drop', async event => {
   const column = event.target.closest('[data-column]');
   const card = dragged;
   if (!card || !column) return;
   event.preventDefault();
   const target = column.dataset.column;
-  column.classList.remove('drag-over');
-  dragged = null;
+  finishDrag();
   if (card.stage === target) return;
   if (target === 'closed') { navigate(`/pipeline/cards/${pathId(card.id)}?stage=closed#edit-card`); return; }
   try {
