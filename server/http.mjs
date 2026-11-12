@@ -47,8 +47,15 @@ export function protect(res, config) {
   if (config.production) res.setHeader('Strict-Transport-Security', 'max-age=31536000');
 }
 
+function sameHostOrigin(req) {
+  try {
+    const host = (req.headers['x-forwarded-host'] ?? req.headers.host)?.split(',')[0].trim().toLowerCase();
+    return Boolean(host) && new URL(req.headers.origin).host.toLowerCase() === host;
+  } catch { return false; }
+}
+
 export function assertWebOrigin(req, config) {
-  if (req.headers.origin !== config.origin.origin) {
+  if (req.headers.origin !== config.origin.origin && !(config.anyHost && sameHostOrigin(req))) {
     req.resume();
     throw new AppError(403, 'This request must come from the app.');
   }

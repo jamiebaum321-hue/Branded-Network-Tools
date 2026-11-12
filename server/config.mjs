@@ -44,5 +44,7 @@ export function configuration(env) {
   const hosts = new Set([origin.host.toLowerCase(), ...(vercel ? [env.VERCEL_URL, env.VERCEL_BRANCH_URL] : [])
     .filter(Boolean).map(value => value.toLowerCase())]);
   return { production, vercel, trustProxy: vercel || env.TRUST_PROXY === '1', port, host, origin, database, linkSecret,
-    timeZone, oauth, mcpOrigins, cronSecret, hosts };
+    timeZone, oauth, mcpOrigins, cronSecret, hosts,
+    // Local development behind a preview proxy: accept any Host and same-host Origins. Never in production.
+    anyHost: !production && env.ALLOW_ANY_HOST === '1' };
 }

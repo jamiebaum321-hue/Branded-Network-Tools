@@ -199,7 +199,7 @@ export function createHandler(store, config) {
   return async function handle(req, res) {
     protect(res, config);
     try {
-      if (!(config.hosts ?? new Set([config.origin.host.toLowerCase()])).has(req.headers.host?.toLowerCase())) {
+      if (!config.anyHost && !(config.hosts ?? new Set([config.origin.host.toLowerCase()])).has(req.headers.host?.toLowerCase())) {
         req.resume();
         throw new AppError(421, 'Use the configured app address.');
       }
