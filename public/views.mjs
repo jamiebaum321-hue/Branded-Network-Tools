@@ -1,5 +1,5 @@
 import { sections } from './intake-fields.mjs';
-import { badge, brand, btn, currentDate, emptyState, field, formatDate, h, heading, hidden, icon, initials, link,
+import { badge, brand, btn, currentDate, emptyState, field, formatDate, h, heading, hidden, icon, initials, kitIcon, link,
   localInput, outboundLink, pathId, pipelineTabs, select, stageBadge, stageDuration, stageOptions, stages, timeLabel } from './ui.mjs';
 
 const names = rows => rows.map(row => ({ id: row.id, name: row.name }));
@@ -11,12 +11,19 @@ const statusName = status => ({ pending: 'Pending review', approved: 'Approved',
   needs_review: 'Review updated context', reviewed: 'Reviewed', sent: 'Sent', cancelled: 'Cancelled' })[status] ?? status;
 const subjectForm = (type, id, inner) => `<form class="stack" data-form="${type}" ${id ? `data-id="${h(id)}"` : ''}>${inner}</form>`;
 
+function illustratedState(art, title, detail, action = '') {
+  return `<div class="illustrated-state"><div class="state-art">
+    <img src="/assets/artwork/${h(art)}.webp" width="184" height="114" loading="lazy" decoding="async" alt=""></div>
+    <div class="state-copy"><strong>${h(title)}</strong><p>${h(detail)}</p>${action}</div></div>`;
+}
+
 export function signInPage(demo) {
-  return `<div class="form-page narrow">${brand()}${heading('Sign in', 'Use your Branded Network account.')}
-    <div class="panel">${subjectForm('signin', '', `${field('Email', 'email', demo ? 'demo@branded.example' : '', { type: 'email', autocomplete: 'username', required: true })}
+  return `<div class="auth-page"><div class="auth-content">${brand()}${heading('Sign in', 'Use your Branded Network account.')}
+    ${subjectForm('signin', '', `${field('Email', 'email', demo ? 'demo@branded.example' : '', { type: 'email', autocomplete: 'username', required: true })}
     ${field('Password', 'password', demo ? 'Local-Demo-Pipeline-24' : '', { type: 'password', autocomplete: 'current-password', required: true, max: 256 })}
-    ${btn('Sign in', { kind: 'primary', type: 'submit' })}`)}</div>
-    ${demo ? '<p class="muted small">Local demo · Fictional records reset when the server stops.</p>' : ''}</div>`;
+    ${btn('Sign in', { kind: 'primary', type: 'submit' })}`)}
+    ${demo ? '<p class="demo-note muted small">Local demo · Fictional records reset when the server stops.</p>' : ''}</div>
+    <div class="auth-art" aria-hidden="true"></div></div>`;
 }
 
 export function setupPage(info, key) {
@@ -36,7 +43,12 @@ export function todayPage(data, zone) {
     { key: 'replies', title: 'Replies since last visit', glyph: 'reply', tone: 'green', empty: 'No new replies since your last visit.', label: row => badge(timeLabel(row.at, zone), 'green') },
     { key: 'leads', title: 'Suggested leads', glyph: 'leads', tone: 'blue', empty: 'No leads are waiting for your review.', label: row => badge(row.extra, 'blue') },
   ];
-  return `<div class="heading"><div><span class="date-label">${h(currentDate(zone))}</span><h1>Today</h1></div></div><div class="today-grid">${panels.map(panel => {
+  const title = `<div class="heading today-heading"><div><span class="date-label">${h(currentDate(zone))}</span><h1>Today</h1></div></div>`;
+  if (!data.more_replies && panels.every(panel => !data[panel.key].length)) {
+    return `${title}<section class="panel flush">${illustratedState('today-caught-up', 'You’re caught up',
+      'There are no follow-ups, drafts, replies, or leads waiting for you.', link('/pipeline', 'Open pipeline', 'arrow'))}</section>`;
+  }
+  return `${title}<div class="today-grid">${panels.map(panel => {
     const rows = data[panel.key];
     return `<section class="panel flush" aria-label="${h(panel.title)}"><div class="panel-title"><span class="panel-icon ${panel.tone}">${icon(panel.glyph)}</span>
       <h2>${panel.title}</h2>${rows.length ? badge(`${rows.length}${panel.key === 'replies' && data.more_replies ? '+' : ''}`) : ''}</div>
@@ -73,9 +85,17 @@ export function boardCard(row, zone) {
 }
 
 export function boardPage(groups, context, query, zone, currentStage) {
-  return `${heading('Partner pipeline', '', context.clients.length ? btn('Add contact', { kind: 'primary', glyph: 'plus', action: 'add-card' }) : '')}
-    ${pipelineTabs('board')}${filters('board', query, context)}
-    ${!context.clients.length ? `<div class="panel">${emptyState('No clients yet.', 'Create a client or import existing records from Admin.')}${link('/clients', 'Open Clients', 'arrow')}</div>` : ''}
+  const addContact = btn('Add contact', { kind: 'primary', glyph: 'plus', action: 'add-card' });
+  const emptyBoard = !context.clients.length || (!query.size && groups.every(group => group.total === 0));
+  const top = `${heading('Partner pipeline', '', emptyBoard ? '' : addContact)}${pipelineTabs('board')}${filters('board', query, context)}`;
+  if (emptyBoard) {
+    return `${top}<section class="panel flush">${context.clients.length
+      ? illustratedState('pipeline-board', 'No contacts yet', 'Add a contact to start tracking introductions.', addContact)
+      : illustratedState('pipeline-board', 'No clients yet', context.user.role === 'admin'
+        ? 'Add a client before creating a pipeline card.' : 'Pipeline cards appear here when you have access to a client.',
+      link('/clients', 'Open clients', 'arrow'))}</section>`;
+  }
+  return `${top}
     <div class="stage-picker" aria-label="Visible stage">${groups.map(group => `<button type="button" class="button" data-action="pick-stage"
       data-stage="${h(group.stage)}" aria-pressed="${group.stage === currentStage}">${h(stages[group.stage].label)} ${badge(group.total)}</button>`).join('')}</div>
     <div class="board">${groups.map(group => `<section class="board-column ${group.stage === currentStage ? 'active' : ''}" data-column="${h(group.stage)}">
@@ -171,9 +191,14 @@ export function metricsPage(data, context, query, zone) {
   const applied = new URLSearchParams(query);
   if (!applied.has('from')) applied.set('from', data.from);
   if (!applied.has('to')) applied.set('to', data.to);
-  return `${heading('Pipeline metrics')}${pipelineTabs('metrics')}${filters('metrics', applied, context, Boolean(query.size))}
+  const top = `${heading('Pipeline metrics')}${pipelineTabs('metrics')}${filters('metrics', applied, context, Boolean(query.size))}
     <div class="stat-grid">${[['Contacts', data.contacts], ['Overdue follow-ups', data.overdue], ['Sends logged', data.sent], ['Replies logged', data.replies]]
-      .map(([label, value]) => `<div class="panel stat"><strong>${value}</strong><span>${label}</span></div>`).join('')}</div>
+      .map(([label, value]) => `<div class="panel stat"><strong>${value}</strong><span>${label}</span></div>`).join('')}</div>`;
+  if (data.contacts === 0 && data.sent === 0 && data.replies === 0) {
+    return `${top}<section class="panel flush">${illustratedState('pipeline-insights', 'No activity in this view',
+      context.clients.length ? 'Change the filters to see other dates, clients, or owners.' : 'Track contacts and outreach to see metrics here.')}</section>`;
+  }
+  return `${top}
     <div class="grid-two"><section class="panel"><div class="section-head"><h2>Contacts by stage</h2></div>
       ${data.stages.map(row => `<div class="metric-row"><span>${h(stages[row.stage].label)}</span><progress aria-label="${h(stages[row.stage].label)}" max="${Math.max(1, ...data.stages.map(s => s.count))}" value="${row.count}"></progress><strong>${row.count}</strong></div>`).join('')}</section>
       <section class="panel"><div class="section-head"><h2>Time in stage</h2></div><table class="data-table"><thead><tr><th scope="col">Stage</th><th scope="col">Median days</th></tr></thead>
@@ -189,8 +214,10 @@ export function suggestionRows(rows) {
 }
 
 export function suggestionsPage(data, context, query) {
+  const empty = query.size ? emptyState('No matching suggestions.')
+    : illustratedState('suggested-connections', 'No suggestions to review', 'New leads will appear here when they’re ready for review.');
   return `${heading('Suggested leads', 'Review the fit and source before adding a contact to the pipeline.')}${pipelineTabs('suggestions')}${filters('suggestions', query, context)}
-    <section class="panel flush"><div id="suggestion-list">${data.items.length ? suggestionRows(data.items) : emptyState('No matching suggestions.')}</div>${pageMore('more-suggestions', data.next_offset)}</section>`;
+    <section class="panel flush"><div id="suggestion-list">${data.items.length ? suggestionRows(data.items) : empty}</div>${pageMore('more-suggestions', data.next_offset)}</section>`;
 }
 
 export function suggestionPage(row) {
@@ -230,7 +257,7 @@ export function clientForm(context, data) {
 }
 
 export function submissionRows(rows, clientId, zone) {
-  return rows.map(row => `<a class="list-row" href="/clients/${pathId(clientId)}/submissions/${pathId(row.id)}"><span class="panel-icon blue">${icon('draft')}</span>
+  return rows.map(row => `<a class="list-row" href="/clients/${pathId(clientId)}/submissions/${pathId(row.id)}"><span class="panel-icon blue">${kitIcon('onboarding', true)}</span>
     <div class="row-main"><strong>Submission ${row.version}</strong><small>${h(timeLabel(row.submitted_at, zone))}${row.source_ref ? ' · Imported' : ''}</small></div>${navArrow()}</a>`).join('');
 }
 
@@ -242,7 +269,8 @@ export function clientPage(data, context, zone) {
     ${active ? `<div class="muted">Active link expires ${h(formatDate(active.expires_at, zone))}.</div><details><summary class="small">Link settings</summary>
       ${btn('Revoke active link', { action: 'revoke-form', kind: 'danger', data: `data-id="${h(client.id)}"` })}</details>` : ''}</section>
     <section class="panel flush"><div class="panel-title"><h2>Submission history</h2></div><div id="submission-list">
-    ${submissions.items.length ? submissionRows(submissions.items, client.id, zone) : emptyState('No submissions yet.')}</div>
+    ${submissions.items.length ? submissionRows(submissions.items, client.id, zone)
+      : illustratedState('client-onboarding', 'No submissions yet', 'Completed forms will appear here.')}</div>
     ${submissions.next_cursor ? `<div class="pagination">${btn('Load older submissions', { action: 'more-submissions', data: `data-id="${h(client.id)}" data-next="${submissions.next_cursor}"` })}</div>` : ''}</section></div>
     ${context.user.role === 'admin' ? `<details class="panel"><summary>Client settings</summary>${clientForm(context, data)}</details>` : ''}`;
 }
@@ -272,7 +300,8 @@ function repeatField(definition, rows) {
 }
 
 export function intakePage(info, key, step, answers) {
-  if (info.submitted) return `<div class="form-page">${brand()}${heading('Response submitted', info.client_name)}<div class="panel">${emptyState('Thank you.', 'Your responses have been saved and shared with the Solutions team.')}</div></div>`;
+  if (info.submitted) return `<div class="form-page">${brand()}${heading('Response submitted', info.client_name)}
+    <section class="panel flush">${illustratedState('client-onboarding', 'Thank you', 'Your responses have been saved and shared with the Solutions team.')}</section></div>`;
   const section = sections[step];
   return `<div class="form-page">${brand()}${heading('Solutions Partner Onboarding', info.client_name)}<div class="step-bar"><span class="muted">Step ${step + 1} of ${sections.length}</span>
     <progress value="${step + 1}" max="${sections.length}" aria-label="Onboarding progress"></progress></div>

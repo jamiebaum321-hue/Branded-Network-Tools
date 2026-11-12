@@ -23,7 +23,19 @@ const assets = new Map(Object.entries({
   '/views.mjs': ['views.mjs', 'text/javascript; charset=utf-8'],
   '/intake-fields.mjs': ['intake-fields.mjs', 'text/javascript; charset=utf-8'],
   '/favicon.svg': ['favicon.svg', 'image/svg+xml'],
+  '/favicon.ico': ['assets/brand/favicon.ico', 'image/x-icon'],
 }));
+const imageAssets = [
+  ...['favicon-32', 'favicon-48', 'apple-touch-icon', 'social-share'].map(name => [`brand/${name}.png`, 'image/png']),
+  ...['focus-rings', 'iris-dot-grid', 'connection-ribbon'].map(name => [`accents/${name}.png`, 'image/png']),
+  ...['today', 'pipeline', 'clients', 'settings', 'metrics', 'suggested-leads']
+    .flatMap(name => ['ink', 'iris'].map(tone => [`icons/${name}-${tone}.png`, 'image/png'])),
+  ['icons/alerts-ink.png', 'image/png'],
+  ['icons/onboarding-iris.png', 'image/png'],
+  ...['pipeline-board', 'client-onboarding', 'suggested-connections', 'pipeline-insights', 'today-caught-up']
+    .map(name => [`artwork/${name}.webp`, 'image/webp']),
+];
+for (const [path, type] of imageAssets) assets.set(`/assets/${path}`, [`assets/${path}`, type]);
 const shellPath = /^(?:\/|\/today|\/signin|\/pipeline(?:\/(?:metrics|cards\/[\w-]+|suggestions(?:\/[\w-]+)?))?|\/clients(?:\/[\w-]+(?:\/submissions\/[\w-]+)?)?|\/admin|\/setup\/[\w-]+|\/onboard\/[\w.-]+)$/;
 const ident = '([a-zA-Z0-9_-]{1,80})';
 const options = { public: true };
@@ -59,7 +71,9 @@ export function createApp(store, config) {
   const staticFiles = new Map([...assets].map(([path, [name, type]]) => [path, {
     bytes: readFileSync(new URL(`../public/${name}`, import.meta.url)), type,
   }]));
-  const shell = { bytes: readFileSync(new URL('../public/index.html', import.meta.url)), type: 'text/html; charset=utf-8' };
+  const shellTemplate = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+  const shareImage = new URL('/assets/brand/social-share.png', config.origin).href;
+  const shell = { bytes: Buffer.from(shellTemplate.replace('{{SHARE_IMAGE_URL}}', shareImage)), type: 'text/html; charset=utf-8' };
 
   route('GET', '/api/health', () => ({ ok: store.get('SELECT 1 AS ok').ok === 1 }), options);
   route('GET', '/api/session', ({ actor }) => ({ user: actor, demo: config.demo, time_zone: config.timeZone }), options);
