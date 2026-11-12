@@ -10,7 +10,7 @@ export const stages = {
 };
 
 const icons = {
-  today: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18m-13 5h2m4 0h2m-8 3h2"/>',
+  today: '<rect x="3" y="5" width="18" height="16" rx="3" fill="currentColor" fill-opacity=".07"/><path d="M8 3v4m8-4v4M3 10h18m-13 6 2.5 2 5-4"/>',
   draft: '<path d="M6 22h12a2 2 0 0 0 2-2V8l-6-6H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2Z"/><path d="M14 2v6h6m-12 5h8m-8 4h5"/>',
   reply: '<path d="m9 10-5 5 5 5m-5-5h10a6 6 0 0 0 0-12h-2"/>',
   leads: '<circle cx="9" cy="8" r="3"/><path d="M3 20v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2m4-11v6m-3-3h6"/>',
@@ -28,7 +28,7 @@ const icons = {
   user: '<circle cx="12" cy="8" r="3.5"/><path d="M5 21v-2a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v2"/>',
   team: '<circle cx="9" cy="8" r="3"/><path d="M3 20v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2m1-15a3 3 0 0 1 0 6m2 3a4 4 0 0 1 3 4v2"/>',
   building: '<rect x="4" y="4" width="16" height="17" rx="2"/><path d="M9 21v-4h6v4M8 8h2m4 0h2m-8 4h2m4 0h2"/>',
-  board: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16m6-16v16M5.5 8h1m5 0h1m5 0h1"/>',
+  board: '<rect x="3" y="4" width="18" height="16" rx="3" fill="currentColor" fill-opacity=".07"/><path d="M9 4v16m6-16v16M5.5 8h1m5 0h1m5 0h1m-13 4h1m5 3h1"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   flag: '<path d="M5 21V4m0 1c4-3 7 3 14 0v9c-7 3-10-3-14 0"/>',
   grip: '<path d="M9 5h.01M15 5h.01M9 12h.01M15 12h.01M9 19h.01M15 19h.01" stroke-width="3"/>',
@@ -43,14 +43,17 @@ const icons = {
   info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5m0-8h.01"/>',
   down: '<path d="m6 9 6 6 6-6"/>',
   upload: '<path d="M12 16V4m-4 4 4-4 4 4M4 16v4h16v-4"/>',
+  clients: '<path d="M15 19H6a3 3 0 0 1-3-3V7a3 3 0 0 1 3-3h9a3 3 0 0 1 3 3v2" fill="currentColor" fill-opacity=".07"/><path d="M7 8h7M7 12h4"/><rect x="12" y="11" width="9" height="10" rx="2.4" fill="currentColor" fill-opacity=".1"/><path d="M15 16h3m-1.5-1.5v3"/>',
+  shield: '<path d="M12 2.8c2.5 2 5 2.8 8 3.2v5.3c0 5.3-3.1 8.3-8 10-4.9-1.7-8-4.7-8-10V6c3-.4 5.5-1.2 8-3.2Z" fill="currentColor" fill-opacity=".07"/><path d="m8.5 12 2.2 2.3 4.8-5"/>',
+  metrics: '<path d="M4 4v14a2 2 0 0 0 2 2h14"/><path d="M8 16v-4m5 4V8m5 8V5" stroke-width="2.2"/>',
+  shortlist: '<path d="M12 21H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h7m-5 5h3m-3 4h4"/><path d="M17.6 8.7 19 12l3.3 1.4L19 15l-1.4 3.3L16 15l-3.3-1.6L16 12l1.6-3.3Z" fill="currentColor" fill-opacity=".14"/><path d="M19 4v3m-1.5-1.5h3"/>',
+  network: '<path d="M6 17c2.1-.7 3.5-3 6-8 2.4 4.9 3.8 7.3 6 8M6 17a15 15 0 0 0 12 0"/><circle cx="12" cy="7.5" r="2.6" fill="currentColor" fill-opacity=".25"/><circle cx="5" cy="17" r="2.4" fill="currentColor" fill-opacity=".25"/><circle cx="19" cy="17" r="2.4" fill="currentColor" fill-opacity=".25"/>',
+  intake: '<path d="M8 5H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" fill="currentColor" fill-opacity=".06"/><rect x="8" y="3" width="8" height="4" rx="1.5"/><path d="m8 12 1.4 1.6L12 11m2 2h2m-8 4h8"/>',
 };
 
 export function icon(name) {
-  return `<svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[name] ?? ''}</svg>`;
+  return `<svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${icons[name] ?? ''}</svg>`;
 }
-
-export const kitIcon = (name, active = false) =>
-  `<img class="icon" src="/assets/icons/${h(name)}-${active ? 'iris' : 'ink'}.png" width="20" height="20" alt="">`;
 
 export const badge = (label, tone = 'neutral', glyph) => `<span class="badge ${h(tone)}">${glyph ? icon(glyph) : ''}${h(label)}</span>`;
 export const stageBadge = key => badge(stages[key]?.label ?? key, stages[key]?.tone, stages[key]?.glyph);
@@ -96,14 +99,14 @@ export const btn = (label, { kind = '', action, data = '', glyph, endGlyph, type
   `<button type="${type}" class="button ${h(kind)}"${action ? ` data-action="${h(action)}"` : ''}${data ? ` ${data}` : ''}>${glyph ? icon(glyph) : ''}${h(label)}${endGlyph ? `<span class="button-end">${icon(endGlyph)}</span>` : ''}</button>`;
 export const link = (href, label, glyph, extra = '') => `<a href="${h(href)}" class="text-link ${h(extra)}">${glyph ? icon(glyph) : ''}${h(label)}</a>`;
 export const emptyState = (title, detail = '') => `<div class="empty"><strong>${h(title)}</strong>${detail ? `<p>${h(detail)}</p>` : ''}</div>`;
-export function heading(title, detail = '', action = '', { art, date, compact = false } = {}) {
+export function heading(title, detail = '', action = '', { art, date, compact = false, signature = false } = {}) {
   const copy = `${date ? `<span class="date-label">${h(date)}</span>` : ''}<h1>${h(title)}</h1>${detail ? `<p>${h(detail)}</p>` : ''}`;
   if (!art) return `<div class="heading"><div>${copy}</div>${action}</div>`;
-  return `<div class="heading page-hero${compact ? ' compact' : ''}" data-art="${h(art)}">
+  return `<div class="heading page-hero${compact ? ' compact' : ''}${signature ? ' signature' : ''}" data-art="${h(art)}">
     <div class="hero-copy">${copy}${action ? `<div class="hero-actions">${action}</div>` : ''}</div>
     <div class="hero-visual" aria-hidden="true"><img src="/assets/artwork/${h(art)}.webp" width="240" height="136" alt="" decoding="async"></div></div>`;
 }
-export const brand = () => '<a class="brand" href="/today"><img width="36" height="36" src="/assets/brand/favicon-48.png" alt=""><span>Branded Network<small>Solutions Pipeline</small></span></a>';
+export const brand = () => '<a class="brand" href="/today"><img width="39" height="39" src="/assets/brand/network-mark.svg" alt=""><span>Branded Network<small>Solutions Pipeline</small></span></a>';
 
 export function outboundLink(value) {
   try {
@@ -117,20 +120,23 @@ export function shell(user, location) {
   if (!user) return '';
   const sections = [
     ['/today', 'Today', 'today', location === '/' || location === '/today'],
-    ['/pipeline', 'Pipeline', 'pipeline', location.startsWith('/pipeline')],
+    ['/pipeline', 'Pipeline', 'board', location.startsWith('/pipeline')],
     ['/clients', 'Clients', 'clients', location.startsWith('/clients')],
   ];
-  if (user.role === 'admin') sections.push(['/admin', 'Admin', 'settings', location === '/admin']);
-  const nav = sections.map(([url, label, glyph, active]) => `<a href="${url}"${active ? ' aria-current="page"' : ''}>${kitIcon(glyph, active)}<span>${label}</span></a>`).join('');
-  return `<header class="app-header"><div class="bar">${brand()}<nav class="main-nav" aria-label="Main">${nav}</nav>
-    <div class="account-actions"><button class="icon-button" data-action="alerts" aria-label="Alerts" title="Alerts">${kitIcon('alerts')}<span id="alert-dot" class="alert-dot" hidden></span></button>
-    <button class="avatar" data-action="account" aria-label="Account menu for ${h(user.name)}" title="${h(user.name)}">${h(initials(user.name))}</button></div></div></header>`;
+  if (user.role === 'admin') sections.push(['/admin', 'Admin', 'shield', location === '/admin']);
+  const current = sections.find(section => section[3]);
+  const nav = sections.map(([url, label, glyph, active]) => `<a href="${url}"${active ? ' aria-current="page"' : ''}><span class="nav-icon">${icon(glyph)}</span><span>${label}</span></a>`).join('');
+  return `<header class="app-header"><div class="bar"><div class="bar-brand">${brand()}</div>
+    <div class="workspace-context" aria-hidden="true">${icon('network')}<span>Workspace</span>${icon('chevron')}<strong>${h(current?.[1] ?? 'Today')}</strong></div>
+    <div class="app-rail"><div class="rail-brand">${brand()}</div><span class="rail-caption" aria-hidden="true">Workspace</span><nav class="main-nav" aria-label="Main">${nav}</nav></div>
+    <div class="account-actions"><button class="icon-button" data-action="alerts" aria-label="Alerts" title="Alerts">${icon('bell')}<span id="alert-dot" class="alert-dot" hidden></span></button>
+    <button class="account-button" data-action="account" aria-label="Account menu for ${h(user.name)}" title="${h(user.name)}"><span class="avatar" aria-hidden="true">${h(initials(user.name))}</span><span class="account-name" aria-hidden="true">${h(user.name)}${icon('down')}</span></button></div></div></header>`;
 }
 
 export function pipelineTabs(selected) {
   return `<nav class="subnav" aria-label="Pipeline">${[
-    ['/pipeline', 'Board', 'board', 'pipeline'],
+    ['/pipeline', 'Board', 'board', 'board'],
     ['/pipeline/metrics', 'Metrics', 'metrics', 'metrics'],
-    ['/pipeline/suggestions', 'Suggested leads', 'suggestions', 'suggested-leads'],
-  ].map(([url, title, key, glyph]) => `<a href="${url}"${key === selected ? ' aria-current="page"' : ''}>${kitIcon(glyph, key === selected)}${title}</a>`).join('')}</nav>`;
+    ['/pipeline/suggestions', 'Suggested leads', 'suggestions', 'shortlist'],
+  ].map(([url, title, key, glyph]) => `<a href="${url}"${key === selected ? ' aria-current="page"' : ''}>${icon(glyph)}${title}</a>`).join('')}</nav>`;
 }

@@ -24,16 +24,20 @@ const assets = new Map(Object.entries({
   '/intake-fields.mjs': ['intake-fields.mjs', 'text/javascript; charset=utf-8'],
   '/favicon.svg': ['favicon.svg', 'image/svg+xml'],
   '/favicon.ico': ['assets/brand/favicon.ico', 'image/x-icon'],
+  '/assets/brand/network-mark.svg': ['assets/brand/network-mark.svg', 'image/svg+xml'],
+  '/assets/accents/network-orbits.svg': ['assets/accents/network-orbits.svg', 'image/svg+xml'],
+  '/assets/type/plus-jakarta-sans-latin.woff2': ['assets/type/plus-jakarta-sans-latin.woff2', 'font/woff2'],
 }));
 const imageAssets = [
-  ...['favicon-32', 'favicon-48', 'apple-touch-icon', 'social-share'].map(name => [`brand/${name}.png`, 'image/png']),
+  ...['favicon-32', 'favicon-48', 'apple-touch-icon', 'social-share', 'network-touch'].map(name => [`brand/${name}.png`, 'image/png']),
   ...['focus-rings', 'iris-dot-grid', 'connection-ribbon'].map(name => [`accents/${name}.png`, 'image/png']),
   ...['today', 'pipeline', 'clients', 'settings', 'metrics', 'suggested-leads']
     .flatMap(name => ['ink', 'iris'].map(tone => [`icons/${name}-${tone}.png`, 'image/png'])),
   ['icons/alerts-ink.png', 'image/png'],
   ['icons/onboarding-iris.png', 'image/png'],
   ...['pipeline-board', 'client-onboarding', 'suggested-connections', 'pipeline-insights', 'today-caught-up',
-    'day-planner', 'pipeline-flow', 'client-portfolio', 'contact-profile', 'workspace-controls', 'onboarding-flow']
+    'day-planner', 'pipeline-flow', 'client-portfolio', 'contact-profile', 'workspace-controls', 'onboarding-flow',
+    'signal-pipeline', 'signal-today', 'signal-clients', 'signal-intake', 'signal-welcome', 'signal-leads']
     .map(name => [`artwork/${name}.webp`, 'image/webp']),
 ];
 for (const [path, type] of imageAssets) assets.set(`/assets/${path}`, [`assets/${path}`, type]);
