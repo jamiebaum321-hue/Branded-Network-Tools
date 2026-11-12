@@ -537,6 +537,12 @@ const actions = {
     const result = await api(`/api/admin/accounts/${pathId(button.dataset.id)}/setup`, 'POST');
     revealValue('One-time setup link', new URL(result.setup.path, location.origin).href, 'Share this link with the user. It expires in 24 hours.');
   },
+  'delete-client': async button => {
+    if (!confirm(`Permanently delete ${button.dataset.name} and all of its contacts, drafts, activity and onboarding submissions? This cannot be undone.`)) return;
+    await api(`/api/clients/${pathId(button.dataset.id)}`, 'DELETE');
+    context = null;
+    notify('Client deleted.'); navigate('/clients');
+  },
   'revoke-job': async button => {
     if (!confirm('Revoke this Claude job credential?')) return;
     await api(`/api/admin/job-tokens/${pathId(button.dataset.id)}/revoke`, 'POST');

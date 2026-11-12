@@ -314,3 +314,35 @@ test('environment bootstrap issues one known setup link until an admin sets a pa
   assert.equal(await bootstrapFromEnv(store, env), false);
   assert.equal((await store.get('SELECT count(*) AS n FROM setup_tokens')).n, 1);
 });
+
+test('admins can permanently delete a client and everything recorded under it', async t => {
+  const f = await fixture(t);
+  const input = { version: 1, namespace: 'legacy-export', clients: [{ id: 'a', name: 'Client A' }, { id: 'b', name: 'Client B' }],
+    partners: [{ id: 'partner-1', client_id: 'a', company: 'Partner Group', stage: 'reached_out' }],
+    introductions: [{ id: 'intro-1', client_id: 'a', partner_id: 'partner-1', occurred_at: past(), notes: 'Historical introduction' }],
+    suggested_leads: [{ id: 'lead-1', client_id: 'a', company: 'New Group', reason: 'ICP fit', source: 'Outlook', status: 'new' }],
+    onboarding_submissions: [{ id: 'form-a', client_id: 'a', submitted_at: past(), answers: { icp: 'First ICP' } },
+      { id: 'form-b', client_id: 'b', submitted_at: past(), answers: { icp: 'Second ICP' } }] };
+  await f.admin('/api/admin/import/apply', input);
+  const [a, b] = (await f.admin('/api/clients')).items;
+  const card = await f.addCard(a);
+  await f.admin(`/api/cards/${card.id}/drafts`, { subject: 'Hello', body: 'Draft body' });
+  await f.admin(`/api/clients/${a.id}/form-link`, {});
+  const job = await f.tokenFor(a);
+  const { setup } = await f.admin('/api/admin/accounts', { name: 'Member', email: 'member@example.test', role: 'member' });
+  const member = await f.activate(setup.path);
+  await f.admin(`/api/clients/${a.id}`, { member_ids: [member.user.id] }, 'PATCH');
+  await f.as(member.cookie)(`/api/clients/${a.id}`, {}, 'DELETE', 403);
+  assert.deepEqual(await f.admin(`/api/clients/${a.id}`, {}, 'DELETE'), { deleted: a.id });
+  await f.admin(`/api/clients/${a.id}`, undefined, 'GET', 404);
+  assert.deepEqual((await f.admin('/api/clients')).items.map(row => row.id), [b.id]);
+  assert.equal((await f.admin('/api/cards')).items.length, 0);
+  assert.equal((await f.admin(`/api/clients/${b.id}/submissions`)).items.length, 1);
+  assert.equal((await f.call(job, 'list_events', {})).items?.length ?? 0, 0);
+  for (const table of ['cards', 'drafts', 'activity', 'suggestions', 'submissions', 'form_links', 'mcp_clients', 'client_members']) {
+    assert.equal((await f.store.get(`SELECT count(*) AS n FROM ${table} WHERE ${table === 'drafts' ? 'true' : 'client_id=?'}`,
+      ...(table === 'drafts' ? [] : [a.id]))).n, 0, table);
+  }
+  assert((await f.admin('/api/admin/audit')).items.some(row => row.action === 'client.deleted' && row.entity_id === a.id));
+  assert.equal((await f.admin('/api/admin/import/apply', input)).counts.clients.added, 1);
+});

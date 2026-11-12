@@ -295,7 +295,8 @@ export function clientPage(data, context, zone) {
     ${submissions.items.length ? submissionRows(submissions.items, client.id, zone)
       : illustratedState('client-onboarding', 'No submissions yet', 'Completed forms will appear here.')}</div>
     ${submissions.next_cursor ? `<div class="pagination">${btn('Load older submissions', { action: 'more-submissions', data: `data-id="${h(client.id)}" data-next="${submissions.next_cursor}"` })}</div>` : ''}</section></div>
-    ${context.user.role === 'admin' ? `<details class="panel">${disclosure('Client settings', 'settings')}${clientForm(context, data)}</details>` : ''}`;
+    ${context.user.role === 'admin' ? `<details class="panel">${disclosure('Client settings', 'settings')}${clientForm(context, data)}
+      <div class="actions">${btn('Delete client', { action: 'delete-client', kind: 'danger', glyph: 'close', data: `data-id="${h(client.id)}" data-name="${h(client.name)}"` })}</div></details>` : ''}`;
 }
 
 function answerValue(value) {

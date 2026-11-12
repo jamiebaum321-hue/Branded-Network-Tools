@@ -206,3 +206,34 @@ export async function getSubmission(store, actor, clientId, submissionId) {
   if (!row) throw new AppError(404, 'Submission not found.');
   return { ...row, client_name: client.name, answers: decode(row.answers) };
 }
+
+// Permanently removes a client and everything recorded under it. Audit entries are kept but detached.
+export async function deleteClient(store, actor, clientId) {
+  requireAdmin(actor);
+  return store.tx(async () => {
+    const client = await clientFor(store, actor, clientId);
+    const cards = 'SELECT id FROM cards WHERE client_id=?';
+    await store.run(`DELETE FROM imported_records WHERE local_id=? OR local_id IN (${cards})
+      OR local_id IN (SELECT id FROM suggestions WHERE client_id=?) OR local_id IN (SELECT id FROM submissions WHERE client_id=?)
+      OR local_id IN (SELECT id FROM activity WHERE client_id=?) OR local_id IN (SELECT id FROM followups WHERE card_id IN (${cards}))
+      OR local_id IN (SELECT id FROM drafts WHERE card_id IN (${cards}))`,
+    clientId, clientId, clientId, clientId, clientId, clientId, clientId);
+    await store.run('DELETE FROM event_recipients WHERE event_id IN (SELECT id FROM events WHERE client_id=?)', clientId);
+    await store.run('DELETE FROM events WHERE client_id=?', clientId);
+    await store.run('DELETE FROM activity WHERE client_id=?', clientId);
+    await store.run(`DELETE FROM drafts WHERE card_id IN (${cards})`, clientId);
+    await store.run(`DELETE FROM card_states WHERE card_id IN (${cards})`, clientId);
+    await store.run(`DELETE FROM followups WHERE card_id IN (${cards})`, clientId);
+    await store.run('DELETE FROM cards WHERE client_id=?', clientId);
+    await store.run('DELETE FROM suggestions WHERE client_id=?', clientId);
+    await store.run('DELETE FROM form_links WHERE client_id=?', clientId);
+    await store.run('DELETE FROM submissions WHERE client_id=?', clientId);
+    await store.run('DELETE FROM mcp_clients WHERE client_id=?', clientId);
+    await store.run('DELETE FROM mcp_writes WHERE client_id=?', clientId);
+    await store.run('DELETE FROM client_members WHERE client_id=?', clientId);
+    await store.run('UPDATE audit_log SET client_id=NULL WHERE client_id=?', clientId);
+    await store.run('DELETE FROM clients WHERE id=?', clientId);
+    await audit(store, actor, 'client.deleted', 'client', clientId, null, { name: client.name });
+    return { deleted: clientId };
+  });
+}

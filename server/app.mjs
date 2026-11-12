@@ -5,7 +5,7 @@ import { AppError, audit, clientScope } from './store.mjs';
 import { auditPage, changeAccount, createJobToken, finishSetup, inviteAccount, listAccounts, listJobTokens, rateLimit,
   resetAccount, revokeJobToken, sessionUser, setupInfo, signIn, signOut } from './accounts.mjs';
 import { clientDetail, copyFormLink, createClient, getSubmission, listClients, listSubmissions, publicForm,
-  revokeFormLinks, saveIntake, submitIntake, updateClient } from './clients.mjs';
+  revokeFormLinks, saveIntake, submitIntake, updateClient, deleteClient } from './clients.mjs';
 import { acknowledgeToday, metrics, today } from './dashboard.mjs';
 import { alerts, seeAlerts } from './events.mjs';
 import { metadata, mcpHttp } from './mcp.mjs';
@@ -151,6 +151,7 @@ export function createHandler(store, config) {
   route('POST', '/api/clients', async ({ actor, data }) => ({ client: await createClient(store, actor, data) }));
   route('GET', `/api/clients/${ident}`, ({ actor, ids }) => clientDetail(store, actor, ids[0]));
   route('PATCH', `/api/clients/${ident}`, async ({ actor, ids, data }) => ({ client: await updateClient(store, actor, ids[0], data) }));
+  route('DELETE', `/api/clients/${ident}`, ({ actor, ids }) => deleteClient(store, actor, ids[0]));
   route('POST', `/api/clients/${ident}/form-link`, ({ actor, ids }) => copyFormLink(store, actor, ids[0], config.linkSecret));
   route('POST', `/api/clients/${ident}/form-link/revoke`, ({ actor, ids }) => revokeFormLinks(store, actor, ids[0]));
   route('GET', `/api/clients/${ident}/submissions`, ({ actor, ids, url }) => listSubmissions(store, actor, ids[0],
