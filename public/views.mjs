@@ -111,8 +111,8 @@ export function boardPage(groups, context, query, zone, currentStage) {
     </section>`).join('')}</div>`;
 }
 
-export function createCardForm(context) {
-  return subjectForm('add-card', '', `${fieldset(`${select('Client', 'client_id', names(context.clients))}${field('Company', 'company', '', { required: true, max: 180 })}
+export function createCardForm(context, clientId = '') {
+  return subjectForm('add-card', '', `${fieldset(`${select('Client', 'client_id', names(context.clients), clientId)}${field('Company', 'company', '', { required: true, max: 180 })}
     ${field('Contact name', 'person', '', { max: 150 })}${field('Email', 'email', '', { type: 'email', max: 254 })}
     ${field('Next step', 'next_step', '')}${field('Follow-up', 'due_at', '', { type: 'datetime-local' })}`)}
     <div class="actions">${btn('Add to To Contact', { kind: 'primary', type: 'submit', glyph: 'leads' })}</div>`);
@@ -285,7 +285,8 @@ export function submissionRows(rows, clientId, zone) {
 
 export function clientPage(data, context, zone) {
   const { client, submissions, link: active } = data;
-  return `${link('/clients', 'Back to clients', 'back', 'back-link')}${heading(client.name, `Owner · ${client.owner_name}`, '', { art: 'signal-clients', compact: true })}
+  return `${link('/clients', 'Back to clients', 'back', 'back-link')}${heading(client.name, `Owner · ${client.owner_name}`,
+    btn('Add contact', { kind: 'primary', glyph: 'plus', action: 'add-card', data: `data-client="${h(client.id)}"` }), { art: 'signal-clients', compact: true })}
     <div class="grid-two"><section class="panel stack"><div class="onboarding-entry"><div>${sectionLabel('Solutions Partner Onboarding', 'link')}<p class="muted section-copy">Share a form link so the client can enter their answers.</p></div>
     <img src="/assets/artwork/signal-intake.webp" width="96" height="64" loading="lazy" decoding="async" alt=""></div>
     <div class="actions">${btn('Copy form link', { action: 'form-link', glyph: 'link', kind: 'primary', data: `data-id="${h(client.id)}"` })}</div>
