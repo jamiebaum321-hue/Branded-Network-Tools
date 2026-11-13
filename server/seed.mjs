@@ -1,15 +1,17 @@
 import { AppError, audit, clientFor, requireAdmin } from './store.mjs';
-import { insertClient, insertSubmission, intakeAnswers } from './clients.mjs';
+import { accountFields, insertClient, insertSubmission, intakeAnswers } from './clients.mjs';
 import { appendActivity, evidenceSchema, importOutreach, insertCard, insertSuggestion, stages } from './pipeline.mjs';
-import { choice, email, int, num, object, str, time, validate } from './validation.mjs';
+import { choice, email, int, nullable, num, object, str, time, validate } from './validation.mjs';
+import { introStatuses } from '../public/account-fields.mjs';
 
 const identity = { id: str(250), client_id: str(250) };
 const dates = { created_at: str(40), entered_at: str(40) };
 const card = { company: str(180), person: str(150, 0), title: str(160, 0), email: str(254, 0),
   owner_email: str(254), stage: choice(...stages), next_step: str(300, 0), outcome: str(300, 0), due_at: str(40, 0),
-  branded_relationship: str(600, 0), ...dates };
+  branded_relationship: str(600, 0), intro_status: choice('', ...Object.keys(introStatuses)), deal_value: nullable(num(0, 1000000000)),
+  introduced_by: str(120, 0), ...dates };
 const definitions = {
-  clients: object({ id: str(250), name: str(180), owner_email: str(254), created_at: str(40) }, ['id', 'name']),
+  clients: object({ id: str(250), name: str(180), owner_email: str(254), created_at: str(40), ...accountFields }, ['id', 'name']),
   partners: object({ ...identity, ...card, fit_reason: str(2500, 0) }, ['id', 'client_id', 'company']),
   introductions: object({ ...identity, ...card, partner_id: str(250), occurred_at: str(40), status: str(150, 0), notes: str(4000, 0) }, ['id', 'client_id']),
   outreach_activity: object({ ...identity, partner_id: str(250), kind: choice('sent', 'reply', 'note'), occurred_at: str(40),
@@ -43,8 +45,11 @@ function normalizedInput(kind, raw) {
 }
 
 async function writeRow(store, actor, namespace, kind, row) {
-  if (kind === 'clients') return (await insertClient(store, actor, { name: row.name, owner_id: await accountId(store, row.owner_email) },
-    row.created_at ? time(row.created_at) : undefined)).id;
+  if (kind === 'clients') {
+    const { id: _source, owner_email: ownerEmail, created_at: createdAt, ...fields } = row;
+    return (await insertClient(store, actor, { ...fields, owner_id: await accountId(store, ownerEmail) },
+      createdAt ? time(createdAt) : undefined)).id;
+  }
   const clientId = await imported(store, namespace, 'clients', row.client_id);
   if (!clientId) throw new AppError(400, `Client reference ${row.client_id} was not found in this import namespace.`);
   const client = await clientFor(store, actor, clientId);

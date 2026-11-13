@@ -5,7 +5,8 @@ import { AppError, audit, clientScope } from './store.mjs';
 import { auditPage, changeAccount, createJobToken, finishSetup, inviteAccount, listAccounts, listJobTokens, rateLimit,
   resetAccount, revokeJobToken, sessionUser, setupInfo, signIn, signOut } from './accounts.mjs';
 import { clientDetail, copyFormLink, createClient, getSubmission, listClients, listSubmissions, publicForm,
-  revokeFormLinks, saveIntake, submitIntake, updateClient, deleteClient } from './clients.mjs';
+  revokeFormLinks, saveIntake, submitIntake, updateClient, deleteClient, updateNextStep } from './clients.mjs';
+import { contracts, followUps } from './accountwork.mjs';
 import { acknowledgeToday, metrics, today } from './dashboard.mjs';
 import { alerts, seeAlerts } from './events.mjs';
 import { metadata, mcpHttp } from './mcp.mjs';
@@ -23,6 +24,7 @@ const assets = new Map(Object.entries({
   '/ui.mjs': ['ui.mjs', 'text/javascript; charset=utf-8'],
   '/views.mjs': ['views.mjs', 'text/javascript; charset=utf-8'],
   '/intake-fields.mjs': ['intake-fields.mjs', 'text/javascript; charset=utf-8'],
+  '/account-fields.mjs': ['account-fields.mjs', 'text/javascript; charset=utf-8'],
   '/favicon.svg': ['favicon.svg', 'image/svg+xml'],
   '/favicon.ico': ['assets/brand/favicon.ico', 'image/x-icon'],
   '/assets/brand/network-mark.svg': ['assets/brand/network-mark.svg', 'image/svg+xml'],
@@ -42,7 +44,7 @@ const imageAssets = [
     .map(name => [`artwork/${name}.webp`, 'image/webp']),
 ];
 for (const [path, type] of imageAssets) assets.set(`/assets/${path}`, [`assets/${path}`, type]);
-const shellPath = /^(?:\/|\/today|\/signin|\/pipeline(?:\/(?:metrics|cards\/[\w-]+|suggestions(?:\/[\w-]+)?))?|\/clients(?:\/[\w-]+(?:\/submissions\/[\w-]+)?)?|\/admin|\/setup\/[\w-]+|\/onboard\/[\w.-]+)$/;
+const shellPath = /^(?:\/|\/today|\/signin|\/pipeline(?:\/(?:metrics|cards\/[\w-]+|suggestions(?:\/[\w-]+)?))?|\/clients(?:\/[\w-]+(?:\/submissions\/[\w-]+)?)?|\/followups|\/contracts|\/admin|\/setup\/[\w-]+|\/onboard\/[\w.-]+)$/;
 const ident = '([a-zA-Z0-9_-]{1,80})';
 const options = { public: true };
 
@@ -147,10 +149,13 @@ export function createHandler(store, config) {
   route('POST', `/api/suggestions/${ident}/decision`, async ({ actor, ids, data }) => ({ suggestion: await decideSuggestion(store, actor, ids[0],
     validate(object({ decision: choice('approved','dismissed') }), data).decision) }));
 
-  route('GET', '/api/clients', ({ actor, url }) => listClients(store, actor, { ...pageQuery(url), q: selectQuery(url, 'q') }));
+  route('GET', '/api/clients', ({ actor, url }) => listClients(store, actor, { ...pageQuery(url, 100), q: selectQuery(url, 'q') }));
   route('POST', '/api/clients', async ({ actor, data }) => ({ client: await createClient(store, actor, data) }));
   route('GET', `/api/clients/${ident}`, ({ actor, ids }) => clientDetail(store, actor, ids[0]));
   route('PATCH', `/api/clients/${ident}`, async ({ actor, ids, data }) => ({ client: await updateClient(store, actor, ids[0], data) }));
+  route('POST', `/api/clients/${ident}/next-step`, async ({ actor, ids, data }) => ({ client: await updateNextStep(store, actor, ids[0], data) }));
+  route('GET', '/api/followups', ({ actor }) => followUps(store, actor, config.timeZone));
+  route('GET', '/api/contracts', ({ actor }) => contracts(store, actor, config.timeZone));
   route('DELETE', `/api/clients/${ident}`, ({ actor, ids }) => deleteClient(store, actor, ids[0]));
   route('POST', `/api/clients/${ident}/form-link`, ({ actor, ids }) => copyFormLink(store, actor, ids[0], config.linkSecret));
   route('POST', `/api/clients/${ident}/form-link/revoke`, ({ actor, ids }) => revokeFormLinks(store, actor, ids[0]));

@@ -1,6 +1,7 @@
 import { sections } from './intake-fields.mjs';
 import { badge, brand, btn, currentDate, emptyState, field, formatDate, h, heading, hidden, icon, initials, link,
-  localInput, outboundLink, pathId, pipelineTabs, select, stageBadge, stageDuration, stageOptions, stages, timeLabel } from './ui.mjs';
+  localInput, outboundLink, pathId, pipelineTabs, select, stageBadge, stageDuration, stageOptions, stages, timeLabel, dayLabel, money } from './ui.mjs';
+import { agreementStatuses, clientStages, dealStatuses, introStatuses } from './account-fields.mjs';
 
 const names = rows => rows.map(row => ({ id: row.id, name: row.name }));
 const fieldset = (content) => `<div class="form-grid">${content}</div>`;
@@ -82,7 +83,9 @@ export function boardCard(row, zone) {
   return `<a class="board-card" href="/pipeline/cards/${pathId(row.id)}" draggable="true" data-card="${h(row.id)}" data-version="${row.version}" data-stage="${h(row.stage)}">
     <div class="board-identity"><span class="contact-avatar ${stages[row.stage].tone}" aria-hidden="true">${h(initials(row.person || row.company))}</span>${identity(row)}
     <span class="drag-grip">${icon('grip')}</span></div>
-    <div class="chips">${due ? badge('Follow-up due', 'amber', 'clock') : row.suggestion_id ? badge('Approved lead', 'green', 'check') : row.outcome ? badge(row.outcome, 'green', 'check') : ''}</div>
+    <div class="chips">${due ? badge('Follow-up due', 'amber', 'clock') : row.suggestion_id ? badge('Approved lead', 'green', 'check') : row.outcome ? badge(row.outcome, 'green', 'check') : ''}
+    ${row.intro_status && row.intro_status !== row.outcome ? badge(row.intro_status, 'neutral') : ''}</div>
+    <small class="muted">${h(row.client_name)}</small>
     <dl><dt>${icon('user')}Owner</dt><dd>${h(row.owner_name)}</dd><dt>${icon('history')}Last touch</dt><dd>${h(formatDate(row.last_touch, zone))}</dd>
     <dt>${icon('flag')}Next step</dt><dd>${h(row.next_step || '—')}</dd><dt>${icon('clock')}In stage</dt><dd>${h(stageDuration(row.entered_at))}</dd>
     ${row.due_at ? `<dt>${icon('today')}Follow-up</dt><dd>${h(formatDate(row.due_at, zone))}</dd>` : ''}</dl></a>`;
@@ -128,6 +131,9 @@ function cardEdit(data, toStage) {
     ${select('Stage', 'stage', stageOptions, chosen)}${field('Next step', 'next_step', card.next_step)}
     ${field('Follow-up (your local time)', 'due_at', localInput(card.due_at), { type: 'datetime-local' })}
     ${field('Branded relationship', 'branded_relationship', card.branded_relationship, { max: 600 })}
+    ${select('Intro status', 'intro_status', listOf(Object.keys(introStatuses)), card.intro_status, 'Not set')}
+    ${field('Introduced by', 'introduced_by', card.introduced_by, { max: 120 })}
+    ${field('Deal value (USD/yr)', 'deal_value', card.deal_value ?? '', { type: 'number', min: 0, step: 'any' })}
     <div data-outcome class="wide" ${chosen === 'closed' ? '' : 'hidden'}>${field('Closure outcome', 'outcome', card.outcome)}</div>`)}
     <div class="actions">${btn('Save changes', { kind: 'primary', type: 'submit' })}</div>`)}</details>`;
 }
@@ -245,36 +251,74 @@ export function suggestionPage(row) {
       <p class="muted multiline">${h(item.detail)}</p>${item.reference ? `<p class="small wrap">${outboundLink(item.reference)}</p>` : ''}</div>`).join('') : emptyState('No evidence was included.')}</section></div>`;
 }
 
+const listOf = values => values.map(value => ({ id: value, name: value }));
+const clientStageBadge = key => badge(clientStages[key]?.label ?? key, clientStages[key]?.tone ?? 'neutral');
+const contractTone = { act: 'red', soon: 'amber', ended: 'neutral' };
+const daysText = days => days === null || days === undefined ? '' : days < 0 ? `ended ${-days}d ago` : days === 0 ? 'ends today' : `${days}d left`;
+
 export function clientRows(rows, zone) {
   const accents = ['iris', 'sky', 'rose', 'mint'];
   return rows.map(row => {
     const shade = [...row.name].reduce((hash, char) => (hash * 31 + char.codePointAt(0)) >>> 0, 0) % accents.length;
+    const terms = [row.monthly_fee ? `${money(row.monthly_fee)}/mo` : '', row.contract_end ? `ends ${dayLabel(row.contract_end)}` : ''].filter(Boolean).join(' · ');
     return `<a class="client-card" data-accent="${accents[shade]}" href="/clients/${pathId(row.id)}">
       <span class="client-watermark">${icon('building')}</span>
       <div class="client-card-top"><span class="client-mark" aria-hidden="true">${h(initials(row.name))}</span>
-        <div class="row-main"><strong>${h(row.name)}</strong><small>${icon('user')}<span>${h(row.owner_name)}</span></small></div>
+        <div class="row-main"><strong>${h(row.name)}</strong><small>${icon('user')}<span>${h(row.team || row.owner_name)}</span></small></div>
         <span class="client-open">${icon('arrow')}</span></div>
-      <div class="client-facts"><span class="client-count">${icon('board')}${row.open_cards} open ${row.open_cards === 1 ? 'card' : 'cards'}</span>
+      ${row.deal_status || terms ? `<p class="muted small">${h([row.deal_status, terms].filter(Boolean).join(' · '))}</p>` : ''}
+      <div class="client-facts"><span class="client-count">${icon('board')}${row.open_cards} open ${row.open_cards === 1 ? 'intro' : 'intros'}</span>
         ${row.latest_submission ? badge(`Intake ${formatDate(row.latest_submission, zone)}`, 'green', 'check') : badge('No intake yet', 'neutral', 'draft')}</div></a>`;
   }).join('');
 }
 
 export function clientsPage(data, query, user, zone) {
-  return `${heading('Clients', 'Manage onboarding and see each client’s open contacts.', user.role === 'admin' ? btn('Add client', { action: 'add-client', glyph: 'plus', kind: 'primary' }) : '',
+  const groups = Object.entries(clientStages).map(([key, info]) => [key, info, data.items.filter(row => row.stage === key)]);
+  const sections = data.items.length ? groups.filter(([, , rows]) => rows.length).map(([key, info, rows]) => `<section class="stack" aria-label="${h(info.label)}">
+    <div class="section-head">${sectionLabel(info.label, key === 'current' ? 'check' : key === 'referral' ? 'team' : key === 'pipeline' ? 'board' : 'close',
+      ({ current: 'green', referral: 'violet', pipeline: 'blue', passed: 'neutral' })[key])}${badge(rows.length, clientStages[key].tone)}</div>
+    <div class="client-grid">${clientRows(rows, zone)}</div></section>`).join('')
+    : `<div class="panel">${emptyState('No matching clients.')}</div>`;
+  return `${heading('Clients', 'Current clients, referral partners, pipeline and passed companies.', user.role === 'admin' ? btn('Add client', { action: 'add-client', glyph: 'plus', kind: 'primary' }) : '',
     { art: 'signal-clients', signature: true })}
     <form class="client-search" data-form="filter">${field('Search clients', 'q', query.get('q'), { type: 'search', placeholder: 'Client name', max: 180, glyph: 'search' })}
     <div class="actions">${btn('Search', { type: 'submit' })}${query.size ? btn('Clear', { action: 'clear-filters', kind: 'quiet' }) : ''}</div></form>
-    <section aria-label="Client directory"><div class="client-grid" id="client-list">${data.items.length ? clientRows(data.items, zone) : `<div class="panel">${emptyState('No matching clients.')}</div>`}</div>${pageMore('more-clients', data.next_offset)}</section>`;
+    <div class="stack" id="client-list">${sections}</div>${pageMore('more-clients', data.next_offset)}`;
 }
 
 const checkboxes = (label, key, rows, selected = []) => `<fieldset class="repeater"><legend>${h(label)}</legend><div class="check-list">${rows.map(row =>
   `<label class="check"><input type="checkbox" name="${h(key)}" value="${h(row.id)}"${selected.includes(row.id) ? ' checked' : ''}>${h(row.name)}</label>`).join('')}</div></fieldset>`;
 
+const contactLines = contacts => (contacts ?? []).map(row => [row.name, row.title, row.email, row.phone, row.notes].map(value => value ?? '').join(' | ').replace(/( \| )+$/, '')).join('\n');
+
 export function clientForm(context, data) {
   const client = data?.client;
   const owners = context.owners.filter(row => row.enabled || row.id === client?.owner_id);
+  const value = key => client?.[key] ?? '';
+  const account = `<fieldset class="repeater"><legend>Account</legend>${fieldset(`
+    ${select('Stage', 'stage', Object.entries(clientStages).map(([id, info]) => ({ id, name: info.label })), client?.stage ?? 'current')}
+    ${select('Deal status', 'deal_status', listOf(dealStatuses), value('deal_status'), 'Not set')}
+    ${select('Agreement (SCA)', 'agreement_status', listOf(agreementStatuses), value('agreement_status'), 'Not set')}
+    ${field('SCA link', 'sca_url', value('sca_url'), { type: 'url', max: 1000, placeholder: 'https://' })}
+    ${field('Monthly fee (USD)', 'monthly_fee', value('monthly_fee'), { type: 'number', min: 0, step: 'any' })}
+    ${field('Term (months)', 'term_months', value('term_months'), { type: 'number', min: 0 })}
+    ${field('Contract start', 'contract_start', value('contract_start'), { type: 'date' })}
+    ${field('Contract end', 'contract_end', value('contract_end'), { type: 'date' })}
+    ${field('SCA signed', 'sca_signed', value('sca_signed'), { type: 'date' })}
+    ${field('Website', 'website', value('website'), { max: 300 })}
+    ${field('Referral % year 1', 'referral_y1', value('referral_y1'), { type: 'number', min: 0, step: 'any' })}
+    ${field('Referral % year 2', 'referral_y2', value('referral_y2'), { type: 'number', min: 0, step: 'any' })}
+    ${field('Referral % year 3', 'referral_y3', value('referral_y3'), { type: 'number', min: 0, step: 'any' })}
+    ${field('Team', 'team', value('team'), { max: 300, placeholder: 'e.g. Schatzy, Julie' })}
+    <div class="wide">${field('Renewal terms', 'renewal_terms', value('renewal_terms'), { type: 'textarea', max: 2000 })}</div>
+    <div class="wide">${field('What they do', 'about', value('about'), { type: 'textarea', max: 2000 })}</div>
+    <div class="wide">${field('What they want from Branded', 'wants', value('wants'), { type: 'textarea', max: 2000 })}</div>
+    <div class="wide">${field('Success looks like', 'success', value('success'), { type: 'textarea', max: 2000 })}</div>
+    <div class="wide">${field('Contacts', 'contacts', contactLines(client?.contacts), { type: 'textarea', max: 20000,
+      hint: 'One per line: Name | Title | Email | Phone | Notes' })}</div>`)}</fieldset>`;
   return subjectForm(client ? 'client-edit' : 'add-client', client?.id, `${field('Client name', 'name', client?.name, { required: true, max: 180 })}
     ${select('Client owner', 'owner_id', names(owners), client?.owner_id ?? context.user.id)}${checkboxes('Additional client access', 'member_ids', owners, data?.member_ids)}
+    ${client ? account : select('Stage', 'stage', Object.entries(clientStages).map(([id, info]) => ({ id, name: info.label })), 'pipeline')}
     <div>${btn(client ? 'Save client' : 'Add client', { kind: 'primary', type: 'submit' })}</div>`);
 }
 
@@ -283,10 +327,64 @@ export function submissionRows(rows, clientId, zone) {
     <div class="row-main"><strong>Submission ${row.version}</strong><small>${h(timeLabel(row.submitted_at, zone))}${row.source_ref ? ' · Imported' : ''}</small></div>${navArrow()}</a>`).join('');
 }
 
+function accountPanel(client, zone) {
+  const referral = [client.referral_y1, client.referral_y2, client.referral_y3].map((value, index) => value === null || value === undefined ? '' : `Y${index + 1} ${value}%`).filter(Boolean).join(' · ');
+  const rows = [
+    ['Deal status', client.deal_status || '—'], ['Agreement (SCA)', client.agreement_status || '—'],
+    ['Monthly fee', client.monthly_fee ? `${money(client.monthly_fee)}/mo` : '—'], ['Term', client.term_months ? `${client.term_months} months` : '—'],
+    ['Contract', client.contract_start || client.contract_end ? `${dayLabel(client.contract_start)} → ${dayLabel(client.contract_end)}` : '—'],
+    ['SCA signed', dayLabel(client.sca_signed)], ['Referral fee', referral || '—'], ['Team', client.team || '—'],
+  ];
+  const days = client.contract_end ? Math.round((Date.parse(`${client.contract_end}T00:00:00Z`) - Date.parse(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`)) / 86400000) : null;
+  return `<section class="panel stack"><div class="section-head">${sectionLabel('Account', 'building')}<div class="chips">${clientStageBadge(client.stage)}
+    ${days !== null && days <= 60 && client.stage === 'current' ? badge(daysText(days), days <= 30 ? 'red' : 'amber', 'clock') : ''}</div></div>
+    <dl class="summary-grid">${rows.map(([label, value]) => `<div><dt>${h(label)}</dt><dd>${h(value)}</dd></div>`).join('')}</dl>
+    ${client.renewal_terms ? `<div><h3>Renewal terms</h3><p class="muted multiline">${h(client.renewal_terms)}</p></div>` : ''}
+    ${client.sca_url || client.website ? `<p class="small wrap">${[client.sca_url ? outboundLink(client.sca_url) : '', client.website ? h(client.website) : ''].filter(Boolean).join(' · ')}</p>` : ''}</section>`;
+}
+
+function nextStepPanel(client) {
+  const due = client.next_due ? Math.round((Date.parse(`${client.next_due}T00:00:00Z`) - Date.parse(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`)) / 86400000) : null;
+  return `<section class="panel stack"><div class="section-head">${sectionLabel('Next step', 'flag', 'amber')}
+    ${due !== null ? badge(due < 0 ? `Overdue · ${dayLabel(client.next_due)}` : `Due ${dayLabel(client.next_due)}`, due < 0 ? 'red' : due <= 7 ? 'amber' : 'neutral', 'clock') : ''}</div>
+    <p class="multiline">${h(client.next_step || 'No next step recorded.')}</p>${client.next_owner ? `<p class="muted small">Owner · ${h(client.next_owner)}</p>` : ''}
+    ${client.latest ? client.latest.length > 360
+      ? `<details><summary class="small">Latest · ${h(client.latest.slice(0, 140))}…</summary><p class="muted multiline">${h(client.latest)}</p></details>`
+      : `<div><h3>Latest</h3><p class="muted multiline">${h(client.latest)}</p></div>` : ''}
+    <details>${disclosure('Update next step', 'edit')}${subjectForm('next-step', client.id, `${fieldset(`
+      <div class="wide">${field('Next step', 'next_step', client.next_step, { type: 'textarea', max: 1000 })}</div>
+      ${field('Due', 'next_due', client.next_due ?? '', { type: 'date' })}${field('Owner', 'next_owner', client.next_owner, { max: 120, placeholder: 'e.g. Daniel' })}
+      <div class="wide">${field('Latest news', 'latest', client.latest, { type: 'textarea', max: 4000 })}</div>`)}
+      <div>${btn('Save next step', { kind: 'primary', type: 'submit' })}</div>`)}</details></section>`;
+}
+
+function contactsPanel(client) {
+  const about = [['What they do', client.about], ['What they want', client.wants], ['Success looks like', client.success]].filter(([, value]) => value);
+  if (!client.contacts.length && !about.length) return '';
+  return `<section class="panel stack"><div class="section-head">${sectionLabel('Contacts & context', 'team', 'violet')}</div>
+    ${client.contacts.map(row => `<div class="list-row"><div class="row-main"><strong>${h(row.name)}</strong><small>${h([row.title, row.email, row.phone].filter(Boolean).join(' · '))}</small>
+      ${row.notes ? `<small class="muted">${h(row.notes)}</small>` : ''}</div></div>`).join('')}
+    ${about.map(([label, value]) => `<div><h3>${h(label)}</h3><p class="muted multiline">${h(value)}</p></div>`).join('')}</section>`;
+}
+
+function introsPanel(client, intros) {
+  const open = intros.filter(row => row.stage !== 'closed');
+  const rows = (list) => list.map(row => `<a class="list-row" href="/pipeline/cards/${pathId(row.id)}"><div class="row-main"><strong>${h(row.company)}</strong>
+    <small>${h([row.person, row.intro_status || stages[row.stage]?.label, row.introduced_by ? `by ${row.introduced_by}` : ''].filter(Boolean).join(' · '))}</small></div>${stageBadge(row.stage)}${navArrow()}</a>`).join('');
+  const closed = intros.length - open.length;
+  return `<section class="panel flush"><div class="panel-title"><span class="panel-icon blue">${icon('board')}</span><h2>Intros & targets</h2>${badge(open.length, 'blue')}</div>
+    ${open.length ? rows(open.slice(0, 12)) : emptyState('No open intros or targets.')}
+    ${open.length > 12 ? `<details class="pad">${disclosure(`${open.length - 12} more open`, 'board')}${rows(open.slice(12))}</details>` : ''}
+    ${closed ? `<details class="pad">${disclosure(`${closed} closed`, 'check')}${rows(intros.filter(row => row.stage === 'closed'))}</details>` : ''}
+    <div class="pagination">${link(`/pipeline?client_id=${pathId(client.id)}`, 'Open on the pipeline board', 'arrow')}</div></section>`;
+}
+
 export function clientPage(data, context, zone) {
   const { client, submissions, link: active } = data;
-  return `${link('/clients', 'Back to clients', 'back', 'back-link')}${heading(client.name, `Owner · ${client.owner_name}`,
+  return `${link('/clients', 'Back to clients', 'back', 'back-link')}${heading(client.name, `${clientStages[client.stage]?.label ?? ''} · Owner · ${client.owner_name}`,
     btn('Add contact', { kind: 'primary', glyph: 'plus', action: 'add-card', data: `data-client="${h(client.id)}"` }), { art: 'signal-clients', compact: true })}
+    <div class="grid-two top-aligned">${accountPanel(client, zone)}${nextStepPanel(client)}</div>
+    <div class="grid-two top-aligned">${introsPanel(client, data.intros ?? [])}${contactsPanel(client) || '<div></div>'}</div>
     <div class="grid-two"><section class="panel stack"><div class="onboarding-entry"><div>${sectionLabel('Solutions Partner Onboarding', 'link')}<p class="muted section-copy">Share a form link so the client can enter their answers.</p></div>
     <img src="/assets/artwork/signal-intake.webp" width="96" height="64" loading="lazy" decoding="async" alt=""></div>
     <div class="actions">${btn('Copy form link', { action: 'form-link', glyph: 'link', kind: 'primary', data: `data-id="${h(client.id)}"` })}</div>
@@ -298,6 +396,59 @@ export function clientPage(data, context, zone) {
     ${submissions.next_cursor ? `<div class="pagination">${btn('Load older submissions', { action: 'more-submissions', data: `data-id="${h(client.id)}" data-next="${submissions.next_cursor}"` })}</div>` : ''}</section></div>
     ${context.user.role === 'admin' ? `<details class="panel">${disclosure('Client settings', 'settings')}${clientForm(context, data)}
       <div class="actions">${btn('Delete client', { action: 'delete-client', kind: 'danger', glyph: 'close', data: `data-id="${h(client.id)}" data-name="${h(client.name)}"` })}</div></details>` : ''}`;
+}
+
+export function followupsPage(data) {
+  const groups = [['overdue', 'Overdue', 'red'], ['week', 'Due this week', 'amber'], ['no_date', 'No date set', 'neutral'], ['later', 'Later', 'blue']];
+  const accountRow = row => `<a class="list-row" href="/clients/${pathId(row.id)}"><div class="row-main"><strong>${h(row.name)}</strong>
+    <small class="clamp" title="${h(row.next_step)}">${h(row.next_step)}</small><small class="muted">${h([row.next_owner && `Owner · ${row.next_owner}`, clientStages[row.stage]?.label].filter(Boolean).join(' · '))}</small></div>
+    ${row.next_due ? badge(row.days < 0 ? `${-row.days}d overdue` : dayLabel(row.next_due, false), row.days < 0 ? 'red' : row.days <= 7 ? 'amber' : 'neutral', 'clock') : ''}${navArrow()}</a>`;
+  const accounts = groups.map(([key, title, tone]) => {
+    const rows = data.accounts.filter(row => row.bucket === key);
+    return rows.length ? `<div class="stack"><h3>${h(title)} ${badge(rows.length, tone)}</h3>${rows.map(accountRow).join('')}</div>` : '';
+  }).join('');
+  const byClient = Object.groupBy ? Object.groupBy(data.intros, row => row.client_name) : data.intros.reduce((all, row) => ((all[row.client_name] ??= []).push(row), all), {});
+  const intros = Object.entries(byClient).map(([name, rows]) => `<details class="pad">${disclosure(`${name} · ${rows.length} quiet`, 'building')}
+    ${rows.map(row => `<a class="list-row" href="/pipeline/cards/${pathId(row.id)}"><div class="row-main"><strong>${h(row.company)}</strong>
+      <small>${h([row.person, row.intro_status || stages[row.stage]?.label, row.introduced_by && `by ${row.introduced_by}`].filter(Boolean).join(' · '))}</small>
+      ${row.next_step ? `<small class="muted">${h(row.next_step)}</small>` : ''}</div>${badge(`${row.days_quiet}d quiet`, row.days_quiet > 21 ? 'red' : 'amber', 'clock')}${navArrow()}</a>`).join('')}</details>`).join('');
+  const contracts = data.contracts.map(row => `<a class="list-row" href="/clients/${pathId(row.id)}"><div class="row-main"><strong>${h(row.name)}</strong>
+    <small>${h([`Ends ${dayLabel(row.contract_end)}`, row.auto_renew ? 'Renews automatically' : 'Renewal needs agreement', row.monthly_fee && `${money(row.monthly_fee)}/mo`].filter(Boolean).join(' · '))}</small></div>
+    ${badge(daysText(row.days_left), contractTone[row.flag] ?? 'neutral', 'clock')}${navArrow()}</a>`).join('');
+  return `${heading('Follow-ups', 'Account next steps, intros gone quiet for 14+ days, and contracts ending within 60 days.', '', { art: 'signal-today' })}
+    <div class="stat-grid">${[['Overdue next steps', data.accounts.filter(row => row.bucket === 'overdue').length, 'red', 'flag'],
+      ['Due this week', data.accounts.filter(row => row.bucket === 'week').length, 'amber', 'today'],
+      ['Quiet intros', data.intros.length, 'violet', 'reply'], ['Contracts to act on', data.contracts.length, 'blue', 'draft']]
+      .map(([label, value, tone, glyph]) => `<div class="panel stat"><span class="panel-icon ${tone}">${icon(glyph)}</span><div><strong>${value}</strong><span class="stat-label">${label}</span></div></div>`).join('')}</div>
+    <div class="grid-two"><section class="panel stack"><div class="section-head">${sectionLabel('Account next steps', 'flag', 'amber')}</div>${accounts || emptyState('No next steps recorded.')}</section>
+    <section class="panel stack"><div class="section-head">${sectionLabel('Contracts ending', 'draft', 'blue')}</div>${contracts || emptyState('No contracts end in the next 60 days.')}</section></div>
+    <section class="panel stack"><div class="section-head">${sectionLabel('Intros needing a follow-up', 'reply', 'violet')}<span class="muted small">Open intros with no touch in 14+ days</span></div>
+      ${intros || emptyState('Every open intro has been touched in the last 14 days.')}</section>`;
+}
+
+export function contractsPage(data) {
+  const dated = data.items.filter(row => row.contract_start && row.contract_end);
+  const today = Date.parse(`${data.today}T00:00:00Z`);
+  const start = Math.min(today - 120 * 86400000, ...dated.map(row => Date.parse(`${row.contract_start}T00:00:00Z`)));
+  const end = Math.max(today + 240 * 86400000, ...dated.map(row => Date.parse(`${row.contract_end}T00:00:00Z`)));
+  const pct = value => ((value - start) / (end - start) * 100).toFixed(2);
+  const bar = row => {
+    if (!row.contract_start || !row.contract_end) return '<span class="muted small">Dates incomplete</span>';
+    const from = Date.parse(`${row.contract_start}T00:00:00Z`);
+    const to = Date.parse(`${row.contract_end}T00:00:00Z`);
+    return `<div class="term-track" role="img" aria-label="${h(`${dayLabel(row.contract_start)} to ${dayLabel(row.contract_end)}`)}">
+      <span class="term-bar ${h(row.flag ?? 'ok')}" data-left="${pct(from)}" data-width="${Math.max(0.8, pct(to) - pct(from)).toFixed(2)}"></span>
+      <span class="term-today" data-left="${pct(today)}"></span></div>`;
+  };
+  const rows = data.items.map(row => `<tr><td><a class="text-link" href="/clients/${pathId(row.id)}">${h(row.name)}</a><br><small class="muted">${h(clientStages[row.stage]?.label)}</small></td>
+    <td class="term-cell">${bar(row)}</td><td>${h(dayLabel(row.contract_start))}</td><td>${h(dayLabel(row.contract_end))}</td>
+    <td>${row.days_left === null ? '—' : badge(daysText(row.days_left), contractTone[row.flag] ?? 'green')}</td>
+    <td>${row.monthly_fee ? `${money(row.monthly_fee)}/mo` : '—'}</td><td>${h(row.agreement_status || '—')}</td><td>${row.auto_renew ? 'Auto-renews' : '—'}</td></tr>`).join('');
+  return `${heading('Contracts', `Current clients and referral partners by term. ${money(data.monthly_retainers)}/mo in active retainers.`, '', { art: 'workspace-controls' })}
+    <section class="panel flush"><div class="table-scroll"><table class="data-table contracts-table"><thead><tr><th scope="col">Client</th><th scope="col">Term (today marked)</th>
+    <th scope="col">Start</th><th scope="col">End</th><th scope="col">Time left</th><th scope="col">Fee</th><th scope="col">SCA</th><th scope="col">Renewal</th></tr></thead>
+    <tbody>${rows || `<tr><td colspan="8">${emptyState('No contract dates recorded yet.', 'Add start and end dates under Client settings.')}</td></tr>`}</tbody></table></div></section>
+    <p class="muted small">Red: ends within 30 days. Amber: within 60 days. Gray: ended.</p>`;
 }
 
 function answerValue(value) {

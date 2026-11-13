@@ -1,12 +1,14 @@
 import { AppError, actorName, audit, canAccessClient, clientFor, clientScope, decode, digest, encode, id, iso, requireHuman, system } from './store.mjs';
 import { emit } from './events.mjs';
-import { choice, email, int, list, num, object, str, time, validate } from './validation.mjs';
+import { choice, email, int, list, nullable, num, object, str, time, validate } from './validation.mjs';
+import { introStatuses } from '../public/account-fields.mjs';
 
 export const stages = ['to_contact', 'reached_out', 'in_conversation', 'closed'];
 const stageSchema = choice(...stages);
 const cardFields = {
   company: str(180), person: str(150, 0), title: str(160, 0), email: str(254, 0), owner_id: str(80),
   stage: stageSchema, next_step: str(300, 0), outcome: str(300, 0), due_at: str(40, 0), branded_relationship: str(600, 0),
+  intro_status: choice('', ...Object.keys(introStatuses)), deal_value: nullable(num(0, 1000000000)), introduced_by: str(120, 0),
 };
 const cardCreate = object({ client_id: str(80), ...cardFields }, ['client_id', 'company']);
 const cardUpdate = object({ ...cardFields, version: int(1, 1000000000) }, ['version']);
@@ -131,9 +133,11 @@ export async function insertCard(store, actor, input, { suggestionId = null, rea
   const at = iso();
   const created = createdAt ?? at;
   await store.run(`INSERT INTO cards(id,client_id,owner_id,company,person,title,email,stage,next_step,outcome,fit_reason,
-    branded_relationship,suggestion_id,entered_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, cardId, client.id, owner,
+    branded_relationship,suggestion_id,entered_at,created_at,updated_at,intro_status,deal_value,introduced_by)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, cardId, client.id, owner,
   input.company, input.person ?? '', input.title ?? '', email(input.email, true), stage, input.next_step ?? '', input.outcome ?? '',
-  reason, input.branded_relationship ?? '', suggestionId, enteredAt ?? created, created, at);
+  reason, input.branded_relationship ?? '', suggestionId, enteredAt ?? created, created, at,
+  input.intro_status ?? '', input.deal_value ?? null, input.introduced_by ?? '');
   if (due) await schedule(store, cardId, due, at);
   await snapshot(store, cardId, enteredAt ?? created);
   await audit(store, actor, 'card.created', 'card', cardId, client.id, { stage, owner_id: owner, suggestion_id: suggestionId });
@@ -163,8 +167,9 @@ export async function updateCard(store, actor, cardId, input) {
     if (due !== previous.due_at) changed.push('due_at');
     if (!changed.length) return previous;
     await store.run(`UPDATE cards SET owner_id=?,company=?,person=?,title=?,email=?,stage=?,next_step=?,outcome=?,branded_relationship=?,entered_at=?,
-      updated_at=?,version=version+1 WHERE id=?`, next.owner_id, next.company, next.person, next.title, next.email,
-    next.stage, next.next_step, next.outcome, next.branded_relationship, changedStage ? at : previous.entered_at, at, cardId);
+      intro_status=?,deal_value=?,introduced_by=?,updated_at=?,version=version+1 WHERE id=?`, next.owner_id, next.company, next.person, next.title, next.email,
+    next.stage, next.next_step, next.outcome, next.branded_relationship, changedStage ? at : previous.entered_at,
+    next.intro_status, next.deal_value, next.introduced_by, at, cardId);
     if (due !== previous.due_at) await schedule(store, cardId, due, at);
     if (changedStage || due !== previous.due_at || previous.owner_id !== next.owner_id) await snapshot(store, cardId, at);
     if (changedStage) {

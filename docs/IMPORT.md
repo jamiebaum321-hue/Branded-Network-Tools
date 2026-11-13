@@ -4,8 +4,8 @@ The one-time import accepts version 1 JSON: an object with `"version": 1`, a `na
 
 | Record set | Required fields | Mapping |
 | --- | --- | --- |
-| `clients` | `id`, `name` | Set `owner_email` when known. Otherwise the importing admin owns the client initially. |
-| `partners` | `id`, `client_id`, `company` | Include person, title, email, relationship, stage, owner, next step, outcome and follow-up when available. `created_at` and `entered_at` preserve known card and stage dates. |
+| `clients` | `id`, `name` | Set `owner_email` when known. Otherwise the importing admin owns the client initially. Optional account fields: `stage` (`current`, `referral`, `pipeline`, `passed`), `deal_status`, `agreement_status`, `monthly_fee`, `term_months`, `contract_start`, `contract_end`, `sca_signed`, `next_due` (dates as `YYYY-MM-DD`), `renewal_terms`, `sca_url`, `referral_y1`–`referral_y3` (percent), `website`, `team`, `next_step`, `next_owner`, `about`, `wants`, `success`, `latest`, and `contacts` (a list of `{name, title, email, phone, notes}`). Status values are listed in [account-fields.mjs](../public/account-fields.mjs). |
+| `partners` | `id`, `client_id`, `company` | Include person, title, email, relationship, stage, owner, next step, outcome and follow-up when available. `created_at` and `entered_at` preserve known card and stage dates. Tracker intros and targets also carry `intro_status`, `introduced_by` and `deal_value` (USD per year). |
 | `introductions` | `id`, `client_id` | Use `partner_id` to add to a linked card. With no partner ID, supply `company` and optional card fields to create the card. Preserve `occurred_at`, `status`, `notes` and `outcome`. |
 | `outreach_activity` | `id`, `client_id`, `partner_id`, `kind`, `occurred_at` | Use `sent`, `reply` or `note`. Include subject, body, message reference and both mailbox scope and Outlook message ID when known. |
 | `suggested_leads` | `id`, `client_id`, `company`, `reason`, `source` | Export open leads. Supply `candidate_key` using the discovery job’s stable ID where available, plus fit, evidence, relationship, score and `reviewer_email` if assigned. |

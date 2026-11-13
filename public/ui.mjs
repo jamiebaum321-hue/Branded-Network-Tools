@@ -78,11 +78,11 @@ export function localInput(value) {
   return new Date(+date - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 }
 
-export function field(label, key, value = '', { type = 'text', required = false, max = 300, placeholder = '', min, hint, autocomplete, glyph } = {}) {
+export function field(label, key, value = '', { type = 'text', required = false, max = 300, placeholder = '', min, hint, autocomplete, glyph, step } = {}) {
   const input = type === 'textarea'
     ? `<textarea name="${h(key)}" rows="4" maxlength="${max}" ${required ? 'required' : ''} placeholder="${h(placeholder)}">${h(value)}</textarea>`
     : `<input name="${h(key)}" type="${h(type)}" value="${h(value)}" maxlength="${max}" ${required ? 'required' : ''}
-      ${min !== undefined ? `min="${min}"` : ''} ${autocomplete ? `autocomplete="${h(autocomplete)}"` : ''} placeholder="${h(placeholder)}">`;
+      ${min !== undefined ? `min="${min}"` : ''} ${step ? `step="${h(step)}"` : ''} ${autocomplete ? `autocomplete="${h(autocomplete)}"` : ''} placeholder="${h(placeholder)}">`;
   return `<label class="field"><span>${h(label)}${required ? '<span class="required" aria-hidden="true"> *</span>' : ''}</span>
     ${glyph ? `<span class="field-control">${icon(glyph)}${input}</span>` : input}${hint ? `<small>${h(hint)}</small>` : ''}</label>`;
 }
@@ -122,6 +122,8 @@ export function shell(user, location) {
     ['/today', 'Today', 'today', location === '/' || location === '/today'],
     ['/pipeline', 'Pipeline', 'board', location.startsWith('/pipeline')],
     ['/clients', 'Clients', 'clients', location.startsWith('/clients')],
+    ['/followups', 'Follow-ups', 'flag', location === '/followups'],
+    ['/contracts', 'Contracts', 'draft', location === '/contracts'],
   ];
   if (user.role === 'admin') sections.push(['/admin', 'Admin', 'shield', location === '/admin']);
   const current = sections.find(section => section[3]);
@@ -140,3 +142,13 @@ export function pipelineTabs(selected) {
     ['/pipeline/suggestions', 'Suggested leads', 'suggestions', 'shortlist'],
   ].map(([url, title, key, glyph]) => `<a href="${url}"${key === selected ? ' aria-current="page"' : ''}>${icon(glyph)}${title}</a>`).join('')}</nav>`;
 }
+
+// Calendar dates (YYYY-MM-DD) carry no time zone; show them as written.
+export function dayLabel(value, withYear = true) {
+  if (!value) return '—';
+  return new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric', ...(withYear ? { year: 'numeric' } : {}) })
+    .format(new Date(`${value}T12:00:00Z`));
+}
+
+export const money = value => value === null || value === undefined || value === '' ? '—'
+  : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value);

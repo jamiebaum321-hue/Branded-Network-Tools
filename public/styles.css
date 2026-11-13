@@ -539,3 +539,22 @@ dialog::backdrop { background: linear-gradient(145deg, #2319486b, #17152d69); ba
   .stage-picker button[aria-pressed="true"] { border-color: Highlight; }
   .board-column.drag-over { outline-color: Highlight; }
 }
+
+/* Solutions tracker: account pages, follow-ups and contract terms */
+.pad { padding: 0 16px 12px; }
+.pad > .list-row { margin-inline: -16px; }
+.table-scroll { overflow-x: auto; }
+.contracts-table { min-width: 860px; }
+.contracts-table td { vertical-align: middle; }
+.term-cell { width: 34%; min-width: 220px; }
+.term-track { position: relative; height: 12px; border-radius: 6px; background: var(--line); }
+.term-bar { position: absolute; top: 0; bottom: 0; border-radius: 6px; background: #3f9a6b; }
+.term-bar.soon { background: #d99a1b; }
+.term-bar.act { background: #c23b3b; }
+.term-bar.ended { background: #9aa3b2; }
+.term-today { position: absolute; top: -4px; bottom: -4px; width: 2px; margin-left: -1px; background: var(--ink, #16264d); border-radius: 1px; }
+.client-card .small { margin: 6px 0 0; }
+.board-card > small.muted { display: block; margin-top: 6px; font-size: .75rem; }
+.top-aligned { align-items: start; }
+.top-aligned > .panel, .stack { align-content: start; }
+.clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }

@@ -1,10 +1,39 @@
 import { createHmac } from 'node:crypto';
 import { sections } from '../public/intake-fields.mjs';
 import { AppError, audit, canAccessClient, clientFor, clientScope, decode, digest, encode, id, iso, requireAdmin, requireHuman } from './store.mjs';
-import { email, int, list, object, str, validate } from './validation.mjs';
+import { choice, day, email, int, list, nullable, num, object, str, validate } from './validation.mjs';
+import { agreementStatuses, clientStages, dealStatuses } from '../public/account-fields.mjs';
 import { emit } from './events.mjs';
+import { listCards } from './pipeline.mjs';
 
-const clientFields = { name: str(180), owner_id: str(80), member_ids: list(str(80), 500) };
+const contactSchema = object({ name: str(150), title: str(160, 0), email: str(254, 0), phone: str(60, 0), notes: str(600, 0) }, ['name']);
+const percent = nullable(num(0, 100));
+// Account terms carried over from the Solutions tracker. Text fields allow '' to clear; numbers and dates allow null.
+export const accountFields = {
+  stage: choice(...Object.keys(clientStages)), deal_status: choice('', ...dealStatuses), agreement_status: choice('', ...agreementStatuses),
+  monthly_fee: nullable(num(0, 1000000000)), term_months: nullable(int(0, 600)), contract_start: nullable(day), contract_end: nullable(day),
+  renewal_terms: str(2000, 0), sca_url: str(1000, 0), sca_signed: nullable(day), referral_y1: percent, referral_y2: percent, referral_y3: percent,
+  website: str(300, 0), team: str(300, 0), next_step: str(1000, 0), next_due: nullable(day), next_owner: str(120, 0),
+  contacts: list(contactSchema, 50), about: str(2000, 0), wants: str(2000, 0), success: str(2000, 0), latest: str(4000, 0),
+};
+const accountColumns = Object.keys(accountFields);
+const nextStepFields = object({ next_step: accountFields.next_step, next_due: accountFields.next_due, next_owner: accountFields.next_owner,
+  latest: accountFields.latest }, []);
+const clientFields = { name: str(180), owner_id: str(80), member_ids: list(str(80), 500), ...accountFields };
+
+function checkAccount(data) {
+  if (data.contract_start && data.contract_end && data.contract_end < data.contract_start) throw new AppError(400, 'The contract end date is before its start date.');
+  if (data.sca_url) {
+    let url;
+    try { url = new URL(data.sca_url); } catch { throw new AppError(400, 'Enter the SCA link as a full web address.'); }
+    if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) throw new AppError(400, 'Enter the SCA link as a full web address.');
+  }
+  for (const contact of data.contacts ?? []) contact.email = email(contact.email, true);
+  return data;
+}
+
+const accountValue = (key, value) => key === 'contacts' ? encode(value) : value;
+export const presentClient = (row) => row && ({ ...row, contacts: decode(row.contacts ?? '[]') });
 const submissionFields = 's.id,s.client_id,s.version,s.form_version,s.submitted_at,s.source_ref';
 
 export async function listClients(store, actor, { q, limit = 50, offset = 0 } = {}) {
@@ -13,8 +42,8 @@ export async function listClients(store, actor, { q, limit = 50, offset = 0 } = 
     (SELECT count(*) FROM cards p WHERE p.client_id=c.id AND p.stage<>'closed') AS open_cards,
     (SELECT max(s.submitted_at) FROM submissions s WHERE s.client_id=c.id) AS latest_submission
     FROM clients c JOIN users u ON u.id=c.owner_id WHERE (${scope}) AND (?::text IS NULL OR strpos(lower(c.name),lower(?::text))>0)
-    ORDER BY lower(c.name),c.id LIMIT ? OFFSET ?`, ...params, q ?? null, q ?? null, limit + 1, offset);
-  return { items: rows.slice(0, limit), next_offset: rows.length > limit ? offset + limit : null };
+    ORDER BY array_position(ARRAY['current','referral','pipeline','passed'],c.stage),lower(c.name),c.id LIMIT ? OFFSET ?`, ...params, q ?? null, q ?? null, limit + 1, offset);
+  return { items: rows.slice(0, limit).map(presentClient), next_offset: rows.length > limit ? offset + limit : null };
 }
 
 async function ensureActive(store, userId) {
@@ -26,10 +55,14 @@ export async function insertClient(store, actor, data, createdAt = iso()) {
   const owner = data.owner_id ?? actor.id;
   await ensureActive(store, owner);
   for (const userId of data.member_ids ?? []) await ensureActive(store, userId);
-  await store.run('INSERT INTO clients VALUES(?,?,?,?)', clientId, data.name, owner, createdAt);
+  const account = accountColumns.filter(key => data[key] !== undefined);
+  checkAccount(data);
+  await store.run(`INSERT INTO clients(id,name,owner_id,created_at,updated_at${account.map(key => `,${key}`).join('')})
+    VALUES(?,?,?,?,?${account.map(() => ',?').join('')})`, clientId, data.name, owner, createdAt, createdAt,
+  ...account.map(key => accountValue(key, data[key])));
   for (const userId of new Set(data.member_ids ?? [])) await store.run('INSERT INTO client_members VALUES(?,?)', clientId, userId);
   await audit(store, actor, 'client.created', 'client', clientId, clientId, { owner_id: owner });
-  return clientFor(store, actor, clientId);
+  return presentClient(await clientFor(store, actor, clientId));
 }
 
 export async function createClient(store, actor, input) {
@@ -45,7 +78,10 @@ export async function updateClient(store, actor, clientId, input) {
     const previous = await clientFor(store, actor, clientId);
     const owner = data.owner_id ?? previous.owner_id;
     await ensureActive(store, owner);
-    await store.run('UPDATE clients SET name=?,owner_id=? WHERE id=?', data.name ?? previous.name, owner, clientId);
+    const account = accountColumns.filter(key => data[key] !== undefined);
+    checkAccount({ ...previous, contacts: [], ...data });
+    await store.run(`UPDATE clients SET name=?,owner_id=?,updated_at=?${account.map(key => `,${key}=?`).join('')} WHERE id=?`,
+      data.name ?? previous.name, owner, iso(), ...account.map(key => accountValue(key, data[key])), clientId);
     if (data.member_ids) {
       for (const userId of data.member_ids) await ensureActive(store, userId);
       await store.run('DELETE FROM client_members WHERE client_id=?', clientId);
@@ -57,7 +93,22 @@ export async function updateClient(store, actor, clientId, input) {
       throw new AppError(409, 'Reassign this client’s open cards before removing their owner’s access.');
     }
     await audit(store, actor, 'client.updated', 'client', clientId, clientId, { fields: Object.keys(data), owner_id: owner });
-    return clientFor(store, actor, clientId);
+    return presentClient(await clientFor(store, actor, clientId));
+  });
+}
+
+// Anyone working the account can record its next step and latest news; the terms stay admin-only.
+export async function updateNextStep(store, actor, clientId, input) {
+  requireHuman(actor);
+  const data = validate(nextStepFields, input);
+  return store.tx(async () => {
+    await clientFor(store, actor, clientId);
+    const fields = Object.keys(data);
+    if (fields.length) {
+      await store.run(`UPDATE clients SET updated_at=?${fields.map(key => `,${key}=?`).join('')} WHERE id=?`, iso(), ...fields.map(key => data[key]), clientId);
+      await audit(store, actor, 'client.next_step', 'client', clientId, clientId, { fields });
+    }
+    return presentClient(await clientFor(store, actor, clientId));
   });
 }
 
@@ -66,7 +117,8 @@ export async function clientDetail(store, actor, clientId) {
   const link = await store.get(`SELECT expires_at,created_at FROM form_links WHERE client_id=? AND revoked=0
     AND expires_at>? AND submission_id IS NULL ORDER BY created_at DESC LIMIT 1`, clientId, Date.now()) ?? null;
   return {
-    client, link, submissions: await listSubmissions(store, actor, clientId, {}),
+    client: presentClient(client), link, submissions: await listSubmissions(store, actor, clientId, {}),
+    intros: (await listCards(store, actor, { client_id: clientId, limit: 200 })).items,
     member_ids: (await store.all('SELECT user_id FROM client_members WHERE client_id=? ORDER BY user_id', clientId)).map(row => row.user_id),
     owners: await store.all(`SELECT id,name FROM users WHERE enabled=1 AND (role='admin' OR id=? OR id IN (
       SELECT user_id FROM client_members WHERE client_id=?)) ORDER BY name`, client.owner_id, clientId),

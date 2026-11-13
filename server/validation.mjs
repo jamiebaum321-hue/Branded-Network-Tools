@@ -6,6 +6,8 @@ export const int = (minimum, maximum) => ({ type: 'integer', minimum, maximum })
 export const bool = { type: 'boolean' };
 export const choice = (...values) => ({ type: 'string', enum: values });
 export const list = (items, maxItems = 100) => ({ type: 'array', items, maxItems });
+export const nullable = (schema) => ({ type: 'nullable', schema });
+export const day = { type: 'day' };
 export const object = (properties, required = Object.keys(properties)) => ({
   type: 'object', properties, required, additionalProperties: false,
 });
@@ -35,6 +37,12 @@ export function validate(schema, value, label = 'Input') {
     case 'number':
       if (!Number.isFinite(value) || (schema.type === 'integer' && !Number.isSafeInteger(value))) fail('must be a valid number.');
       if (value < schema.minimum || value > schema.maximum) fail('is out of range.');
+      return value;
+    case 'nullable':
+      return value === null || value === '' ? null : validate(schema.schema, value, label);
+    case 'day':
+      if (typeof value !== 'string' || !/^\d{4}-\d\d-\d\d$/.test(value) || !Number.isFinite(Date.parse(`${value}T00:00:00Z`))
+        || new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) !== value) fail('must be a date (YYYY-MM-DD).');
       return value;
     case 'boolean':
       if (typeof value !== 'boolean') fail('must be true or false.');

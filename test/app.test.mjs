@@ -299,7 +299,7 @@ test('persistent store keeps accounts across restarts and only runs migrations o
   const reopened = await openStore(databaseUrl, { schema });
   try {
     assert.equal((await reopened.get('SELECT email FROM users')).email, adminEmail);
-    assert.deepEqual((await reopened.all('SELECT version FROM schema_migrations')).map(row => row.version), [1]);
+    assert.deepEqual((await reopened.all('SELECT version FROM schema_migrations')).map(row => row.version), [1, 2]);
   } finally { await reopened.close(); }
 });
 
@@ -345,4 +345,53 @@ test('admins can permanently delete a client and everything recorded under it', 
   }
   assert((await f.admin('/api/admin/audit')).items.some(row => row.action === 'client.deleted' && row.entity_id === a.id));
   assert.equal((await f.admin('/api/admin/import/apply', input)).counts.clients.added, 1);
+});
+
+test('tracker accounts: terms, next steps, follow-ups, contracts and import', async t => {
+  const f = await fixture(t);
+  const day = offset => new Date(Date.now() + offset * 86400000).toISOString().slice(0, 10);
+  const client = await f.addClient('Account Client');
+  const updated = (await f.admin(`/api/clients/${client.id}`, { stage: 'current', deal_status: 'Active – Paying', agreement_status: 'Signed',
+    monthly_fee: 10000, term_months: 6, contract_start: day(-160), contract_end: day(20), renewal_terms: '6-month term, renews automatically for 6 months.',
+    contacts: [{ name: 'Matt Example', title: 'CEO', email: 'Matt@Example.test' }], next_step: 'Confirm the renewal', next_due: day(-2), next_owner: 'Daniel' }, 'PATCH')).client;
+  assert.equal(updated.monthly_fee, 10000);
+  assert.equal(updated.contacts[0].email, 'matt@example.test');
+  await f.admin(`/api/clients/${client.id}`, { contract_end: day(-400) }, 'PATCH', 400);
+  await f.admin(`/api/clients/${client.id}`, { deal_status: 'Made up' }, 'PATCH', 400);
+
+  const { setup } = await f.admin('/api/admin/accounts', { name: 'Member', email: 'member@example.test', role: 'member' });
+  const member = await f.activate(setup.path);
+  await f.admin(`/api/clients/${client.id}`, { member_ids: [member.user.id] }, 'PATCH');
+  const personal = f.as(member.cookie);
+  await personal(`/api/clients/${client.id}`, { monthly_fee: 1 }, 'PATCH', 403);
+  assert.equal((await personal(`/api/clients/${client.id}/next-step`, { next_step: 'Send the renewal deck', next_due: day(-3) })).client.next_step, 'Send the renewal deck');
+
+  const quiet = await f.addCard(client, { stage: 'reached_out', intro_status: 'Awaiting Response', introduced_by: 'Schatzy' });
+  await f.store.run('UPDATE cards SET entered_at=? WHERE id=?', new Date(Date.now() - 20 * 86400000).toISOString(), quiet.id);
+  await f.addCard(client, { company: 'Fresh Intro', stage: 'reached_out' });
+  const pipeline = await f.addClient('Prospect Co', { stage: 'pipeline' });
+  assert.equal(pipeline.stage, 'pipeline');
+
+  const due = await f.admin('/api/followups');
+  assert.deepEqual(due.accounts.map(row => [row.name, row.bucket]), [['Account Client', 'overdue']]);
+  assert.deepEqual(due.intros.map(row => [row.company, row.intro_status]), [['Sample Restaurant', 'Awaiting Response']]);
+  assert.deepEqual(due.contracts.map(row => [row.name, row.flag, row.auto_renew]), [['Account Client', 'act', true]]);
+  const terms = await f.admin('/api/contracts');
+  assert.equal(terms.monthly_retainers, 10000);
+  assert.equal(terms.items.length, 1);
+  assert.deepEqual((await f.admin('/api/clients')).items.map(row => row.stage), ['current', 'pipeline']);
+  const detail = await f.admin(`/api/clients/${client.id}`);
+  assert.equal(detail.intros.length, 2);
+
+  const imported = await f.admin('/api/admin/import/apply', { version: 1, namespace: 'solutions-tracker',
+    clients: [{ id: 'hang', name: 'Hang', stage: 'current', deal_status: 'Active – Paying', monthly_fee: 10000, contract_start: '2026-05-12',
+      contract_end: '2026-11-11', referral_y1: 15, team: 'Schatzy, Julie', contacts: [{ name: 'Matt Smolin', email: 'matt@hang.example' }] }],
+    partners: [{ id: 'hang-035', client_id: 'hang', company: 'Golden Corral', person: 'Dawn Gillis', stage: 'in_conversation',
+      intro_status: 'Client Following Up', introduced_by: 'Schatzy', deal_value: 50000, created_at: '2026-08-03T12:00:00Z' }],
+    introductions: [{ id: 'hang-035-intro', client_id: 'hang', partner_id: 'hang-035', occurred_at: '2026-08-03T12:00:00Z', status: 'Client Following Up', notes: 'Intro sent' }] });
+  assert.equal(imported.counts.clients.added, 1);
+  const hang = (await f.admin('/api/clients?q=Hang')).items[0];
+  assert.equal(hang.referral_y1, 15);
+  const card = (await f.admin(`/api/clients/${hang.id}`)).intros[0];
+  assert.deepEqual([card.company, card.intro_status, card.deal_value, card.introduced_by], ['Golden Corral', 'Client Following Up', 50000, 'Schatzy']);
 });

@@ -1,7 +1,7 @@
 import { sections } from './intake-fields.mjs';
 import { btn, emptyState, h, heading, icon, link, pathId, shell, stages } from './ui.mjs';
 import { activityItems, adminPage, alertRows, auditRows, boardCard, boardPage, cardPage, clientForm, clientPage,
-  clientRows, clientsPage, createCardForm, intakePage, inviteForm, jobTokenForm, metricsPage, setupPage, signInPage,
+  clientRows, clientsPage, contractsPage, followupsPage, createCardForm, intakePage, inviteForm, jobTokenForm, metricsPage, setupPage, signInPage,
   submissionPage, submissionRows, suggestionPage, suggestionRows, suggestionsPage, todayPage } from './views.mjs';
 
 const main = document.querySelector('#main');
@@ -100,6 +100,11 @@ function navigate(path, { replace = false } = {}) {
 
 function show(html, focus, hash) {
   main.innerHTML = html;
+  // The content security policy forbids inline style attributes, so positions travel as data attributes.
+  for (const element of main.querySelectorAll('[data-left]')) {
+    element.style.left = `${element.dataset.left}%`;
+    if (element.dataset.width) element.style.width = `${element.dataset.width}%`;
+  }
   main.setAttribute('aria-busy', 'false');
   if (hash) {
     let target;
@@ -197,6 +202,10 @@ async function render({ focus = false } = {}) {
       if (current !== revision) return;
       context = ctx;
       html = clientPage(data, ctx, zone);
+    } else if (path === '/followups') {
+      html = followupsPage(await api('/api/followups'));
+    } else if (path === '/contracts') {
+      html = contractsPage(await api('/api/contracts'));
     } else if (path === '/admin') {
       if (user.role !== 'admin') throw new RequestError(403, { error: 'Ask an admin for access.' });
       const tab = ['audit','import','mcp'].includes(query.get('tab')) ? query.get('tab') : 'accounts';
@@ -218,6 +227,26 @@ async function render({ focus = false } = {}) {
   } catch (error) {
     if (current === revision) showError(error, focus);
   }
+}
+
+const accountText = ['stage', 'deal_status', 'agreement_status', 'sca_url', 'website', 'team', 'renewal_terms', 'about', 'wants', 'success'];
+const accountNumbers = ['monthly_fee', 'term_months', 'referral_y1', 'referral_y2', 'referral_y3'];
+const accountDates = ['contract_start', 'contract_end', 'sca_signed'];
+
+function accountInput(data) {
+  const value = {};
+  for (const key of accountText) value[key] = String(data.get(key) ?? '');
+  for (const key of accountNumbers) {
+    const raw = String(data.get(key) ?? '').trim();
+    value[key] = raw === '' ? null : Number(raw);
+    if (value[key] !== null && !Number.isFinite(value[key])) throw new Error('Enter numbers for the fee, term and referral percentages.');
+  }
+  for (const key of accountDates) value[key] = data.get(key) || null;
+  value.contacts = String(data.get('contacts') ?? '').split('\n').map(line => line.trim()).filter(Boolean).map(line => {
+    const [name, title = '', email = '', phone = '', ...notes] = line.split('|').map(part => part.trim());
+    return { name, title, email, phone, notes: notes.join(' | ') };
+  });
+  return value;
 }
 
 function dateFromInput(value) {
@@ -290,6 +319,7 @@ const forms = {
     const value = Object.fromEntries(data);
     value.version = Number(value.version);
     value.due_at = dateFromInput(value.due_at);
+    value.deal_value = value.deal_value === '' || value.deal_value === undefined ? null : Number(value.deal_value);
     await api(`/api/cards/${pathId(form.dataset.id)}`, 'PATCH', value);
     notify('Card saved.');
     navigate(location.pathname, { replace: true });
@@ -324,13 +354,21 @@ const forms = {
     navigate(`${location.pathname}#draft-${pathId(draft.id)}`, { replace: true });
   },
   async 'add-client'(form, data) {
-    const { client } = await api('/api/clients', 'POST', { name: data.get('name'), owner_id: data.get('owner_id'), member_ids: data.getAll('member_ids') });
+    const { client } = await api('/api/clients', 'POST', { name: data.get('name'), owner_id: data.get('owner_id'), member_ids: data.getAll('member_ids'),
+      stage: data.get('stage') || 'pipeline' });
     notify('Client added.');
     navigate(`/clients/${pathId(client.id)}`);
   },
   async 'client-edit'(form, data) {
-    await api(`/api/clients/${pathId(form.dataset.id)}`, 'PATCH', { name: data.get('name'), owner_id: data.get('owner_id'), member_ids: data.getAll('member_ids') });
+    await api(`/api/clients/${pathId(form.dataset.id)}`, 'PATCH', { name: data.get('name'), owner_id: data.get('owner_id'),
+      member_ids: data.getAll('member_ids'), ...accountInput(data) });
     notify('Client settings saved.');
+    await render();
+  },
+  async 'next-step'(form, data) {
+    await api(`/api/clients/${pathId(form.dataset.id)}/next-step`, 'POST', { next_step: data.get('next_step'), next_due: data.get('next_due') || null,
+      next_owner: data.get('next_owner'), latest: data.get('latest') });
+    notify('Next step saved.');
     await render();
   },
   async intake(form) { await advanceWizard(form, 'next'); },
@@ -440,7 +478,7 @@ async function moreRows(button, type) {
     q.set('offset', next);
     result = await api(queryPath('/api/clients', q));
     target = document.querySelector('#client-list');
-    html = clientRows(result.items, zone);
+    html = `<div class="client-grid">${clientRows(result.items, zone)}</div>`;
     cursor = result.next_offset;
   } else if (type === 'submissions') {
     result = await api(`/api/clients/${pathId(button.dataset.id)}/submissions?before=${pathId(next)}`);

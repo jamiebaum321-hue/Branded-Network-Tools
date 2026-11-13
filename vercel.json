@@ -6,7 +6,7 @@
   "functions": {
     "api/index.mjs": {
       "maxDuration": 60,
-      "includeFiles": "{public/**,server/schema.sql,server/fonts/**}"
+      "includeFiles": "{public/**,server/schema.sql,server/migrations/**,server/fonts/**}"
     }
   },
   "rewrites": [{ "source": "/(.*)", "destination": "/api/index" }],
