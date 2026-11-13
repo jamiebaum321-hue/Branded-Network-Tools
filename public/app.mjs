@@ -1,5 +1,6 @@
 import { sections } from './intake-fields.mjs';
 import { recordKinds } from './record-kinds.mjs';
+import { mountAssistant, unmountAssistant } from './assistant.mjs';
 import { btn, emptyState, h, heading, icon, link, pathId, shell, stages } from './ui.mjs';
 import { activityItems, adminPage, alertRows, auditRows, boardCard, boardPage, cardPage, clientForm, clientPage,
   clientRows, clientsPage, contractsPage, followupsPage, recordForm, approvalsPage, activityLogPage, activityLogRows, logActivityForm, createCardForm, intakePage, inviteForm, jobTokenForm, metricsPage, setupPage, signInPage,
@@ -267,7 +268,7 @@ async function render({ focus = false } = {}) {
     if (current !== revision) return;
     show(html, focus, hash);
     if (todayResult) todayAcknowledgement = api('/api/today/seen', 'POST', { reply_cursor: todayResult.reply_cursor }).catch(() => {});
-    if (user && !publicRoute) { refreshAlertDot(); refreshBadges(); }
+    if (user && !publicRoute) { refreshAlertDot(); refreshBadges(); mountAssistant(api); }
   } catch (error) {
     if (current === revision) showError(error, focus);
   }
@@ -596,7 +597,7 @@ const actions = {
   'mark-alerts': async button => { await api('/api/alerts/seen', 'POST', { ids: button.dataset.ids.split(',') }); await showAlerts(); },
   account: () => showDialog('Account', `<div class="stack"><div><strong>${h(user.name)}</strong><p class="muted">${h(user.email)}</p></div>
     <div>${btn('Sign out', { action: 'logout', glyph: 'logout' })}</div></div>`, { glyph: 'user' }),
-  logout: async () => { await api('/api/session/logout', 'POST'); user = null; context = null; navigate('/signin', { replace: true }); },
+  logout: async () => { await api('/api/session/logout', 'POST'); user = null; context = null; unmountAssistant(); navigate('/signin', { replace: true }); },
   'close-dialog': () => dialog.close(),
   'clear-filters': () => navigate(location.pathname),
   'pick-stage': button => pickStage(button.dataset.stage),

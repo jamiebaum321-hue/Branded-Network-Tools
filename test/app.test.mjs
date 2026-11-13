@@ -1,6 +1,7 @@
 import { test as nodeTest } from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
+import http from 'node:http';
 import { randomBytes } from 'node:crypto';
 import pg from 'pg';
 import { bootstrap, bootstrapFromEnv } from '../server/accounts.mjs';
@@ -532,4 +533,59 @@ test('activity log: entries, review flags, scoping and import', async t => {
   const again = await f.admin('/api/admin/import/apply', { version: 1, namespace: 'solutions-tracker', clients: [{ id: 'arc', name: 'ARC' }],
     approvals: [{ id: 'renewal-step-arc', client_id: 'arc', kind: 'record_update', status: 'pending', title: 'x', payload: {} }] });
   assert.equal(again.counts.approvals.skipped, 1);
+});
+
+test('assistant: not configured, tool loop over scoped data, links and rate limit', async t => {
+  const f = await fixture(t);
+  const hang = await f.addClient('Hang', { stage: 'current' });
+  await f.addCard(hang, { company: 'White Castle', person: 'Jamie Example', stage: 'in_conversation', intro_status: 'Client Following Up' });
+  const hidden = await f.addClient('Hidden Co', { stage: 'current' });
+  assert.equal((await f.admin('/api/assistant')).configured, false);
+  await f.admin('/api/assistant', { messages: [{ role: 'user', content: 'Where are we with Hang?' }] }, 'POST', 503);
+
+  // A stand-in for the Anthropic API: first asks for a search, then answers using the tool result.
+  const requests = [];
+  const fake = http.createServer(async (req, res) => {
+    let body = ''; for await (const chunk of req) body += chunk;
+    const payload = JSON.parse(body);
+    requests.push({ headers: req.headers, payload });
+    const last = payload.messages.at(-1);
+    const toolResult = Array.isArray(last.content) && last.content.find(block => block.type === 'tool_result');
+    const content = toolResult
+      ? [{ type: 'text', text: `Found it: ${JSON.parse(toolResult.content).clients.map(c => `[${c.name}](${c.link})`).join(', ')}` }]
+      : [{ type: 'tool_use', id: 'toolu_1', name: 'search', input: { query: 'Hang' } }];
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ id: `msg_${requests.length}`, type: 'message', role: 'assistant', model: payload.model, content,
+      stop_reason: toolResult ? 'end_turn' : 'tool_use', stop_sequence: null, usage: { input_tokens: 10, output_tokens: 5 } }));
+  }).listen(0, '127.0.0.1');
+  await once(fake, 'listening');
+  t.after(() => new Promise(resolve => fake.close(resolve)));
+  process.env.ANTHROPIC_API_KEY = 'test-key';
+  process.env.ANTHROPIC_BASE_URL = `http://127.0.0.1:${fake.address().port}`;
+  t.after(() => { delete process.env.ANTHROPIC_API_KEY; delete process.env.ANTHROPIC_BASE_URL; });
+
+  const { answer } = await f.admin('/api/assistant', { messages: [{ role: 'user', content: 'Where are we with Hang?' }] });
+  assert.equal(answer, `Found it: [Hang](/clients/${hang.id})`);
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].payload.model, 'claude-opus-5-5');
+  assert.equal(requests[0].payload.fallbacks, 'default');
+  assert.match(requests[0].headers['anthropic-beta'], /server-side-fallback-2026-07-01/);
+  assert.deepEqual(requests[0].payload.tools.map(tool => tool.name).sort(),
+    ['activity', 'approvals', 'client_details', 'contracts', 'follow_ups', 'list_clients', 'open_issues', 'search']);
+  const toolResult = JSON.parse(requests[1].payload.messages.at(-1).content[0].content);
+  assert.equal(toolResult.clients[0].link, `/clients/${hang.id}`);
+  assert.deepEqual(toolResult.intros, []);
+  const byPerson = await (await import('../server/assistant.mjs')).runAssistantTool(f.store, { kind: 'user', ...f.owner.user }, f.config, 'search', { query: 'jamie' });
+  assert.deepEqual(byPerson.intros.map(i => [i.company, i.client_name, i.link.startsWith('/pipeline/cards/')]), [['White Castle', 'Hang', true]]);
+
+  // Tools only see what the person asking can see.
+  const { runAssistantTool } = await import('../server/assistant.mjs');
+  const { setup } = await f.admin('/api/admin/accounts', { name: 'Member', email: 'member@example.test', role: 'member' });
+  const member = await f.activate(setup.path);
+  await f.admin(`/api/clients/${hang.id}`, { member_ids: [member.user.id] }, 'PATCH');
+  const memberActor = { kind: 'user', id: member.user.id, name: 'Member', role: 'member' };
+  const seen = await runAssistantTool(f.store, memberActor, f.config, 'list_clients', {});
+  assert.deepEqual(seen.clients.map(c => c.name), ['Hang']);
+  assert.match((await runAssistantTool(f.store, memberActor, f.config, 'client_details', { client_id: hidden.id })).error, /No client/);
+  await f.admin('/api/assistant', { messages: [{ role: 'assistant', content: 'Hi' }] }, 'POST', 400);
 });

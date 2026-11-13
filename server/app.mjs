@@ -8,6 +8,7 @@ import { clientDetail, copyFormLink, createClient, getSubmission, listClients, l
   revokeFormLinks, saveIntake, submitIntake, updateClient, deleteClient, updateNextStep } from './clients.mjs';
 import { contracts, followUps } from './accountwork.mjs';
 import { createRecord, deleteRecord, openIssues, updateRecord } from './records.mjs';
+import { askAssistant, assistantConfigured } from './assistant.mjs';
 import { addActivity, createApproval, decideApproval, listActivityLog, listApprovals, markReviewed, pendingCount, reviewCount } from './approvals.mjs';
 import { acknowledgeToday, metrics, today } from './dashboard.mjs';
 import { alerts, seeAlerts } from './events.mjs';
@@ -28,6 +29,7 @@ const assets = new Map(Object.entries({
   '/intake-fields.mjs': ['intake-fields.mjs', 'text/javascript; charset=utf-8'],
   '/account-fields.mjs': ['account-fields.mjs', 'text/javascript; charset=utf-8'],
   '/record-kinds.mjs': ['record-kinds.mjs', 'text/javascript; charset=utf-8'],
+  '/assistant.mjs': ['assistant.mjs', 'text/javascript; charset=utf-8'],
   '/favicon.svg': ['favicon.svg', 'image/svg+xml'],
   '/favicon.ico': ['assets/brand/favicon.ico', 'image/x-icon'],
   '/assets/brand/network-mark.svg': ['assets/brand/network-mark.svg', 'image/svg+xml'],
@@ -176,6 +178,11 @@ export function createHandler(store, config) {
   route('POST', '/api/activity-log', async ({ actor, data }) => ({ entry: await addActivity(store, actor, data) }));
   route('POST', `/api/activity-log/${ident}/reviewed`, async ({ actor, ids }) => ({ entry: await markReviewed(store, actor, ids[0]) }));
   route('GET', '/api/badges', async ({ actor }) => ({ approvals: await pendingCount(store, actor), review: await reviewCount(store, actor) }));
+  route('GET', '/api/assistant', () => ({ configured: assistantConfigured() }));
+  route('POST', '/api/assistant', async ({ actor, data }) => {
+    await rateLimit(store, `assistant:${actor.id}`, 30, 600000);
+    return askAssistant(store, actor, config, data);
+  }, { bodyLimit: 200000 });
   route('GET', '/api/followups', ({ actor }) => followUps(store, actor, config.timeZone));
   route('GET', '/api/contracts', ({ actor }) => contracts(store, actor, config.timeZone));
   route('DELETE', `/api/clients/${ident}`, ({ actor, ids }) => deleteClient(store, actor, ids[0]));
