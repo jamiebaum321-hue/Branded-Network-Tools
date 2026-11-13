@@ -6,6 +6,11 @@ import pg from 'pg';
 import { bootstrap, bootstrapFromEnv } from '../server/accounts.mjs';
 import { createApp } from '../server/app.mjs';
 import { openStore } from '../server/store.mjs';
+import { applySealedImport, seal } from '../server/sealed-import.mjs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 // Each test gets its own Postgres schema in TEST_DATABASE_URL, dropped afterwards.
 const databaseUrl = process.env.TEST_DATABASE_URL;
@@ -394,4 +399,20 @@ test('tracker accounts: terms, next steps, follow-ups, contracts and import', as
   assert.equal(hang.referral_y1, 15);
   const card = (await f.admin(`/api/clients/${hang.id}`)).intros[0];
   assert.deepEqual([card.company, card.intro_status, card.deal_value, card.introduced_by], ['Golden Corral', 'Client Following Up', 50000, 'Schatzy']);
+});
+
+test('a sealed import applies once as the first admin and never twice', async t => {
+  const f = await fixture(t);
+  const key = randomBytes(32).toString('base64url');
+  const input = { version: 1, namespace: 'sealed-check', clients: [{ id: 'a', name: 'Sealed Client', stage: 'current', monthly_fee: 5000 }],
+    partners: [{ id: 'p1', client_id: 'a', company: 'Sealed Partner', stage: 'reached_out', intro_status: 'Awaiting Response' }] };
+  const file = pathToFileURL(join(mkdtempSync(join(tmpdir(), 'sealed-')), 'import.sealed'));
+  writeFileSync(file, seal(input, key));
+  assert.equal(await applySealedImport(f.store, {}, file), null);
+  await assert.rejects(applySealedImport(f.store, { TRACKER_IMPORT_KEY: randomBytes(32).toString('base64url') }, file));
+  assert.equal((await applySealedImport(f.store, { TRACKER_IMPORT_KEY: key }, file)).counts.clients.added, 1);
+  assert.equal(await applySealedImport(f.store, { TRACKER_IMPORT_KEY: key }, file), null);
+  const clients = (await f.admin('/api/clients')).items;
+  assert.deepEqual(clients.map(row => [row.name, row.monthly_fee]), [['Sealed Client', 5000]]);
+  assert.equal((await f.admin('/api/cards')).items[0].intro_status, 'Awaiting Response');
 });

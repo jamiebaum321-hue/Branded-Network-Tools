@@ -2,10 +2,12 @@ import { bootstrapFromEnv, cleanExpired } from './accounts.mjs';
 import { createApp } from './app.mjs';
 import { configuration } from './config.mjs';
 import { openStore } from './store.mjs';
+import { applySealedImport } from './sealed-import.mjs';
 
 const config = configuration(process.env);
 const store = await openStore(config.database);
 await bootstrapFromEnv(store, process.env);
+await applySealedImport(store, process.env).catch(error => console.error('Sealed import failed:', error.message));
 await cleanExpired(store);
 const server = createApp(store, config);
 const cleanup = setInterval(() => {

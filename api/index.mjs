@@ -2,6 +2,7 @@ import { createHandler } from '../server/app.mjs';
 import { configuration } from '../server/config.mjs';
 import { bootstrapFromEnv } from '../server/accounts.mjs';
 import { openStore } from '../server/store.mjs';
+import { applySealedImport } from '../server/sealed-import.mjs';
 
 // One pool and handler per function instance; the schema migration runs once on cold start.
 let ready;
@@ -10,6 +11,7 @@ function load() {
     const config = configuration(process.env);
     const store = await openStore(config.database);
     await bootstrapFromEnv(store, process.env);
+    await applySealedImport(store, process.env).catch(error => console.error('Sealed import failed:', error.message, JSON.stringify(error.details?.errors ?? [])));
     return createHandler(store, config);
   })().catch(error => { ready = undefined; throw error; });
   return ready;
