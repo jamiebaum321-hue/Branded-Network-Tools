@@ -87,7 +87,7 @@ export function boardCard(row, zone) {
     <div class="chips">${due ? badge('Follow-up due', 'amber', 'clock') : row.suggestion_id ? badge('Approved lead', 'green', 'check') : row.outcome ? badge(row.outcome, 'green', 'check') : ''}
     ${row.intro_status && row.intro_status !== row.outcome ? badge(row.intro_status, 'neutral') : ''}</div>
     <small class="muted">${h(row.client_name)}</small>
-    <dl><dt>${icon('user')}Owner</dt><dd>${h(row.owner_name)}</dd><dt>${icon('history')}Last touch</dt><dd>${h(formatDate(row.last_touch, zone))}</dd>
+    <dl><dt>${icon('user')}Intro by</dt><dd>${h(row.introduced_by || '—')}</dd><dt>${icon('history')}Last touch</dt><dd>${h(formatDate(row.last_touch, zone))}</dd>
     <dt>${icon('flag')}Next step</dt><dd>${h(row.next_step || '—')}</dd><dt>${icon('clock')}In stage</dt><dd>${h(stageDuration(row.entered_at))}</dd>
     ${row.due_at ? `<dt>${icon('today')}Follow-up</dt><dd>${h(formatDate(row.due_at, zone))}</dd>` : ''}</dl></a>`;
 }
@@ -186,7 +186,7 @@ function logForm(card, drafts) {
 
 export function cardPage(data, zone, toStage, hash) {
   const { card, drafts, history } = data;
-  const fields = [['Client', card.client_name], ['Owner', card.owner_name], ['Next step', card.next_step || '—'], ['Time in stage', stageDuration(card.entered_at)],
+  const fields = [['Client', card.client_name], ['Intro made by', card.introduced_by || '—'], ['Intro status', card.intro_status || '—'], ['App owner', card.owner_name], ['Next step', card.next_step || '—'], ['Time in stage', stageDuration(card.entered_at)],
     ['Last touch', timeLabel(card.last_touch, zone)], ['Follow-up', timeLabel(card.due_at, zone)], ['Closure outcome', card.outcome || '—']];
   return `${link('/pipeline', 'Back to pipeline', 'back', 'back-link')}${heading(card.person || card.company, card.person ? card.company : '',
     stageBadge(card.stage), { art: 'contact-profile', compact: true })}
@@ -253,6 +253,8 @@ export function suggestionPage(row) {
 }
 
 const listOf = values => values.map(value => ({ id: value, name: value }));
+// The Branded owner is the first name on the client's team; the app account owner is only a fallback.
+export const brandedOwner = row => (row.team || '').split(',')[0].trim() || row.owner_name;
 const clientStageBadge = key => badge(clientStages[key]?.label ?? key, clientStages[key]?.tone ?? 'neutral');
 const contractTone = { act: 'red', soon: 'amber', ended: 'neutral' };
 const daysText = days => days === null || days === undefined ? '' : days < 0 ? `ended ${-days}d ago` : days === 0 ? 'ends today' : `${days}d left`;
@@ -265,7 +267,7 @@ export function clientRows(rows, zone) {
     return `<a class="client-card" data-accent="${accents[shade]}" href="/clients/${pathId(row.id)}">
       <span class="client-watermark">${icon('building')}</span>
       <div class="client-card-top"><span class="client-mark" aria-hidden="true">${h(initials(row.name))}</span>
-        <div class="row-main"><strong>${h(row.name)}</strong><small>${icon('user')}<span>${h(row.team || row.owner_name)}</span></small></div>
+        <div class="row-main"><strong>${h(row.name)}</strong><small>${icon('user')}<span>${h(row.team || brandedOwner(row))}</span></small></div>
         <span class="client-open">${icon('arrow')}</span></div>
       ${row.deal_status || terms ? `<p class="muted small">${h([row.deal_status, terms].filter(Boolean).join(' · '))}</p>` : ''}
       <div class="client-facts"><span class="client-count">${icon('board')}${row.open_cards} open ${row.open_cards === 1 ? 'intro' : 'intros'}</span>
@@ -273,16 +275,21 @@ export function clientRows(rows, zone) {
   }).join('');
 }
 
-export function clientsPage(data, query, user, zone) {
-  const groups = Object.entries(clientStages).map(([key, info]) => [key, info, data.items.filter(row => row.stage === key)]);
+export function clientsPage(data, query, user, zone, group = 'clients') {
+  const keys = group === 'prospects' ? ['pipeline', 'passed'] : ['current', 'referral'];
+  const groups = keys.map(key => [key, clientStages[key], data.items.filter(row => row.stage === key)]);
   const sections = data.items.length ? groups.filter(([, , rows]) => rows.length).map(([key, info, rows]) => `<section class="stack" aria-label="${h(info.label)}">
     <div class="section-head">${sectionLabel(info.label, key === 'current' ? 'check' : key === 'referral' ? 'team' : key === 'pipeline' ? 'board' : 'close',
       ({ current: 'green', referral: 'violet', pipeline: 'blue', passed: 'neutral' })[key])}${badge(rows.length, clientStages[key].tone)}</div>
     <div class="client-grid">${clientRows(rows, zone)}</div></section>`).join('')
-    : `<div class="panel">${emptyState('No matching clients.')}</div>`;
-  return `${heading('Clients', 'Current clients, referral partners, pipeline and passed companies.', user.role === 'admin' ? btn('Add client', { action: 'add-client', glyph: 'plus', kind: 'primary' }) : '',
+    : `<div class="panel">${emptyState(prospects ? 'No matching prospects.' : 'No matching clients.')}</div>`;
+  const prospects = group === 'prospects';
+  return `${heading(prospects ? 'Prospects' : 'Clients', prospects
+    ? 'Companies we are pitching Solutions to. When one signs, set its stage to Current Client and it moves to Clients.'
+    : 'The companies we make introductions for: paying clients and referral partners.',
+    user.role === 'admin' ? btn(prospects ? 'Add prospect' : 'Add client', { action: 'add-client', glyph: 'plus', kind: 'primary', data: `data-stage="${prospects ? 'pipeline' : 'current'}"` }) : '',
     { art: 'signal-clients', signature: true })}
-    <form class="client-search" data-form="filter">${field('Search clients', 'q', query.get('q'), { type: 'search', placeholder: 'Client name', max: 180, glyph: 'search' })}
+    <form class="client-search" data-form="filter">${field(prospects ? 'Search prospects' : 'Search clients', 'q', query.get('q'), { type: 'search', placeholder: 'Company name', max: 180, glyph: 'search' })}
     <div class="actions">${btn('Search', { type: 'submit' })}${query.size ? btn('Clear', { action: 'clear-filters', kind: 'quiet' }) : ''}</div></form>
     <div class="stack" id="client-list">${sections}</div>${pageMore('more-clients', data.next_offset)}`;
 }
@@ -319,7 +326,7 @@ export function clientForm(context, data) {
       hint: 'One per line: Name | Title | Email | Phone | Notes' })}</div>`)}</fieldset>`;
   return subjectForm(client ? 'client-edit' : 'add-client', client?.id, `${field('Client name', 'name', client?.name, { required: true, max: 180 })}
     ${select('Client owner', 'owner_id', names(owners), client?.owner_id ?? context.user.id)}${checkboxes('Additional client access', 'member_ids', owners, data?.member_ids)}
-    ${client ? account : select('Stage', 'stage', Object.entries(clientStages).map(([id, info]) => ({ id, name: info.label })), 'pipeline')}
+    ${client ? account : select('Stage', 'stage', Object.entries(clientStages).map(([id, info]) => ({ id, name: info.label })), data?.stage ?? 'current')}
     <div>${btn(client ? 'Save client' : 'Add client', { kind: 'primary', type: 'submit' })}</div>`);
 }
 
@@ -382,7 +389,8 @@ function introsPanel(client, intros) {
 
 export function clientPage(data, context, zone) {
   const { client, submissions, link: active } = data;
-  return `${link('/clients', 'Back to clients', 'back', 'back-link')}${heading(client.name, `${clientStages[client.stage]?.label ?? ''} · Owner · ${client.owner_name}`,
+  const prospect = ['pipeline', 'passed'].includes(client.stage);
+  return `${link(prospect ? '/prospects' : '/clients', prospect ? 'Back to prospects' : 'Back to clients', 'back', 'back-link')}${heading(client.name, `${clientStages[client.stage]?.label ?? ''} · Branded owner · ${brandedOwner(client)}`,
     btn('Add contact', { kind: 'primary', glyph: 'plus', action: 'add-card', data: `data-client="${h(client.id)}"` }), { art: 'signal-clients', compact: true })}
     <div class="grid-two top-aligned">${accountPanel(client, zone)}${nextStepPanel(client)}</div>
     <div class="grid-two top-aligned">${introsPanel(client, data.intros ?? [])}${contactsPanel(client) || '<div></div>'}</div>

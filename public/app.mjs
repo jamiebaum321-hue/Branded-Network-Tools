@@ -194,11 +194,14 @@ async function render({ focus = false } = {}) {
       html = cardPage(data, zone, Object.hasOwn(stages, chosen ?? '') ? chosen : '', hash);
     } else if (path.startsWith('/pipeline/suggestions/')) {
       html = suggestionPage((await api(`/api/suggestions/${pathId(path.split('/').at(-1))}`)).suggestion);
-    } else if (path === '/clients') {
-      const [data, ctx] = await Promise.all([api(queryPath('/api/clients', query)), getContext()]);
+    } else if (path === '/clients' || path === '/prospects') {
+      const group = path === '/prospects' ? 'prospects' : 'clients';
+      const listQuery = new URLSearchParams(query);
+      listQuery.set('group', group);
+      const [data, ctx] = await Promise.all([api(queryPath('/api/clients', listQuery)), getContext()]);
       if (current !== revision) return;
       context = ctx;
-      html = clientsPage(data, query, user, zone);
+      html = clientsPage(data, query, user, zone, group);
     } else if (/^\/clients\/[\w-]+\/submissions\/[\w-]+$/.test(path)) {
       html = submissionPage((await api(`/api${path}`)).submission, zone);
     } else if (path.startsWith('/clients/')) {
@@ -499,6 +502,7 @@ async function moreRows(button, type) {
     cursor = result.next_offset;
   } else if (type === 'clients') {
     q.set('offset', next);
+    q.set('group', location.pathname === '/prospects' ? 'prospects' : 'clients');
     result = await api(queryPath('/api/clients', q));
     target = document.querySelector('#client-list');
     html = `<div class="client-grid">${clientRows(result.items, zone)}</div>`;
@@ -558,7 +562,8 @@ const actions = {
   'clear-filters': () => navigate(location.pathname),
   'pick-stage': button => pickStage(button.dataset.stage),
   'add-card': button => showDialog('Add contact', createCardForm(context, button.dataset.client), { glyph: 'leads' }),
-  'add-client': () => showDialog('Add client', clientForm(context), { glyph: 'building' }),
+  'add-client': button => showDialog(button.dataset.stage === 'pipeline' ? 'Add prospect' : 'Add client',
+    clientForm(context, button.dataset.stage ? { stage: button.dataset.stage } : undefined), { glyph: 'building' }),
   'invite-account': () => showDialog('Invite user', inviteForm(), { glyph: 'team' }),
   'new-job': () => showDialog('Create Claude job credential', jobTokenForm(context), { glyph: 'lock' }),
   'copy-dialog-value': () => clipboard(dialog.querySelector('textarea').value, 'Copied.'),

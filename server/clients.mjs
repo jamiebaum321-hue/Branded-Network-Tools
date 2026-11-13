@@ -37,13 +37,14 @@ const accountValue = (key, value) => key === 'contacts' ? encode(value) : value;
 export const presentClient = (row) => row && ({ ...row, contacts: decode(row.contacts ?? '[]') });
 const submissionFields = 's.id,s.client_id,s.version,s.form_version,s.submitted_at,s.source_ref';
 
-export async function listClients(store, actor, { q, limit = 50, offset = 0 } = {}) {
+export async function listClients(store, actor, { q, group, limit = 50, offset = 0 } = {}) {
   const [scope, params] = clientScope(actor, 'c.id');
   const rows = await store.all(`SELECT c.*,u.name AS owner_name,
     (SELECT count(*) FROM cards p WHERE p.client_id=c.id AND p.stage<>'closed') AS open_cards,
     (SELECT max(s.submitted_at) FROM submissions s WHERE s.client_id=c.id) AS latest_submission
     FROM clients c JOIN users u ON u.id=c.owner_id WHERE (${scope}) AND (?::text IS NULL OR strpos(lower(c.name),lower(?::text))>0)
-    ORDER BY array_position(ARRAY['current','referral','pipeline','passed'],c.stage),lower(c.name),c.id LIMIT ? OFFSET ?`, ...params, q ?? null, q ?? null, limit + 1, offset);
+    AND (?::text IS NULL OR (?::text='clients' AND c.stage IN ('current','referral')) OR (?::text='prospects' AND c.stage IN ('pipeline','passed')))
+    ORDER BY array_position(ARRAY['current','referral','pipeline','passed'],c.stage),lower(c.name),c.id LIMIT ? OFFSET ?`, ...params, q ?? null, q ?? null, group ?? null, group ?? null, group ?? null, limit + 1, offset);
   return { items: rows.slice(0, limit).map(presentClient), next_offset: rows.length > limit ? offset + limit : null };
 }
 

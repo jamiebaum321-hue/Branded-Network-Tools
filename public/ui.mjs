@@ -122,6 +122,7 @@ export function shell(user, location) {
     ['/today', 'Today', 'today', location === '/' || location === '/today'],
     ['/pipeline', 'Pipeline', 'board', location.startsWith('/pipeline')],
     ['/clients', 'Clients', 'clients', location.startsWith('/clients')],
+    ['/prospects', 'Prospects', 'shortlist', location === '/prospects'],
     ['/followups', 'Follow-ups', 'flag', location === '/followups'],
     ['/contracts', 'Contracts', 'draft', location === '/contracts'],
   ];

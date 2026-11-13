@@ -46,7 +46,7 @@ const imageAssets = [
     .map(name => [`artwork/${name}.webp`, 'image/webp']),
 ];
 for (const [path, type] of imageAssets) assets.set(`/assets/${path}`, [`assets/${path}`, type]);
-const shellPath = /^(?:\/|\/today|\/signin|\/pipeline(?:\/(?:metrics|cards\/[\w-]+|suggestions(?:\/[\w-]+)?))?|\/clients(?:\/[\w-]+(?:\/submissions\/[\w-]+)?)?|\/followups|\/contracts|\/admin|\/setup\/[\w-]+|\/onboard\/[\w.-]+)$/;
+const shellPath = /^(?:\/|\/today|\/signin|\/pipeline(?:\/(?:metrics|cards\/[\w-]+|suggestions(?:\/[\w-]+)?))?|\/clients(?:\/[\w-]+(?:\/submissions\/[\w-]+)?)?|\/prospects|\/followups|\/contracts|\/admin|\/setup\/[\w-]+|\/onboard\/[\w.-]+)$/;
 const ident = '([a-zA-Z0-9_-]{1,80})';
 const options = { public: true };
 
@@ -151,7 +151,11 @@ export function createHandler(store, config) {
   route('POST', `/api/suggestions/${ident}/decision`, async ({ actor, ids, data }) => ({ suggestion: await decideSuggestion(store, actor, ids[0],
     validate(object({ decision: choice('approved','dismissed') }), data).decision) }));
 
-  route('GET', '/api/clients', ({ actor, url }) => listClients(store, actor, { ...pageQuery(url, 100), q: selectQuery(url, 'q') }));
+  route('GET', '/api/clients', ({ actor, url }) => {
+    const group = url.searchParams.get('group');
+    if (group && !['clients', 'prospects'].includes(group)) throw new AppError(400, 'Choose clients or prospects.');
+    return listClients(store, actor, { ...pageQuery(url, 100), q: selectQuery(url, 'q'), group: group || undefined });
+  });
   route('POST', '/api/clients', async ({ actor, data }) => ({ client: await createClient(store, actor, data) }));
   route('GET', `/api/clients/${ident}`, ({ actor, ids }) => clientDetail(store, actor, ids[0]));
   route('PATCH', `/api/clients/${ident}`, async ({ actor, ids, data }) => ({ client: await updateClient(store, actor, ids[0], data) }));

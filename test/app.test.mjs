@@ -304,7 +304,7 @@ test('persistent store keeps accounts across restarts and only runs migrations o
   const reopened = await openStore(databaseUrl, { schema });
   try {
     assert.equal((await reopened.get('SELECT email FROM users')).email, adminEmail);
-    assert.deepEqual((await reopened.all('SELECT version FROM schema_migrations')).map(row => row.version), [1, 2, 3]);
+    assert.deepEqual((await reopened.all('SELECT version FROM schema_migrations')).map(row => row.version), [1, 2, 3, 4]);
   } finally { await reopened.close(); }
 });
 
@@ -385,6 +385,9 @@ test('tracker accounts: terms, next steps, follow-ups, contracts and import', as
   assert.equal(terms.monthly_retainers, 10000);
   assert.equal(terms.items.length, 1);
   assert.deepEqual((await f.admin('/api/clients')).items.map(row => row.stage), ['current', 'pipeline']);
+  assert.deepEqual((await f.admin('/api/clients?group=clients')).items.map(row => row.name), ['Account Client']);
+  assert.deepEqual((await f.admin('/api/clients?group=prospects')).items.map(row => row.name), ['Prospect Co']);
+  await f.admin('/api/clients?group=everyone', undefined, 'GET', 400);
   const detail = await f.admin(`/api/clients/${client.id}`);
   assert.equal(detail.intros.length, 2);
 
