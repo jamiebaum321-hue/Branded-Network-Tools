@@ -304,7 +304,7 @@ test('persistent store keeps accounts across restarts and only runs migrations o
   const reopened = await openStore(databaseUrl, { schema });
   try {
     assert.equal((await reopened.get('SELECT email FROM users')).email, adminEmail);
-    assert.deepEqual((await reopened.all('SELECT version FROM schema_migrations')).map(row => row.version), [1, 2, 3, 4]);
+    assert.deepEqual((await reopened.all('SELECT version FROM schema_migrations')).map(row => row.version), [1, 2, 3, 4, 5]);
   } finally { await reopened.close(); }
 });
 
