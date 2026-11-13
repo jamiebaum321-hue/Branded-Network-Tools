@@ -169,8 +169,16 @@ export async function askAssistant(store, actor, config, input) {
         : await link.client.beta.messages.create({ ...request, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' });
     } catch (error) {
       if (error instanceof Anthropic.RateLimitError) throw new AppError(429, 'The assistant is busy. Try again in a minute.');
-      if (error instanceof Anthropic.AuthenticationError) throw new AppError(503, 'The assistant’s API key is not valid. An admin needs to update ANTHROPIC_API_KEY.');
-      if (error instanceof Anthropic.APIError) { console.error('Assistant API error:', error.status); throw new AppError(502, 'The assistant could not answer. Try again.'); }
+      if (error instanceof Anthropic.APIError && [401, 402, 403].includes(error.status)) {
+        // The provider's own explanation (no secrets) tells an admin exactly what to fix, e.g. a missing card or no credit.
+        const reason = String(error.error?.error?.message ?? error.error?.message ?? error.message ?? '').replace(/\s+/g, ' ').slice(0, 400);
+        console.error('Assistant access error:', error.status, JSON.stringify(error.error ?? {}).slice(0, 1000));
+        throw new AppError(503, `${link.gateway ? 'Vercel AI Gateway' : 'The Anthropic API'} refused the request: ${reason || `HTTP ${error.status}`}`);
+      }
+      if (error instanceof Anthropic.APIError) {
+        console.error('Assistant API error:', error.status, JSON.stringify(error.error ?? {}).slice(0, 1000));
+        throw new AppError(502, 'The assistant could not answer. Try again.');
+      }
       throw error;
     }
     if (response.stop_reason === 'refusal') return { answer: 'I can’t help with that request.' };
