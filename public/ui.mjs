@@ -106,7 +106,10 @@ export function heading(title, detail = '', action = '', { art, date, compact = 
     <div class="hero-copy">${copy}${action ? `<div class="hero-actions">${action}</div>` : ''}</div>
     <div class="hero-visual" aria-hidden="true"><img src="/assets/artwork/${h(art)}.webp" width="240" height="136" alt="" decoding="async"></div></div>`;
 }
-export const brand = () => '<a class="brand" href="/today"><img width="39" height="39" src="/assets/brand/network-mark.svg" alt=""><span>Branded Network<small>Solutions Pipeline</small></span></a>';
+// Branded Hospitality logo: the B mark and the wordmark, with the app name underneath.
+export const brand = () => `<a class="brand" href="/today" aria-label="Branded Hospitality · Solutions Network">
+  <img class="brand-mark" width="40" height="40" src="/assets/brand/branded-mark.png" alt="">
+  <span class="brand-lockup"><img class="brand-wordmark" width="99" height="48" src="/assets/brand/branded-wordmark.png" alt="Branded Hospitality"><small>Solutions Network</small></span></a>`;
 
 export function outboundLink(value) {
   try {

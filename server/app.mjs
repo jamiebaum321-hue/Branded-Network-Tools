@@ -37,7 +37,7 @@ const assets = new Map(Object.entries({
   '/assets/type/plus-jakarta-sans-latin.woff2': ['assets/type/plus-jakarta-sans-latin.woff2', 'font/woff2'],
 }));
 const imageAssets = [
-  ...['favicon-32', 'favicon-48', 'apple-touch-icon', 'social-share', 'network-touch'].map(name => [`brand/${name}.png`, 'image/png']),
+  ...['favicon-32', 'favicon-48', 'apple-touch-icon', 'social-share', 'network-touch', 'branded-mark', 'branded-wordmark'].map(name => [`brand/${name}.png`, 'image/png']),
   ...['focus-rings', 'iris-dot-grid', 'connection-ribbon'].map(name => [`accents/${name}.png`, 'image/png']),
   ...['today', 'pipeline', 'clients', 'settings', 'metrics', 'suggested-leads']
     .flatMap(name => ['ink', 'iris'].map(tone => [`icons/${name}-${tone}.png`, 'image/png'])),
