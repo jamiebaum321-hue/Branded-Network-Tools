@@ -7,6 +7,7 @@ import { auditPage, changeAccount, createJobToken, finishSetup, inviteAccount, l
 import { clientDetail, copyFormLink, createClient, getSubmission, listClients, listSubmissions, publicForm,
   revokeFormLinks, saveIntake, submitIntake, updateClient, deleteClient, updateNextStep } from './clients.mjs';
 import { contracts, followUps } from './accountwork.mjs';
+import { createRecord, deleteRecord, openIssues, updateRecord } from './records.mjs';
 import { acknowledgeToday, metrics, today } from './dashboard.mjs';
 import { alerts, seeAlerts } from './events.mjs';
 import { metadata, mcpHttp } from './mcp.mjs';
@@ -25,6 +26,7 @@ const assets = new Map(Object.entries({
   '/views.mjs': ['views.mjs', 'text/javascript; charset=utf-8'],
   '/intake-fields.mjs': ['intake-fields.mjs', 'text/javascript; charset=utf-8'],
   '/account-fields.mjs': ['account-fields.mjs', 'text/javascript; charset=utf-8'],
+  '/record-kinds.mjs': ['record-kinds.mjs', 'text/javascript; charset=utf-8'],
   '/favicon.svg': ['favicon.svg', 'image/svg+xml'],
   '/favicon.ico': ['assets/brand/favicon.ico', 'image/x-icon'],
   '/assets/brand/network-mark.svg': ['assets/brand/network-mark.svg', 'image/svg+xml'],
@@ -154,6 +156,11 @@ export function createHandler(store, config) {
   route('GET', `/api/clients/${ident}`, ({ actor, ids }) => clientDetail(store, actor, ids[0]));
   route('PATCH', `/api/clients/${ident}`, async ({ actor, ids, data }) => ({ client: await updateClient(store, actor, ids[0], data) }));
   route('POST', `/api/clients/${ident}/next-step`, async ({ actor, ids, data }) => ({ client: await updateNextStep(store, actor, ids[0], data) }));
+  route('POST', `/api/clients/${ident}/records`, async ({ actor, ids, data }) => ({ record: await createRecord(store, actor, ids[0], data) }));
+  route('POST', '/api/records', async ({ actor, data }) => ({ record: await createRecord(store, actor, null, data) }));
+  route('PATCH', `/api/records/${ident}`, async ({ actor, ids, data }) => ({ record: await updateRecord(store, actor, ids[0], data) }));
+  route('DELETE', `/api/records/${ident}`, ({ actor, ids }) => deleteRecord(store, actor, ids[0]));
+  route('GET', '/api/issues', async ({ actor }) => ({ items: await openIssues(store, actor) }));
   route('GET', '/api/followups', ({ actor }) => followUps(store, actor, config.timeZone));
   route('GET', '/api/contracts', ({ actor }) => contracts(store, actor, config.timeZone));
   route('DELETE', `/api/clients/${ident}`, ({ actor, ids }) => deleteClient(store, actor, ids[0]));

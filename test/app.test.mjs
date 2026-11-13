@@ -304,7 +304,7 @@ test('persistent store keeps accounts across restarts and only runs migrations o
   const reopened = await openStore(databaseUrl, { schema });
   try {
     assert.equal((await reopened.get('SELECT email FROM users')).email, adminEmail);
-    assert.deepEqual((await reopened.all('SELECT version FROM schema_migrations')).map(row => row.version), [1, 2]);
+    assert.deepEqual((await reopened.all('SELECT version FROM schema_migrations')).map(row => row.version), [1, 2, 3]);
   } finally { await reopened.close(); }
 });
 
@@ -415,4 +415,47 @@ test('a sealed import applies once as the first admin and never twice', async t 
   const clients = (await f.admin('/api/clients')).items;
   assert.deepEqual(clients.map(row => [row.name, row.monthly_fee]), [['Sealed Client', 5000]]);
   assert.equal((await f.admin('/api/cards')).items[0].intro_status, 'Awaiting Response');
+});
+
+test('client records: sections, keyed months, access rules, workspace issues and import', async t => {
+  const f = await fixture(t);
+  const client = await f.addClient('Records Client');
+  const issue = (await f.admin(`/api/clients/${client.id}/records`, { kind: 'issues', data: { issue: 'SCA countersignature missing', priority: 'High', status: 'Open', owner: 'Daniel' } })).record;
+  assert.equal(issue.data.priority, 'High');
+  await f.admin(`/api/clients/${client.id}/records`, { kind: 'issues', data: { priority: 'High' } }, 'POST', 400);
+  await f.admin(`/api/clients/${client.id}/records`, { kind: 'kpis', data: { month: '2026-11', posts: 3, meetings: 1 } });
+  await f.admin(`/api/clients/${client.id}/records`, { kind: 'kpis', data: { month: '2026-11', posts: 1 } }, 'POST', 409);
+  await f.admin(`/api/clients/${client.id}/records`, { kind: 'kpis', data: { month: '2026-13' } }, 'POST', 400);
+  await f.admin(`/api/clients/${client.id}/records`, { kind: 'intel', data: { headline: 'Competitor raises', url: 'javascript:alert(1)' } }, 'POST', 400);
+  await f.admin(`/api/clients/${client.id}/records`, { kind: 'billing', data: { invoice_no: '6292110', amount: 12500, status: 'Invoiced' } });
+  await f.admin(`/api/records/${issue.id}`, { data: { issue: 'SCA countersignature missing', status: 'Resolved' } }, 'PATCH');
+  const workspace = (await f.admin('/api/records', { kind: 'issues', data: { issue: 'Owners need to update the tracker weekly', status: 'Open' } })).record;
+  await f.admin('/api/records', { kind: 'kpis', data: { month: '2026-11' } }, 'POST', 400);
+
+  const detail = await f.admin(`/api/clients/${client.id}`);
+  assert.deepEqual(Object.keys(detail.records), ['issues', 'onboarding', 'kpis', 'reports', 'billing', 'intel', 'briefs', 'wins']);
+  assert.equal(detail.records.issues[0].data.status, 'Resolved');
+  assert.equal(detail.records.kpis[0].data.posts, 3);
+  assert.deepEqual((await f.admin('/api/issues')).items.map(row => row.id), [workspace.id]);
+
+  const { setup } = await f.admin('/api/admin/accounts', { name: 'Member', email: 'member@example.test', role: 'member' });
+  const member = await f.activate(setup.path);
+  const personal = f.as(member.cookie);
+  await personal(`/api/clients/${client.id}/records`, { kind: 'wins', data: { week: '2026-11-09', win: 'Featured' } }, 'POST', 404);
+  await personal(`/api/records/${workspace.id}`, { data: { issue: 'x' } }, 'PATCH', 403);
+  assert.deepEqual((await personal('/api/issues')).items, []);
+  await f.admin(`/api/clients/${client.id}`, { member_ids: [member.user.id] }, 'PATCH');
+  await personal(`/api/clients/${client.id}/records`, { kind: 'wins', data: { week: '2026-11-09', win: 'Featured in the newsletter' } });
+  await personal(`/api/records/${issue.id}`, {}, 'DELETE');
+
+  const result = await f.admin('/api/admin/import/apply', { version: 1, namespace: 'tracker-records', clients: [{ id: 'arc', name: 'ARC' }],
+    client_records: [{ id: 'I-02', client_id: 'arc', kind: 'issues', data: { issue: 'Confirm term dates', priority: 'Medium', status: 'Open' } },
+      { id: 'I-20', kind: 'issues', data: { issue: 'Workspace-wide data cleanup', status: 'In Progress' } },
+      { id: 'arc-onb-1', client_id: 'arc', kind: 'onboarding', data: { no: 1, item: 'Company profile', status: 'Complete' } }] });
+  assert.equal(result.counts.client_records.added, 3);
+  assert.equal((await f.admin('/api/issues')).items.length, 3);
+  const arc = (await f.admin('/api/clients?q=ARC')).items[0];
+  assert.equal((await f.admin(`/api/clients/${arc.id}`)).records.onboarding[0].data.item, 'Company profile');
+  await f.admin(`/api/clients/${arc.id}`, {}, 'DELETE');
+  assert.equal((await f.admin('/api/issues')).items.length, 2);
 });

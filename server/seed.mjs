@@ -3,6 +3,8 @@ import { accountFields, insertClient, insertSubmission, intakeAnswers } from './
 import { appendActivity, evidenceSchema, importOutreach, insertCard, insertSuggestion, stages } from './pipeline.mjs';
 import { choice, email, int, nullable, num, object, str, time, validate } from './validation.mjs';
 import { introStatuses } from '../public/account-fields.mjs';
+import { recordKinds } from '../public/record-kinds.mjs';
+import { insertRecord, recordData } from './records.mjs';
 
 const identity = { id: str(250), client_id: str(250) };
 const dates = { created_at: str(40), entered_at: str(40) };
@@ -21,6 +23,8 @@ const definitions = {
     reason: str(2500), source: str(160), fit: str(120), evidence: evidenceSchema, branded_relationship: str(600),
     score: num(-1000000, 1000000), candidate_key: str(400), reviewer_email: str(254), created_at: str(40),
     status: choice('new', 'pending', 'pending_review') }, ['id', 'client_id', 'company', 'reason', 'source']),
+  client_records: object({ id: str(250), client_id: str(250), kind: choice(...Object.keys(recordKinds)), created_at: str(40), data: object({}, []) },
+    ['id', 'kind', 'data']),
   onboarding_submissions: object({ ...identity, submitted_at: str(40), form_version: int(1, 10000),
     source_ref: str(600, 0), answers: object({}, []) }, ['id', 'client_id', 'submitted_at', 'answers']),
 };
@@ -37,6 +41,12 @@ async function imported(store, namespace, kind, sourceId) {
 }
 
 function normalizedInput(kind, raw) {
+  if (kind === 'client_records') {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new AppError(400, 'Expected a client record.');
+    const validated = validate(definitions[kind], { ...raw, data: {} });
+    validated.data = recordData(validated.kind, raw.data);
+    return validated;
+  }
   if (kind !== 'onboarding_submissions') return validate(definitions[kind], raw);
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new AppError(400, 'Expected a submission record.');
   const validated = validate(definitions[kind], { ...raw, answers: {} });
@@ -50,9 +60,12 @@ async function writeRow(store, actor, namespace, kind, row) {
     return (await insertClient(store, actor, { ...fields, owner_id: await accountId(store, ownerEmail) },
       createdAt ? time(createdAt) : undefined)).id;
   }
+  if (kind === 'client_records' && !row.client_id) return (await insertRecord(store, actor, null, row.kind, row.data,
+    row.created_at ? time(row.created_at) : undefined)).id;
   const clientId = await imported(store, namespace, 'clients', row.client_id);
   if (!clientId) throw new AppError(400, `Client reference ${row.client_id} was not found in this import namespace.`);
   const client = await clientFor(store, actor, clientId);
+  if (kind === 'client_records') return (await insertRecord(store, actor, clientId, row.kind, row.data, row.created_at ? time(row.created_at) : undefined)).id;
   if (kind === 'onboarding_submissions') {
     return (await insertSubmission(store, actor, clientId, row.answers, { imported: true, submittedAt: time(row.submitted_at),
       formVersion: row.form_version, sourceRef: row.source_ref || `${namespace}:${row.id}` })).id;

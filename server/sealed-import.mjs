@@ -6,7 +6,7 @@ import { importSeed } from './seed.mjs';
 // A one-time data migration can ship with the code without exposing client records in the repository:
 // the file is AES-256-GCM encrypted and its key lives only in the server environment.
 const sealedFile = new URL('../data/tracker-import.sealed', import.meta.url);
-const recordSets = ['clients', 'partners', 'introductions', 'outreach_activity', 'suggested_leads', 'onboarding_submissions'];
+const recordSets = ['clients', 'partners', 'introductions', 'outreach_activity', 'suggested_leads', 'onboarding_submissions', 'client_records'];
 
 const keyFrom = (value) => {
   const key = Buffer.from(value ?? '', 'base64url');

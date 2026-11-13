@@ -2,6 +2,7 @@ import { sections } from './intake-fields.mjs';
 import { badge, brand, btn, currentDate, emptyState, field, formatDate, h, heading, hidden, icon, initials, link,
   localInput, outboundLink, pathId, pipelineTabs, select, stageBadge, stageDuration, stageOptions, stages, timeLabel, dayLabel, money } from './ui.mjs';
 import { agreementStatuses, clientStages, dealStatuses, introStatuses } from './account-fields.mjs';
+import { recordKinds, statusTone } from './record-kinds.mjs';
 
 const names = rows => rows.map(row => ({ id: row.id, name: row.name }));
 const fieldset = (content) => `<div class="form-grid">${content}</div>`;
@@ -385,6 +386,7 @@ export function clientPage(data, context, zone) {
     btn('Add contact', { kind: 'primary', glyph: 'plus', action: 'add-card', data: `data-client="${h(client.id)}"` }), { art: 'signal-clients', compact: true })}
     <div class="grid-two top-aligned">${accountPanel(client, zone)}${nextStepPanel(client)}</div>
     <div class="grid-two top-aligned">${introsPanel(client, data.intros ?? [])}${contactsPanel(client) || '<div></div>'}</div>
+    ${recordsPanel(client, data.records)}
     <div class="grid-two"><section class="panel stack"><div class="onboarding-entry"><div>${sectionLabel('Solutions Partner Onboarding', 'link')}<p class="muted section-copy">Share a form link so the client can enter their answers.</p></div>
     <img src="/assets/artwork/signal-intake.webp" width="96" height="64" loading="lazy" decoding="async" alt=""></div>
     <div class="actions">${btn('Copy form link', { action: 'form-link', glyph: 'link', kind: 'primary', data: `data-id="${h(client.id)}"` })}</div>
@@ -396,6 +398,63 @@ export function clientPage(data, context, zone) {
     ${submissions.next_cursor ? `<div class="pagination">${btn('Load older submissions', { action: 'more-submissions', data: `data-id="${h(client.id)}" data-next="${submissions.next_cursor}"` })}</div>` : ''}</section></div>
     ${context.user.role === 'admin' ? `<details class="panel">${disclosure('Client settings', 'settings')}${clientForm(context, data)}
       <div class="actions">${btn('Delete client', { action: 'delete-client', kind: 'danger', glyph: 'close', data: `data-id="${h(client.id)}" data-name="${h(client.name)}"` })}</div></details>` : ''}`;
+}
+
+const monthLabel = value => value ? new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', month: 'long', year: 'numeric' }).format(new Date(`${value}-15T12:00:00Z`)) : '';
+
+function recordValue(field, value) {
+  if (value === undefined || value === null || value === '') return '';
+  if (field.type === 'date') return dayLabel(value);
+  if (field.type === 'month') return monthLabel(value);
+  if (field.type === 'number' && /amount/.test(field.key)) return money(value);
+  if (field.type === 'int' || field.type === 'number') return new Intl.NumberFormat('en-US').format(value);
+  return String(value);
+}
+
+function recordRow(kind, record) {
+  const info = recordKinds[kind];
+  const fields = Object.fromEntries(info.fields.map(field => [field.key, field]));
+  const title = recordValue(fields[info.title], record.data[info.title]) || `Untitled ${info.singular}`;
+  const meta = info.meta.map(key => {
+    const value = recordValue(fields[key], record.data[key]);
+    return value ? (kind === 'kpis' ? `${fields[key].label} ${value}` : value) : '';
+  }).filter(Boolean).join(' · ');
+  const detail = ['resolution', 'notes', 'summary', 'highlights', 'opportunity'].map(key => record.data[key]).find(Boolean);
+  return `<button type="button" class="list-row record-row" data-action="edit-record" data-id="${h(record.id)}">
+    <div class="row-main"><strong class="clamp">${h(title)}</strong>${meta ? `<small>${h(meta)}</small>` : ''}
+    ${detail && kind !== 'issues' ? `<small class="muted clamp">${h(detail)}</small>` : ''}</div>
+    <span class="chips">${(info.badges ?? []).map(key => record.data[key] ? badge(record.data[key], statusTone[record.data[key]] ?? 'neutral') : '').join('')}</span>${navArrow()}</button>`;
+}
+
+export function recordsPanel(client, records) {
+  const sections = Object.entries(recordKinds).map(([kind, info]) => {
+    const rows = records?.[kind] ?? [];
+    const open = kind === 'issues' ? rows.filter(row => row.data.status !== 'Resolved').length
+      : kind === 'onboarding' ? rows.filter(row => !['Complete', 'N/A'].includes(row.data.status)).length : rows.length;
+    const countLabel = kind === 'issues' ? `${open} open` : kind === 'onboarding' && rows.length ? `${rows.length - open}/${rows.length} done` : String(rows.length);
+    return `<details class="record-section" ${kind === 'issues' && open ? 'open' : ''}><summary class="disclosure">${icon(info.glyph)}<span>${h(info.label)}</span>
+      ${badge(countLabel, open ? 'blue' : 'neutral')}<span class="disclosure-arrow">${icon('down')}</span></summary>
+      <div class="record-list">${rows.length ? rows.map(row => recordRow(kind, row)).join('') : emptyState("Nothing recorded yet.")}</div>
+      <div class="actions">${btn(`Add ${info.singular}`, { action: 'add-record', glyph: 'plus', kind: 'quiet', data: `data-kind="${h(kind)}" data-client="${h(client.id)}"` })}</div></details>`;
+  }).join('');
+  return `<section class="panel stack"><div class="section-head">${sectionLabel('Account work', 'stack', 'violet')}
+    <span class="muted small">Issues, onboarding, KPIs, reports, billing, intel and wins</span></div>${sections}</section>`;
+}
+
+export function recordForm(kind, record, clientId) {
+  const info = recordKinds[kind];
+  const value = key => record?.data?.[key] ?? '';
+  const control = def => {
+    if (def.type === 'choice') return select(def.label, def.key, listOf(def.options), value(def.key) || (def.required ? def.options[0] : ''), def.required ? undefined : 'Not set');
+    const type = { textarea: 'textarea', int: 'number', number: 'number', date: 'date', month: 'month', url: 'url' }[def.type] ?? 'text';
+    return field(def.label, def.key, value(def.key), { type, required: def.required, max: def.type === 'textarea' ? 8000 : def.type === 'url' ? 1000 : 500,
+      min: ['int', 'number'].includes(def.type) ? 0 : undefined, step: def.type === 'number' ? 'any' : undefined, placeholder: def.type === 'month' ? 'YYYY-MM' : '' });
+  };
+  return `<form class="stack" data-form="record" data-kind="${h(kind)}" ${record ? `data-id="${h(record.id)}"` : ''} ${clientId ? `data-client="${h(clientId)}"` : ''}>
+    ${fieldset(info.fields.map(def => `<div class="${def.type === 'textarea' ? 'wide' : ''}">${control(def)}</div>`).join(''))}
+    <div class="actions">${btn(record ? 'Save' : `Add ${info.singular}`, { kind: 'primary', type: 'submit' })}
+    ${record ? btn('Delete', { action: 'delete-record', kind: 'danger', data: `data-id="${h(record.id)}"` }) : ''}</div>
+    ${record ? `<p class="muted small">Last updated ${h(formatDate(record.updated_at))} by ${h(record.updated_by)}</p>` : ''}</form>`;
 }
 
 export function followupsPage(data) {
@@ -422,6 +481,12 @@ export function followupsPage(data) {
       .map(([label, value, tone, glyph]) => `<div class="panel stat"><span class="panel-icon ${tone}">${icon(glyph)}</span><div><strong>${value}</strong><span class="stat-label">${label}</span></div></div>`).join('')}</div>
     <div class="grid-two"><section class="panel stack"><div class="section-head">${sectionLabel('Account next steps', 'flag', 'amber')}</div>${accounts || emptyState('No next steps recorded.')}</section>
     <section class="panel stack"><div class="section-head">${sectionLabel('Contracts ending', 'draft', 'blue')}</div>${contracts || emptyState('No contracts end in the next 60 days.')}</section></div>
+    <section class="panel stack"><div class="section-head">${sectionLabel('Open issues', 'flag', 'red')}${badge((data.issues ?? []).length, 'red')}</div>
+      ${(data.issues ?? []).length ? data.issues.map(row => `<button type="button" class="list-row record-row" data-action="edit-record" data-id="${h(row.id)}">
+        <div class="row-main"><strong class="clamp">${h(row.data.issue)}</strong><small>${h([row.client_name ?? 'Whole workspace', row.data.area, row.data.owner && `Owner · ${row.data.owner}`].filter(Boolean).join(' · '))}</small></div>
+        <span class="chips">${['priority', 'status'].map(key => row.data[key] ? badge(row.data[key], statusTone[row.data[key]] ?? 'neutral') : '').join('')}</span>${navArrow()}</button>`).join('')
+      : emptyState('No open issues.')}
+      ${data.admin ? `<div class="actions">${btn('Add workspace issue', { action: 'add-record', glyph: 'plus', kind: 'quiet', data: 'data-kind="issues"' })}</div>` : ''}</section>
     <section class="panel stack"><div class="section-head">${sectionLabel('Intros needing a follow-up', 'reply', 'violet')}<span class="muted small">Open intros with no touch in 14+ days</span></div>
       ${intros || emptyState('Every open intro has been touched in the last 14 days.')}</section>`;
 }

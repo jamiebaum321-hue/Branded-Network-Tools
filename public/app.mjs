@@ -1,7 +1,8 @@
 import { sections } from './intake-fields.mjs';
+import { recordKinds } from './record-kinds.mjs';
 import { btn, emptyState, h, heading, icon, link, pathId, shell, stages } from './ui.mjs';
 import { activityItems, adminPage, alertRows, auditRows, boardCard, boardPage, cardPage, clientForm, clientPage,
-  clientRows, clientsPage, contractsPage, followupsPage, createCardForm, intakePage, inviteForm, jobTokenForm, metricsPage, setupPage, signInPage,
+  clientRows, clientsPage, contractsPage, followupsPage, recordForm, createCardForm, intakePage, inviteForm, jobTokenForm, metricsPage, setupPage, signInPage,
   submissionPage, submissionRows, suggestionPage, suggestionRows, suggestionsPage, todayPage } from './views.mjs';
 
 const main = document.querySelector('#main');
@@ -11,6 +12,9 @@ const status = document.querySelector('#toast');
 let user = null;
 let zone = 'America/New_York';
 let context = null;
+// Records shown on the current page, so the edit dialog opens without another request.
+const recordCache = new Map();
+const remember = rows => { for (const row of rows) recordCache.set(row.id, row); };
 let revision = 0;
 let stage = 'to_contact';
 let wizard = null;
@@ -201,9 +205,12 @@ async function render({ focus = false } = {}) {
       const [data, ctx] = await Promise.all([api(`/api${path}`), getContext()]);
       if (current !== revision) return;
       context = ctx;
+      remember(Object.values(data.records ?? {}).flat());
       html = clientPage(data, ctx, zone);
     } else if (path === '/followups') {
-      html = followupsPage(await api('/api/followups'));
+      const [data, issues] = await Promise.all([api('/api/followups'), api('/api/issues')]);
+      remember(issues.items);
+      html = followupsPage({ ...data, issues: issues.items, admin: user.role === 'admin' });
     } else if (path === '/contracts') {
       html = contractsPage(await api('/api/contracts'));
     } else if (path === '/admin') {
@@ -363,6 +370,22 @@ const forms = {
     await api(`/api/clients/${pathId(form.dataset.id)}`, 'PATCH', { name: data.get('name'), owner_id: data.get('owner_id'),
       member_ids: data.getAll('member_ids'), ...accountInput(data) });
     notify('Client settings saved.');
+    await render();
+  },
+  async record(form, data) {
+    const kind = form.dataset.kind;
+    const value = {};
+    for (const def of recordKinds[kind].fields) {
+      const raw = String(data.get(def.key) ?? '').trim();
+      if (['int', 'number'].includes(def.type)) {
+        value[def.key] = raw === '' ? null : Number(raw);
+        if (value[def.key] !== null && !Number.isFinite(value[def.key])) throw new Error(`Enter a number for ${def.label}.`);
+      } else value[def.key] = ['date', 'month'].includes(def.type) && !raw ? null : raw;
+    }
+    if (form.dataset.id) await api(`/api/records/${pathId(form.dataset.id)}`, 'PATCH', { data: value });
+    else await api(form.dataset.client ? `/api/clients/${pathId(form.dataset.client)}/records` : '/api/records', 'POST', { kind, data: value });
+    dialog.close();
+    notify('Saved.');
     await render();
   },
   async 'next-step'(form, data) {
@@ -574,6 +597,20 @@ const actions = {
   'setup-link': async button => {
     const result = await api(`/api/admin/accounts/${pathId(button.dataset.id)}/setup`, 'POST');
     revealValue('One-time setup link', new URL(result.setup.path, location.origin).href, 'Share this link with the user. It expires in 24 hours.');
+  },
+  'add-record': button => showDialog(`Add ${recordKinds[button.dataset.kind].singular}`, recordForm(button.dataset.kind, null, button.dataset.client),
+    { glyph: recordKinds[button.dataset.kind].glyph }),
+  'edit-record': button => {
+    const record = recordCache.get(button.dataset.id);
+    if (!record) return render();
+    return showDialog(recordKinds[record.kind].label, recordForm(record.kind, record, record.client_id), { glyph: recordKinds[record.kind].glyph });
+  },
+  'delete-record': async button => {
+    if (!confirm('Delete this record? This cannot be undone.')) return;
+    await api(`/api/records/${pathId(button.dataset.id)}`, 'DELETE');
+    dialog.close();
+    notify('Deleted.');
+    await render();
   },
   'delete-client': async button => {
     if (!confirm(`Permanently delete ${button.dataset.name} and all of its contacts, drafts, activity and onboarding submissions? This cannot be undone.`)) return;

@@ -558,3 +558,10 @@ dialog::backdrop { background: linear-gradient(145deg, #2319486b, #17152d69); ba
 .top-aligned { align-items: start; }
 .top-aligned > .panel, .stack { align-content: start; }
 .clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.record-row { width: 100%; text-align: left; font: inherit; color: inherit; background: none; border: 0; border-bottom: 1px solid var(--line); cursor: pointer; }
+.record-row:hover { background: var(--surface-soft, rgba(90, 70, 200, .04)); }
+.record-row:focus-visible { outline: 2px solid var(--accent, #5b4bdb); outline-offset: -2px; }
+.record-section { border-top: 1px solid var(--line); padding-top: 4px; }
+.record-section > summary .badge { margin-left: 4px; }
+.record-list { display: grid; margin: 4px 0 8px; }
+.record-section > .actions { margin-bottom: 8px; }
