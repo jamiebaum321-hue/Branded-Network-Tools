@@ -572,6 +572,15 @@ test('assistant: not configured, tool loop over scoped data, links and rate limi
   assert.match(requests[0].headers['anthropic-beta'], /server-side-fallback-2026-07-01/);
   assert.deepEqual(requests[0].payload.tools.map(tool => tool.name).sort(),
     ['activity', 'approvals', 'client_details', 'contracts', 'follow_ups', 'list_clients', 'open_issues', 'search']);
+  // Without an Anthropic key the assistant uses the Vercel AI Gateway: gateway model id, plain Messages request.
+  delete process.env.ANTHROPIC_API_KEY;
+  process.env.AI_GATEWAY_API_KEY = 'gateway-test-key';
+  process.env.AI_GATEWAY_BASE_URL = process.env.ANTHROPIC_BASE_URL;
+  t.after(() => { delete process.env.AI_GATEWAY_API_KEY; delete process.env.AI_GATEWAY_BASE_URL; });
+  assert.equal((await f.admin('/api/assistant', { messages: [{ role: 'user', content: 'Where are we with Hang?' }] })).answer, `Found it: [Hang](/clients/${hang.id})`);
+  assert.equal(requests[2].payload.model, 'anthropic/claude-opus-5.5');
+  assert.equal(requests[2].payload.fallbacks, undefined);
+  assert.equal(requests[2].headers.authorization, 'Bearer gateway-test-key');
   const toolResult = JSON.parse(requests[1].payload.messages.at(-1).content[0].content);
   assert.equal(toolResult.clients[0].link, `/clients/${hang.id}`);
   assert.deepEqual(toolResult.intros, []);

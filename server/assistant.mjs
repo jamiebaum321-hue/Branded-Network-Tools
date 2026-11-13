@@ -126,9 +126,25 @@ async function runTool(store, actor, config, name, input) {
   }
 }
 
-let client;
+// Two ways to reach Claude: an Anthropic API key, or (on Vercel, with no key set) the project's
+// Vercel AI Gateway, authenticated with the deployment's own OIDC token so no secret is stored.
+const GATEWAY_URL = 'https://ai-gateway.vercel.sh';
+let directClient;
 export function assistantConfigured(env = process.env) {
-  return Boolean(env.ANTHROPIC_API_KEY);
+  return Boolean(env.ANTHROPIC_API_KEY || env.AI_GATEWAY_API_KEY || env.VERCEL);
+}
+
+async function connection(env = process.env) {
+  if (env.ANTHROPIC_API_KEY) {
+    directClient ??= new Anthropic();
+    return { client: directClient, gateway: false, model: MODEL };
+  }
+  let apiKey = env.AI_GATEWAY_API_KEY;
+  if (!apiKey) {
+    const { getVercelOidcToken } = await import('@vercel/functions/oidc');
+    apiKey = await getVercelOidcToken();
+  }
+  return { client: new Anthropic({ apiKey, baseURL: env.AI_GATEWAY_BASE_URL || GATEWAY_URL }), gateway: true, model: `anthropic/${MODEL.replace(/^claude-opus-(\d+)-(\d+)$/, 'claude-opus-$1.$2')}` };
 }
 
 export async function askAssistant(store, actor, config, input) {
@@ -136,23 +152,21 @@ export async function askAssistant(store, actor, config, input) {
   if (!assistantConfigured()) throw new AppError(503, 'The assistant isn’t set up yet. An admin needs to add ANTHROPIC_API_KEY in Vercel.');
   const data = validate(conversationSchema, input);
   if (!data.messages.length || data.messages.at(-1).role !== 'user') throw new AppError(400, 'Ask a question.');
-  client ??= new Anthropic();
+  let link;
+  try { link = await connection(); } catch (error) {
+    console.error('Assistant connection failed:', error.message);
+    throw new AppError(503, 'The assistant couldn\u2019t connect to Claude. Check that the project\u2019s Vercel AI Gateway is enabled.');
+  }
   const messages = data.messages.map(m => ({ role: m.role, content: m.content }));
   const context = `The person asking is ${actor.name} (${actor.role}). Today is ${new Date().toISOString().slice(0, 10)}.`;
   for (let step = 0; step < MAX_STEPS; step++) {
     let response;
     try {
-      response = await client.beta.messages.create({
-        model: MODEL,
-        max_tokens: 16000,
-        betas: ['server-side-fallback-2026-07-01'],
-        fallbacks: 'default',
-        output_config: { effort: 'low' },
-        cache_control: { type: 'ephemeral' },
-        system: [{ type: 'text', text: SYSTEM }, { type: 'text', text: context }],
-        tools,
-        messages,
-      });
+      const request = { model: link.model, max_tokens: 16000, output_config: { effort: 'low' },
+        system: [{ type: 'text', text: SYSTEM, cache_control: { type: 'ephemeral' } }, { type: 'text', text: context }], tools, messages };
+      // The direct API also gets the server-side refusal fallback; the gateway takes the plain Messages request.
+      response = link.gateway ? await link.client.messages.create(request)
+        : await link.client.beta.messages.create({ ...request, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' });
     } catch (error) {
       if (error instanceof Anthropic.RateLimitError) throw new AppError(429, 'The assistant is busy. Try again in a minute.');
       if (error instanceof Anthropic.AuthenticationError) throw new AppError(503, 'The assistant’s API key is not valid. An admin needs to update ANTHROPIC_API_KEY.');
