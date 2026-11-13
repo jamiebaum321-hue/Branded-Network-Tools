@@ -304,7 +304,7 @@ test('persistent store keeps accounts across restarts and only runs migrations o
   const reopened = await openStore(databaseUrl, { schema });
   try {
     assert.equal((await reopened.get('SELECT email FROM users')).email, adminEmail);
-    assert.deepEqual((await reopened.all('SELECT version FROM schema_migrations')).map(row => row.version), [1, 2, 3, 4, 5]);
+    assert.deepEqual((await reopened.all('SELECT version FROM schema_migrations')).map(row => row.version), [1, 2, 3, 4, 5, 6]);
   } finally { await reopened.close(); }
 });
 
@@ -461,4 +461,75 @@ test('client records: sections, keyed months, access rules, workspace issues and
   assert.equal((await f.admin(`/api/clients/${arc.id}`)).records.onboarding[0].data.item, 'Company profile');
   await f.admin(`/api/clients/${arc.id}`, {}, 'DELETE');
   assert.equal((await f.admin('/api/issues')).items.length, 2);
+});
+
+test('approvals queue: dedupe, decide, guarded record updates, access and import', async t => {
+  const f = await fixture(t);
+  const client = await f.addClient('Queue Client', { stage: 'current' });
+  await f.admin(`/api/clients/${client.id}`, { next_step: 'Old step', next_due: '2026-10-22', monthly_fee: 10000 }, 'PATCH');
+  const draft = (await f.admin('/api/approvals', { dedupe_key: 'bump-1', client_id: client.id, kind: 'email_draft', title: 'Bump intro',
+    payload: { to: ['someone@example.test'], subject: 'Following up', body: 'Hi' } })).approval;
+  assert.equal((await f.admin('/api/approvals', { dedupe_key: 'bump-1', client_id: client.id, kind: 'email_draft', title: 'Again', payload: {} })).approval.id, draft.id);
+  const update = (await f.admin('/api/approvals', { dedupe_key: 'step-1', client_id: client.id, kind: 'record_update', title: 'Set next step',
+    payload: { path: 'companies/x', fields: { nxt: 'Renewal check-in', nxt_due: '2026-10-28', nxt_owner: 'Schatzy' } } })).approval;
+  const unsafe = (await f.admin('/api/approvals', { dedupe_key: 'fee-1', client_id: client.id, kind: 'record_update', title: 'Change fee',
+    payload: { path: 'companies/x', fields: { fee: 1 } } })).approval;
+  const pending = (await f.admin('/api/approvals')).items;
+  assert.equal(pending.length, 3);
+  assert.deepEqual(pending.find(row => row.id === update.id).changes.map(c => [c.label, c.current, c.proposed]),
+    [['next step', 'Old step', 'Renewal check-in'], ['next due', '2026-10-22', '2026-10-28'], ['next owner', '', 'Schatzy']]);
+  assert.equal((await f.admin('/api/badges')).approvals, 3);
+
+  await f.admin(`/api/approvals/${unsafe.id}/decision`, { decision: 'approve' }, 'POST', 409);
+  assert.equal((await f.admin(`/api/clients/${client.id}`)).client.monthly_fee, 10000);
+  const applied = (await f.admin(`/api/approvals/${update.id}/decision`, { decision: 'approve' })).approval;
+  assert.equal(applied.status, 'approved');
+  const after = (await f.admin(`/api/clients/${client.id}`)).client;
+  assert.deepEqual([after.next_step, after.next_due, after.next_owner], ['Renewal check-in', '2026-10-28', 'Schatzy']);
+  await f.admin(`/api/approvals/${update.id}/decision`, { decision: 'reject' }, 'POST', 409);
+  assert.equal((await f.admin(`/api/approvals/${draft.id}/decision`, { decision: 'reject', note: 'Already bumped' })).approval.status, 'rejected');
+  assert.equal((await f.admin('/api/approvals', { dedupe_key: 'bump-1', client_id: client.id, kind: 'email_draft', title: 'Retry', payload: {} })).approval.status, 'rejected');
+  assert.deepEqual((await f.admin('/api/approvals?status=decided')).items.map(row => row.status).sort(), ['approved', 'rejected']);
+  assert((await f.admin('/api/admin/audit')).items.some(row => row.action === 'client.updated_from_approval'));
+
+  const { setup } = await f.admin('/api/admin/accounts', { name: 'Member', email: 'member@example.test', role: 'member' });
+  const member = await f.activate(setup.path);
+  const personal = f.as(member.cookie);
+  assert.equal((await personal('/api/approvals')).items.length, 0);
+  await personal(`/api/approvals/${unsafe.id}/decision`, { decision: 'reject' }, 'POST', 404);
+  await personal('/api/approvals', { dedupe_key: 'ws-1', kind: 'note', title: 'Workspace note', payload: {} }, 'POST', 403);
+});
+
+test('activity log: entries, review flags, scoping and import', async t => {
+  const f = await fixture(t);
+  const client = await f.addClient('Log Client', { stage: 'current' });
+  await f.admin('/api/activity-log', { client_id: client.id, text: 'Dave replied', source: 'Email Nov 12', review: true });
+  await f.admin('/api/activity-log', { text: 'Billing desk run', review: false });
+  const log = await f.admin('/api/activity-log');
+  assert.equal(log.items.length, 2);
+  const flagged = (await f.admin('/api/activity-log?review=1')).items;
+  assert.deepEqual(flagged.map(row => row.text), ['Dave replied']);
+  assert.equal((await f.admin('/api/badges')).review, 1);
+  await f.admin(`/api/activity-log/${flagged[0].id}/reviewed`, {});
+  assert.equal((await f.admin('/api/activity-log?review=1')).items.length, 0);
+  assert.equal((await f.admin(`/api/clients/${client.id}`)).activity.items[0].reviewed_by, 'First Admin');
+
+  const { setup } = await f.admin('/api/admin/accounts', { name: 'Member', email: 'member@example.test', role: 'member' });
+  const member = await f.activate(setup.path);
+  assert.equal((await f.as(member.cookie)('/api/activity-log')).items.length, 0);
+
+  const result = await f.admin('/api/admin/import/apply', { version: 1, namespace: 'solutions-tracker', clients: [{ id: 'arc', name: 'ARC', stage: 'current' }],
+    approvals: [{ id: 'renewal-step-arc', client_id: 'arc', kind: 'record_update', status: 'pending', title: 'Set ARC next step', trigger: 'renewal-desk',
+      payload: { path: 'companies/arc', fields: { nxt: 'Renewal check-in' } }, created_at: '2026-10-26T11:38:34Z' },
+    { id: 'billing-qbo', kind: 'note', status: 'done', title: 'QuickBooks needs sign-in', result: 'Reconnected', decided_by: 'Daniel', decided_at: '2026-10-27T10:00:00Z', created_at: '2026-10-26T10:00:00Z' }],
+    activity_log: [{ id: 'u-1', client_id: 'arc', at: '2026-10-21T09:00:00-04:00', text: 'Luke replied', source: 'Email', review: false, message_ids: [] },
+      { id: 'u-2', at: '2026-11-13T00:50:00Z', text: 'Billing desk run', source: 'Billing desk (automated)', review: true, message_ids: ['m1'] }] });
+  assert.equal(result.counts.approvals.added, 2);
+  assert.equal(result.counts.activity_log.added, 2);
+  const imported = (await f.admin('/api/activity-log')).items.find(row => row.text === 'Luke replied');
+  assert.equal(imported.at, '2026-10-21T13:00:00.000Z');
+  assert.equal((await f.admin('/api/approvals?status=decided')).items[0].decided_by, 'Daniel');
+  const again = await f.admin('/api/admin/import/apply', { version: 1, namespace: 'solutions-tracker', clients: [{ id: 'arc', name: 'ARC' }],
+    approvals: [{ id: 'renewal-step-arc', client_id: 'arc', kind: 'record_update', status: 'pending', title: 'x', payload: {} }] });
+  assert.equal(again.counts.approvals.skipped, 1);
 });

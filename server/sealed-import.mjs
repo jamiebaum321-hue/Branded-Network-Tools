@@ -6,7 +6,7 @@ import { importSeed } from './seed.mjs';
 // A one-time data migration can ship with the code without exposing client records in the repository:
 // the file is AES-256-GCM encrypted and its key lives only in the server environment.
 const sealedFile = new URL('../data/tracker-import.sealed', import.meta.url);
-const recordSets = ['clients', 'partners', 'introductions', 'outreach_activity', 'suggested_leads', 'onboarding_submissions', 'client_records'];
+const recordSets = ['clients', 'partners', 'introductions', 'outreach_activity', 'suggested_leads', 'onboarding_submissions', 'client_records', 'approvals', 'activity_log'];
 
 const keyFrom = (value) => {
   const key = Buffer.from(value ?? '', 'base64url');
@@ -37,7 +37,10 @@ export async function applySealedImport(store, env, file = sealedFile) {
   const total = recordSets.reduce((sum, kind) => sum + (input[kind]?.length ?? 0), 0);
   return store.tx(async () => {
     await store.exec("SELECT pg_advisory_xact_lock(hashtext('branded_sealed_import'))");
-    const done = (await store.get('SELECT count(*) AS n FROM imported_records WHERE namespace=?', input.namespace)).n;
+    // Count only the records this file carries, so a later file in the same namespace still applies.
+    const keys = recordSets.flatMap(kind => (input[kind] ?? []).map(row => `${kind}|${row.id}`));
+    const done = (await store.get(`SELECT count(*) AS n FROM imported_records WHERE namespace=? AND (kind||'|'||source_id)=ANY(?::text[])`,
+      input.namespace, keys)).n;
     if (done >= total) return null;
     const admin = await store.get("SELECT id,name,role FROM users WHERE role='admin' AND enabled=1 ORDER BY created_at,id LIMIT 1");
     if (!admin) return null;

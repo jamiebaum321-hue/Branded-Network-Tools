@@ -6,6 +6,7 @@ import { agreementStatuses, clientStages, dealStatuses } from '../public/account
 import { emit } from './events.mjs';
 import { listCards } from './pipeline.mjs';
 import { clientRecords } from './records.mjs';
+import { listActivityLog, listApprovals } from './approvals.mjs';
 
 const contactSchema = object({ name: str(150), title: str(160, 0), email: str(254, 0), phone: str(60, 0), notes: str(600, 0) }, ['name']);
 const percent = nullable(num(0, 100));
@@ -122,6 +123,8 @@ export async function clientDetail(store, actor, clientId) {
     client: presentClient(client), link, submissions: await listSubmissions(store, actor, clientId, {}),
     intros: (await listCards(store, actor, { client_id: clientId, limit: 200 })).items,
     records: await clientRecords(store, actor, clientId),
+    activity: await listActivityLog(store, actor, { client_id: clientId, limit: 8 }),
+    approvals: (await listApprovals(store, actor, { client_id: clientId })).items,
     member_ids: (await store.all('SELECT user_id FROM client_members WHERE client_id=? ORDER BY user_id', clientId)).map(row => row.user_id),
     owners: await store.all(`SELECT id,name FROM users WHERE enabled=1 AND (role='admin' OR id=? OR id IN (
       SELECT user_id FROM client_members WHERE client_id=?)) ORDER BY name`, client.owner_id, clientId),
@@ -271,8 +274,9 @@ export async function deleteClient(store, actor, clientId) {
     await store.run(`DELETE FROM imported_records WHERE local_id=? OR local_id IN (${cards})
       OR local_id IN (SELECT id FROM suggestions WHERE client_id=?) OR local_id IN (SELECT id FROM submissions WHERE client_id=?)
       OR local_id IN (SELECT id FROM activity WHERE client_id=?) OR local_id IN (SELECT id FROM followups WHERE card_id IN (${cards}))
-      OR local_id IN (SELECT id FROM drafts WHERE card_id IN (${cards})) OR local_id IN (SELECT id FROM client_records WHERE client_id=?)`,
-    clientId, clientId, clientId, clientId, clientId, clientId, clientId, clientId);
+      OR local_id IN (SELECT id FROM drafts WHERE card_id IN (${cards})) OR local_id IN (SELECT id FROM client_records WHERE client_id=?)
+      OR local_id IN (SELECT id FROM approvals WHERE client_id=?) OR local_id IN (SELECT id FROM activity_log WHERE client_id=?)`,
+    clientId, clientId, clientId, clientId, clientId, clientId, clientId, clientId, clientId, clientId);
     await store.run('DELETE FROM event_recipients WHERE event_id IN (SELECT id FROM events WHERE client_id=?)', clientId);
     await store.run('DELETE FROM events WHERE client_id=?', clientId);
     await store.run('DELETE FROM activity WHERE client_id=?', clientId);
@@ -287,6 +291,8 @@ export async function deleteClient(store, actor, clientId) {
     await store.run('DELETE FROM mcp_writes WHERE client_id=?', clientId);
     await store.run('DELETE FROM client_members WHERE client_id=?', clientId);
     await store.run('DELETE FROM client_records WHERE client_id=?', clientId);
+    await store.run('DELETE FROM approvals WHERE client_id=?', clientId);
+    await store.run('DELETE FROM activity_log WHERE client_id=?', clientId);
     await store.run('UPDATE audit_log SET client_id=NULL WHERE client_id=?', clientId);
     await store.run('DELETE FROM clients WHERE id=?', clientId);
     await audit(store, actor, 'client.deleted', 'client', clientId, null, { name: client.name });

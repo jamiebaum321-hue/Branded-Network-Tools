@@ -8,6 +8,8 @@ export const choice = (...values) => ({ type: 'string', enum: values });
 export const list = (items, maxItems = 100) => ({ type: 'array', items, maxItems });
 export const nullable = (schema) => ({ type: 'nullable', schema });
 export const day = { type: 'day' };
+// Free-form JSON (an object or array) up to a size limit, for proposal payloads kept as written.
+export const json = (maxBytes = 50000) => ({ type: 'json', maxBytes });
 export const object = (properties, required = Object.keys(properties)) => ({
   type: 'object', properties, required, additionalProperties: false,
 });
@@ -43,6 +45,10 @@ export function validate(schema, value, label = 'Input') {
     case 'day':
       if (typeof value !== 'string' || !/^\d{4}-\d\d-\d\d$/.test(value) || !Number.isFinite(Date.parse(`${value}T00:00:00Z`))
         || new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) !== value) fail('must be a date (YYYY-MM-DD).');
+      return value;
+    case 'json':
+      if (typeof value !== 'object' || value === null) fail('must be an object or list.');
+      if (JSON.stringify(value).length > schema.maxBytes) fail('is too large.');
       return value;
     case 'boolean':
       if (typeof value !== 'boolean') fail('must be true or false.');

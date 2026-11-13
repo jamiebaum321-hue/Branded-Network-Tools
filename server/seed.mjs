@@ -5,6 +5,7 @@ import { choice, email, int, nullable, num, object, str, time, validate } from '
 import { introStatuses } from '../public/account-fields.mjs';
 import { recordKinds } from '../public/record-kinds.mjs';
 import { insertRecord, recordData } from './records.mjs';
+import { importedActivitySchema, importedApprovalSchema, insertActivity, insertApproval } from './approvals.mjs';
 
 const identity = { id: str(250), client_id: str(250) };
 const dates = { created_at: str(40), entered_at: str(40) };
@@ -25,6 +26,8 @@ const definitions = {
     status: choice('new', 'pending', 'pending_review') }, ['id', 'client_id', 'company', 'reason', 'source']),
   client_records: object({ id: str(250), client_id: str(250), kind: choice(...Object.keys(recordKinds)), created_at: str(40), data: object({}, []) },
     ['id', 'kind', 'data']),
+  approvals: importedApprovalSchema,
+  activity_log: importedActivitySchema,
   onboarding_submissions: object({ ...identity, submitted_at: str(40), form_version: int(1, 10000),
     source_ref: str(600, 0), answers: object({}, []) }, ['id', 'client_id', 'submitted_at', 'answers']),
 };
@@ -59,6 +62,20 @@ async function writeRow(store, actor, namespace, kind, row) {
     const { id: _source, owner_email: ownerEmail, created_at: createdAt, ...fields } = row;
     return (await insertClient(store, actor, { ...fields, owner_id: await accountId(store, ownerEmail) },
       createdAt ? time(createdAt) : undefined)).id;
+  }
+  if (kind === 'approvals' || kind === 'activity_log') {
+    let clientId = null;
+    if (row.client_id) {
+      clientId = await imported(store, namespace, 'clients', row.client_id);
+      if (!clientId) throw new AppError(400, `Client reference ${row.client_id} was not found in this import namespace.`);
+    }
+    if (kind === 'activity_log') return (await insertActivity(store, actor, { client_id: clientId, company_label: row.company_label,
+      at: time(row.at), text: row.text, source: row.source, review: row.review, message_ids: row.message_ids }, time(row.at))).id;
+    const decided = row.status !== 'pending';
+    return (await insertApproval(store, actor, { dedupe_key: `${namespace}:${row.id}`, client_id: clientId, kind: row.kind, trigger: row.trigger,
+      title: row.title, why: row.why, source: row.source, payload: row.payload ?? {} }, { status: row.status,
+      createdAt: row.created_at ? time(row.created_at) : undefined,
+      decision: decided ? { result: row.result ?? '', decided_by: row.decided_by || null, decided_at: row.decided_at ? time(row.decided_at) : null } : {} })).id;
   }
   if (kind === 'client_records' && !row.client_id) return (await insertRecord(store, actor, null, row.kind, row.data,
     row.created_at ? time(row.created_at) : undefined)).id;

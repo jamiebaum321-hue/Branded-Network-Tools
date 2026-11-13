@@ -123,12 +123,14 @@ export function shell(user, location) {
     ['/pipeline', 'Pipeline', 'board', location.startsWith('/pipeline')],
     ['/clients', 'Clients', 'clients', location.startsWith('/clients')],
     ['/prospects', 'Prospects', 'shortlist', location === '/prospects'],
+    ['/approvals', 'Approvals', 'check', location === '/approvals'],
+    ['/activity', 'Activity', 'history', location === '/activity'],
     ['/followups', 'Follow-ups', 'flag', location === '/followups'],
     ['/contracts', 'Contracts', 'draft', location === '/contracts'],
   ];
   if (user.role === 'admin') sections.push(['/admin', 'Admin', 'shield', location === '/admin']);
   const current = sections.find(section => section[3]);
-  const nav = sections.map(([url, label, glyph, active]) => `<a href="${url}"${active ? ' aria-current="page"' : ''}><span class="nav-icon">${icon(glyph)}</span><span>${label}</span></a>`).join('');
+  const nav = sections.map(([url, label, glyph, active]) => `<a href="${url}"${active ? ' aria-current="page"' : ''}><span class="nav-icon">${icon(glyph)}</span><span>${label}</span><span class="nav-count" data-count="${url.slice(1)}" hidden></span></a>`).join('');
   return `<header class="app-header"><div class="bar"><div class="bar-brand">${brand()}</div>
     <div class="workspace-context" aria-hidden="true">${icon('network')}<span>Workspace</span>${icon('chevron')}<strong>${h(current?.[1] ?? 'Today')}</strong></div>
     <div class="app-rail"><div class="rail-brand">${brand()}</div><span class="rail-caption" aria-hidden="true">Workspace</span><nav class="main-nav" aria-label="Main">${nav}</nav></div>

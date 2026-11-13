@@ -2,7 +2,7 @@ import { sections } from './intake-fields.mjs';
 import { recordKinds } from './record-kinds.mjs';
 import { btn, emptyState, h, heading, icon, link, pathId, shell, stages } from './ui.mjs';
 import { activityItems, adminPage, alertRows, auditRows, boardCard, boardPage, cardPage, clientForm, clientPage,
-  clientRows, clientsPage, contractsPage, followupsPage, recordForm, createCardForm, intakePage, inviteForm, jobTokenForm, metricsPage, setupPage, signInPage,
+  clientRows, clientsPage, contractsPage, followupsPage, recordForm, approvalsPage, activityLogPage, activityLogRows, logActivityForm, createCardForm, intakePage, inviteForm, jobTokenForm, metricsPage, setupPage, signInPage,
   submissionPage, submissionRows, suggestionPage, suggestionRows, suggestionsPage, todayPage } from './views.mjs';
 
 const main = document.querySelector('#main');
@@ -15,6 +15,29 @@ let context = null;
 // Records shown on the current page, so the edit dialog opens without another request.
 const recordCache = new Map();
 const remember = rows => { for (const row of rows) recordCache.set(row.id, row); };
+const approvalCache = new Map();
+
+function draftText(row) {
+  const p = row.payload ?? {};
+  return [`To: ${(p.to ?? []).join(', ')}`, p.cc?.length ? `Cc: ${p.cc.join(', ')}` : '', `Subject: ${p.subject ?? ''}`, '', p.body ?? ''].filter((line, i) => line || i > 2).join('\n');
+}
+
+function openDraft(row) {
+  const p = row.payload ?? {};
+  const to = (p.to ?? []).map(value => encodeURIComponent(value).replaceAll('%40', '@')).join(',');
+  const params = [p.cc?.length ? `cc=${encodeURIComponent(p.cc.join(','))}` : '', `subject=${encodeURIComponent(p.subject ?? '')}`, `body=${encodeURIComponent(p.body ?? '')}`].filter(Boolean).join('&');
+  location.href = `mailto:${to}?${params}`;
+}
+
+async function refreshBadges() {
+  try {
+    const counts = await api('/api/badges');
+    for (const [key, value] of [['approvals', counts.approvals], ['activity', counts.review]]) {
+      const el = document.querySelector(`[data-count="${key}"]`);
+      if (el) { el.textContent = value; el.hidden = !value; }
+    }
+  } catch { /* badges are a convenience */ }
+}
 let revision = 0;
 let stage = 'to_contact';
 let wizard = null;
@@ -209,7 +232,18 @@ async function render({ focus = false } = {}) {
       if (current !== revision) return;
       context = ctx;
       remember(Object.values(data.records ?? {}).flat());
+      for (const row of data.approvals ?? []) approvalCache.set(row.id, row);
       html = clientPage(data, ctx, zone);
+    } else if (path === '/approvals') {
+      const data = await api(queryPath('/api/approvals', query));
+      approvalCache.clear();
+      for (const row of data.items) approvalCache.set(row.id, row);
+      html = approvalsPage(data, query, zone);
+    } else if (path === '/activity') {
+      const [data, ctx] = await Promise.all([api(queryPath('/api/activity-log', query)), getContext()]);
+      if (current !== revision) return;
+      context = ctx;
+      html = activityLogPage(data, ctx, query, zone);
     } else if (path === '/followups') {
       const [data, issues] = await Promise.all([api('/api/followups'), api('/api/issues')]);
       remember(issues.items);
@@ -233,7 +267,7 @@ async function render({ focus = false } = {}) {
     if (current !== revision) return;
     show(html, focus, hash);
     if (todayResult) todayAcknowledgement = api('/api/today/seen', 'POST', { reply_cursor: todayResult.reply_cursor }).catch(() => {});
-    if (user && !publicRoute) refreshAlertDot();
+    if (user && !publicRoute) { refreshAlertDot(); refreshBadges(); }
   } catch (error) {
     if (current === revision) showError(error, focus);
   }
@@ -390,6 +424,11 @@ const forms = {
     dialog.close();
     notify('Saved.');
     await render();
+  },
+  async 'log-activity'(form, data) {
+    await api('/api/activity-log', 'POST', { client_id: data.get('client_id') || undefined, text: data.get('text'),
+      source: data.get('source') || '', review: data.has('review') });
+    dialog.close(); notify('Update logged.'); await render();
   },
   async 'next-step'(form, data) {
     await api(`/api/clients/${pathId(form.dataset.id)}/next-step`, 'POST', { next_step: data.get('next_step'), next_due: data.get('next_due') || null,
@@ -602,6 +641,32 @@ const actions = {
   'setup-link': async button => {
     const result = await api(`/api/admin/accounts/${pathId(button.dataset.id)}/setup`, 'POST');
     revealValue('One-time setup link', new URL(result.setup.path, location.origin).href, 'Share this link with the user. It expires in 24 hours.');
+  },
+  'decide-approval': async button => {
+    const row = approvalCache.get(button.dataset.id);
+    const reject = button.dataset.decision === 'reject';
+    let note = '';
+    if (reject) {
+      note = prompt('Why reject this? (optional; it will not be proposed again)') ?? null;
+      if (note === null) return;
+    }
+    await api(`/api/approvals/${pathId(button.dataset.id)}/decision`, 'POST', { decision: reject ? 'reject' : 'approve', note });
+    if (!reject && row?.kind === 'email_draft') openDraft(row);
+    notify(reject ? 'Rejected.' : row?.kind === 'record_update' ? 'Approved and applied.' : row?.kind === 'email_draft' ? 'Approved. Your mail app opens with the draft; review it and send it yourself.' : 'Marked done.');
+    await render();
+  },
+  'copy-approval': button => clipboard(draftText(approvalCache.get(button.dataset.id)), 'Draft copied.'),
+  'review-log': async button => {
+    await api(`/api/activity-log/${pathId(button.dataset.id)}/reviewed`, 'POST');
+    notify('Marked reviewed.'); await render();
+  },
+  'log-activity': button => showDialog('Log an update', logActivityForm(context, button.dataset.client ?? ''), { glyph: 'history' }),
+  'more-log': async button => {
+    const q = new URLSearchParams(location.search);
+    q.set('before', button.dataset.next);
+    const result = await api(queryPath('/api/activity-log', q));
+    document.querySelector('#log-list').insertAdjacentHTML('beforeend', activityLogRows(result.items, zone));
+    if (result.next) button.dataset.next = result.next; else button.closest('.pagination').remove();
   },
   'add-record': button => showDialog(`Add ${recordKinds[button.dataset.kind].singular}`, recordForm(button.dataset.kind, null, button.dataset.client),
     { glyph: recordKinds[button.dataset.kind].glyph }),

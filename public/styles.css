@@ -565,3 +565,16 @@ dialog::backdrop { background: linear-gradient(145deg, #2319486b, #17152d69); ba
 .record-section > summary .badge { margin-left: 4px; }
 .record-list { display: grid; margin: 4px 0 8px; }
 .record-section > .actions { margin-bottom: 8px; }
+
+/* Approvals queue and activity log */
+.nav-count { margin-left: auto; min-width: 20px; padding: 0 6px; border-radius: 999px; background: var(--amber-bg, #fdf0d5); color: var(--amber-fg, #8a5a00); font-size: .72rem; font-weight: 700; text-align: center; line-height: 1.6; }
+.nav-count[hidden] { display: none; }
+.approval .draft-preview { border: 1px solid var(--line); border-radius: 10px; padding: 12px; display: grid; gap: 10px; }
+.approval .draft-body { margin: 0; padding-top: 10px; border-top: 1px solid var(--line); font-size: .9rem; }
+.approval .summary-grid .wide { grid-column: 1 / -1; }
+.activity-entry { padding: 12px 16px; border-bottom: 1px solid var(--line); display: grid; gap: 4px; }
+.activity-entry:last-child { border-bottom: 0; }
+.activity-entry.needs-review { background: var(--amber-bg, #fff8e8); }
+.activity-entry p { margin: 0; }
+.panel .activity-entry { margin-inline: -16px; }
+.panel.flush .activity-entry { margin-inline: 0; }

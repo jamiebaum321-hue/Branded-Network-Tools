@@ -8,6 +8,7 @@ import { clientDetail, copyFormLink, createClient, getSubmission, listClients, l
   revokeFormLinks, saveIntake, submitIntake, updateClient, deleteClient, updateNextStep } from './clients.mjs';
 import { contracts, followUps } from './accountwork.mjs';
 import { createRecord, deleteRecord, openIssues, updateRecord } from './records.mjs';
+import { addActivity, createApproval, decideApproval, listActivityLog, listApprovals, markReviewed, pendingCount, reviewCount } from './approvals.mjs';
 import { acknowledgeToday, metrics, today } from './dashboard.mjs';
 import { alerts, seeAlerts } from './events.mjs';
 import { metadata, mcpHttp } from './mcp.mjs';
@@ -46,7 +47,7 @@ const imageAssets = [
     .map(name => [`artwork/${name}.webp`, 'image/webp']),
 ];
 for (const [path, type] of imageAssets) assets.set(`/assets/${path}`, [`assets/${path}`, type]);
-const shellPath = /^(?:\/|\/today|\/signin|\/pipeline(?:\/(?:metrics|cards\/[\w-]+|suggestions(?:\/[\w-]+)?))?|\/clients(?:\/[\w-]+(?:\/submissions\/[\w-]+)?)?|\/prospects|\/followups|\/contracts|\/admin|\/setup\/[\w-]+|\/onboard\/[\w.-]+)$/;
+const shellPath = /^(?:\/|\/today|\/signin|\/pipeline(?:\/(?:metrics|cards\/[\w-]+|suggestions(?:\/[\w-]+)?))?|\/clients(?:\/[\w-]+(?:\/submissions\/[\w-]+)?)?|\/prospects|\/approvals|\/activity|\/followups|\/contracts|\/admin|\/setup\/[\w-]+|\/onboard\/[\w.-]+)$/;
 const ident = '([a-zA-Z0-9_-]{1,80})';
 const options = { public: true };
 
@@ -165,6 +166,16 @@ export function createHandler(store, config) {
   route('PATCH', `/api/records/${ident}`, async ({ actor, ids, data }) => ({ record: await updateRecord(store, actor, ids[0], data) }));
   route('DELETE', `/api/records/${ident}`, ({ actor, ids }) => deleteRecord(store, actor, ids[0]));
   route('GET', '/api/issues', async ({ actor }) => ({ items: await openIssues(store, actor) }));
+  route('GET', '/api/approvals', ({ actor, url }) => listApprovals(store, actor, {
+    status: url.searchParams.get('status') === 'decided' ? 'decided' : 'pending', client_id: url.searchParams.get('client_id') || undefined }));
+  route('POST', '/api/approvals', async ({ actor, data }) => ({ approval: await createApproval(store, actor, data) }));
+  route('POST', `/api/approvals/${ident}/decision`, async ({ actor, ids, data }) => ({ approval: await decideApproval(store, actor, ids[0], data) }));
+  route('GET', '/api/activity-log', ({ actor, url }) => listActivityLog(store, actor, {
+    client_id: url.searchParams.get('client_id') || undefined, review: url.searchParams.get('review') === '1' ? 1 : undefined,
+    before: url.searchParams.get('before') || undefined }));
+  route('POST', '/api/activity-log', async ({ actor, data }) => ({ entry: await addActivity(store, actor, data) }));
+  route('POST', `/api/activity-log/${ident}/reviewed`, async ({ actor, ids }) => ({ entry: await markReviewed(store, actor, ids[0]) }));
+  route('GET', '/api/badges', async ({ actor }) => ({ approvals: await pendingCount(store, actor), review: await reviewCount(store, actor) }));
   route('GET', '/api/followups', ({ actor }) => followUps(store, actor, config.timeZone));
   route('GET', '/api/contracts', ({ actor }) => contracts(store, actor, config.timeZone));
   route('DELETE', `/api/clients/${ident}`, ({ actor, ids }) => deleteClient(store, actor, ids[0]));

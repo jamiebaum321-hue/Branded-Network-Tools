@@ -395,6 +395,7 @@ export function clientPage(data, context, zone) {
     <div class="grid-two top-aligned">${accountPanel(client, zone)}${nextStepPanel(client)}</div>
     <div class="grid-two top-aligned">${introsPanel(client, data.intros ?? [])}${contactsPanel(client) || '<div></div>'}</div>
     ${recordsPanel(client, data.records)}
+    ${data.activity ? clientActivityPanel(client, data.activity, data.approvals, zone) : ''}
     <div class="grid-two"><section class="panel stack"><div class="onboarding-entry"><div>${sectionLabel('Solutions Partner Onboarding', 'link')}<p class="muted section-copy">Share a form link so the client can enter their answers.</p></div>
     <img src="/assets/artwork/signal-intake.webp" width="96" height="64" loading="lazy" decoding="async" alt=""></div>
     <div class="actions">${btn('Copy form link', { action: 'form-link', glyph: 'link', kind: 'primary', data: `data-id="${h(client.id)}"` })}</div>
@@ -632,4 +633,77 @@ export function adminPage(tab, data, context, query, zone, preview) {
     <p class="muted wrap">Endpoint · <code>${h(location.origin)}/mcp</code></p></section><div class="panel flush">${tokenList(data.items, context, zone)}</div></div>`;
   else content = `<div class="stack"><div class="section-head">${sectionLabel('Team accounts', 'team')}${btn('Invite user', { action: 'invite-account', glyph: 'plus', kind: 'primary' })}</div>${accountList(data.items)}</div>`;
   return `${heading('Admin', 'Manage accounts, activity, and workspace access.', '', { art: 'workspace-controls' })}${nav}${content}`;
+}
+
+// ---- Approvals queue ----
+const approvalKindLabel = { email_draft: 'Email draft', record_update: 'Record update', note: 'Note' };
+const approvalStatusTone = { pending: 'amber', approved: 'green', done: 'green', rejected: 'neutral' };
+const triggerLabel = value => String(value || '').replace(/-/g, ' ').replace(/^\w/, c => c.toUpperCase());
+
+function approvalCard(row, zone) {
+  const p = row.payload ?? {};
+  const draft = row.kind === 'email_draft' ? `<div class="draft-preview">
+      <dl class="summary-grid"><div><dt>To</dt><dd>${h((p.to ?? []).join(', ') || '—')}</dd></div><div><dt>Cc</dt><dd>${h((p.cc ?? []).join(', ') || '—')}</dd></div>
+      <div class="wide"><dt>Subject</dt><dd>${h(p.subject ?? '')}</dd></div></dl>
+      <p class="multiline draft-body">${h(p.body ?? '')}</p></div>` : '';
+  const changes = row.kind === 'record_update' ? `<table class="data-table"><thead><tr><th scope="col">Field</th><th scope="col">Now</th><th scope="col">Proposed</th></tr></thead>
+      <tbody>${(row.changes ?? []).map(c => `<tr><td>${h(c.label)}${c.supported ? '' : ' <small class="muted">(change by hand)</small>'}</td><td>${h(c.current || '—')}</td><td>${h(c.proposed || '—')}</td></tr>`).join('')}</tbody></table>` : '';
+  const pending = row.status === 'pending';
+  const actions = pending ? `<div class="actions">
+      ${btn(row.kind === 'email_draft' ? 'Approve and open draft' : row.kind === 'note' ? 'Mark done' : 'Approve and apply', { action: 'decide-approval', kind: 'primary', glyph: 'check', data: `data-id="${h(row.id)}" data-decision="approve" data-kind="${h(row.kind)}"` })}
+      ${row.kind === 'email_draft' ? btn('Copy draft', { action: 'copy-approval', glyph: 'copy', data: `data-id="${h(row.id)}"` }) : ''}
+      ${btn('Reject', { action: 'decide-approval', kind: 'quiet', glyph: 'close', data: `data-id="${h(row.id)}" data-decision="reject"` })}</div>`
+    : `<p class="muted small">${h(row.status === 'rejected' ? 'Rejected' : row.status === 'done' ? 'Done' : 'Approved')}${row.decided_by ? ` by ${h(row.decided_by)}` : ''}${row.decided_at ? ` · ${h(formatDate(row.decided_at, zone))}` : ''}${row.result ? ` · ${h(row.result)}` : ''}</p>`;
+  return `<article class="panel stack approval" id="approval-${h(row.id)}">
+    <div class="section-head"><div class="row-main"><strong>${h(row.title)}</strong>
+      <small>${h([row.client_name ?? 'Whole workspace', triggerLabel(row.trigger), formatDate(row.created_at, zone)].filter(Boolean).join(' · '))}</small></div>
+      <div class="chips">${badge(approvalKindLabel[row.kind] ?? row.kind, 'violet')}${badge(row.status === 'done' ? 'Done' : row.status[0].toUpperCase() + row.status.slice(1), approvalStatusTone[row.status])}</div></div>
+    ${row.why ? `<p class="multiline">${h(row.why)}</p>` : ''}${draft}${changes}
+    ${row.source ? `<p class="muted small">Source: ${h(row.source)}</p>` : ''}${actions}</article>`;
+}
+
+export function approvalsPage(data, query, zone) {
+  const decided = query.get('status') === 'decided';
+  const tabs = `<nav class="subnav" aria-label="Approvals"><a href="/approvals"${decided ? '' : ' aria-current="page"'}>${icon('flag')}Pending</a>
+    <a href="/approvals?status=decided"${decided ? ' aria-current="page"' : ''}>${icon('history')}Decided</a></nav>`;
+  return `${heading('Approvals', 'Drafts and proposed changes wait here for a person. Nothing is sent or changed until someone approves it, and the app never sends email itself.', '', { art: 'workspace-controls' })}
+    ${tabs}<div class="stack">${data.items.length ? data.items.map(row => approvalCard(row, zone)).join('')
+      : `<section class="panel">${emptyState(decided ? 'Nothing decided yet.' : 'Nothing is waiting for approval.')}</section>`}</div>`;
+}
+
+// ---- Activity log ----
+export function activityLogRows(items, zone) {
+  return items.map(row => `<article class="activity-entry${row.review ? ' needs-review' : ''}" id="log-${h(row.id)}">
+    <div class="line-title"><strong>${row.client_id ? `<a class="text-link" href="/clients/${pathId(row.client_id)}">${h(row.client_name)}</a>` : h(row.company_label || 'Workspace')}</strong>
+      <span class="muted small">${h(timeLabel(row.at, zone))}</span>${row.review ? badge('Needs review', 'amber', 'flag') : ''}</div>
+    <p class="multiline">${h(row.text)}</p>
+    <p class="muted small">Source: ${h(row.source || '—')}${row.reviewed_by ? ` · Reviewed by ${h(row.reviewed_by)}` : ''}</p>
+    ${row.review ? `<div>${btn('Mark reviewed', { action: 'review-log', kind: 'quiet', glyph: 'check', data: `data-id="${h(row.id)}"` })}</div>` : ''}</article>`).join('');
+}
+
+export function activityLogPage(data, context, query, zone) {
+  const review = query.get('review') === '1';
+  return `${heading('Activity log', 'Every update to an account, with where it came from.', btn('Log an update', { action: 'log-activity', glyph: 'plus', kind: 'primary' }), { art: 'signal-today' })}
+    <form class="filters panel" data-form="filter">${select('Client', 'client_id', names(context.clients), query.get('client_id') ?? '', 'All clients')}
+      ${select('Show', 'review', [{ id: '1', name: 'Needs review only' }], review ? '1' : '', 'Everything')}
+      <div class="actions">${btn('Apply', { type: 'submit' })}${query.size ? btn('Clear', { action: 'clear-filters', kind: 'quiet' }) : ''}</div></form>
+    <section class="panel flush"><div id="log-list">${data.items.length ? activityLogRows(data.items, zone) : emptyState(review ? 'Nothing needs review.' : 'No activity yet.')}</div>
+    ${data.next ? `<div class="pagination">${btn('Load older', { action: 'more-log', data: `data-next="${h(data.next)}"` })}</div>` : ''}</section>`;
+}
+
+export function logActivityForm(context, clientId = '') {
+  return subjectForm('log-activity', '', `${fieldset(`${select('Client', 'client_id', names(context.clients), clientId, context.user.role === 'admin' ? 'Whole workspace' : undefined)}
+    <div class="wide">${field('What happened', 'text', '', { type: 'textarea', required: true, max: 4000 })}</div>
+    <div class="wide">${field('Source', 'source', '', { max: 1000, placeholder: 'e.g. Email from Dave Lewis, Nov 12' })}</div>
+    <label class="check"><input type="checkbox" name="review">Needs review</label>`)}
+    <div class="actions">${btn('Save', { kind: 'primary', type: 'submit' })}</div>`);
+}
+
+export function clientActivityPanel(client, log, approvals, zone) {
+  const pending = (approvals ?? []).length;
+  return `<section class="panel stack"><div class="section-head">${sectionLabel('Activity log', 'history')}
+      <div class="actions">${pending ? link(`/approvals?client_id=${pathId(client.id)}`, `${pending} waiting for approval`, 'flag', 'small') : ''}
+      ${btn('Log an update', { action: 'log-activity', glyph: 'plus', kind: 'quiet', data: `data-client="${h(client.id)}"` })}</div></div>
+    <div id="log-list">${log.items.length ? activityLogRows(log.items, zone) : emptyState('No activity yet.')}</div>
+    ${log.next ? `<div class="pagination">${link(`/activity?client_id=${pathId(client.id)}`, 'See the full log', 'arrow')}</div>` : ''}</section>`;
 }
