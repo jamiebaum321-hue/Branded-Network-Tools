@@ -134,6 +134,34 @@ export function assistantConfigured(env = process.env) {
   return Boolean(env.ANTHROPIC_API_KEY || env.AI_GATEWAY_API_KEY || env.VERCEL);
 }
 
+// On the gateway's free tier some models are refused ("Free tier users do not have access to this model").
+// Step down this list until one is served; remember it, and retry the first choice every 30 minutes so
+// paid credit restores the best model without a change.
+const GATEWAY_MODELS = ['anthropic/claude-opus-5.5', 'anthropic/claude-sonnet-5.5', 'anthropic/claude-haiku-5.5', 'anthropic/claude-haiku-4.5'];
+const NO_EFFORT = new Set(['anthropic/claude-haiku-4.5']);
+let gatewayChoice = { index: 0, since: 0 };
+const modelRefused = error => error instanceof Anthropic.APIError && error.status === 403
+  && /access to this model|not have access|upgrade to paid/i.test(String(error.error?.error?.message ?? error.error?.message ?? error.message ?? ''));
+
+async function createOnGateway(client, request) {
+  if (gatewayChoice.index && Date.now() - gatewayChoice.since > 1800000) gatewayChoice = { index: 0, since: 0 };
+  for (let index = gatewayChoice.index; index < GATEWAY_MODELS.length; index++) {
+    const model = GATEWAY_MODELS[index];
+    const { output_config: outputConfig, ...rest } = request;
+    try {
+      const response = await client.messages.create({ ...rest, model, ...(NO_EFFORT.has(model) ? {} : { output_config: outputConfig }) });
+      if (index !== gatewayChoice.index) {
+        console.warn(`Assistant: gateway refused ${GATEWAY_MODELS[gatewayChoice.index]}; using ${model}.`);
+        gatewayChoice = { index, since: Date.now() };
+      }
+      return response;
+    } catch (error) {
+      if (!modelRefused(error) || index === GATEWAY_MODELS.length - 1) throw error;
+    }
+  }
+  throw new Error('No gateway model available.');
+}
+
 async function connection(env = process.env) {
   if (env.ANTHROPIC_API_KEY) {
     directClient ??= new Anthropic();
@@ -165,7 +193,7 @@ export async function askAssistant(store, actor, config, input) {
       const request = { model: link.model, max_tokens: 16000, output_config: { effort: 'low' },
         system: [{ type: 'text', text: SYSTEM, cache_control: { type: 'ephemeral' } }, { type: 'text', text: context }], tools, messages };
       // The direct API also gets the server-side refusal fallback; the gateway takes the plain Messages request.
-      response = link.gateway ? await link.client.messages.create(request)
+      response = link.gateway ? await createOnGateway(link.client, request)
         : await link.client.beta.messages.create({ ...request, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' });
     } catch (error) {
       if (error instanceof Anthropic.RateLimitError) throw new AppError(429, 'The assistant is busy. Try again in a minute.');

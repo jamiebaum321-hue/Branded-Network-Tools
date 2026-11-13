@@ -549,6 +549,11 @@ test('assistant: not configured, tool loop over scoped data, links and rate limi
     let body = ''; for await (const chunk of req) body += chunk;
     const payload = JSON.parse(body);
     requests.push({ headers: req.headers, payload });
+    if (payload.model === 'anthropic/claude-opus-5.5' && process.env.FAKE_FREE_TIER) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ type: 'error', error: { type: 'permission_error', message: 'Free tier users do not have access to this model. Upgrade to paid credits for unrestricted access.' } }));
+      return;
+    }
     const last = payload.messages.at(-1);
     const toolResult = Array.isArray(last.content) && last.content.find(block => block.type === 'tool_result');
     const content = toolResult
@@ -581,6 +586,12 @@ test('assistant: not configured, tool loop over scoped data, links and rate limi
   assert.equal(requests[2].payload.model, 'anthropic/claude-opus-5.5');
   assert.equal(requests[2].payload.fallbacks, undefined);
   assert.equal(requests[2].headers.authorization, 'Bearer gateway-test-key');
+  // Free tier refuses Opus: the assistant steps down to Sonnet 5.5 and keeps using it for the rest of the loop.
+  process.env.FAKE_FREE_TIER = '1';
+  t.after(() => { delete process.env.FAKE_FREE_TIER; });
+  const before = requests.length;
+  assert.equal((await f.admin('/api/assistant', { messages: [{ role: 'user', content: 'Where are we with Hang?' }] })).answer, `Found it: [Hang](/clients/${hang.id})`);
+  assert.deepEqual(requests.slice(before).map(r => r.payload.model), ['anthropic/claude-opus-5.5', 'anthropic/claude-sonnet-5.5', 'anthropic/claude-sonnet-5.5']);
   const toolResult = JSON.parse(requests[1].payload.messages.at(-1).content[0].content);
   assert.equal(toolResult.clients[0].link, `/clients/${hang.id}`);
   assert.deepEqual(toolResult.intros, []);
