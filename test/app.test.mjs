@@ -546,10 +546,20 @@ test('assistant: not configured, tool loop over scoped data, links and rate limi
   // A stand-in for the Anthropic API: first asks for a search, then answers using the tool result.
   const requests = [];
   const fake = http.createServer(async (req, res) => {
+    if (req.method === 'GET' && req.url.startsWith('/v1/models')) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ object: 'list', data: [
+        { id: 'anthropic/claude-haiku-4.5', type: 'language', tags: ['tool-use'], model_eligibility: { status: 'ineligible' } },
+        { id: 'acme/no-tools', type: 'language', tags: [], model_eligibility: { status: 'eligible' } },
+        { id: 'meta/llama-9', type: 'language', tags: ['tool-use'], pricing: { input: '0.0000001', output: '0.0000001' }, model_eligibility: { status: 'eligible' } },
+        { id: 'google/gemini-9.0-flash', type: 'language', tags: ['tool-use'], pricing: { input: '0.000001', output: '0.000002' }, model_eligibility: { status: 'eligible' } },
+      ] }));
+      return;
+    }
     let body = ''; for await (const chunk of req) body += chunk;
     const payload = JSON.parse(body);
     requests.push({ headers: req.headers, payload });
-    if (payload.model === 'anthropic/claude-opus-5.5' && process.env.FAKE_FREE_TIER) {
+    if (process.env.FAKE_FREE_TIER && (payload.model === 'anthropic/claude-opus-5.5' || process.env.FAKE_FREE_TIER === 'all' && payload.model.startsWith('anthropic/'))) {
       res.writeHead(403, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ type: 'error', error: { type: 'permission_error', message: 'Free tier users do not have access to this model. Upgrade to paid credits for unrestricted access.' } }));
       return;
@@ -592,6 +602,15 @@ test('assistant: not configured, tool loop over scoped data, links and rate limi
   const before = requests.length;
   assert.equal((await f.admin('/api/assistant', { messages: [{ role: 'user', content: 'Where are we with Hang?' }] })).answer, `Found it: [Hang](/clients/${hang.id})`);
   assert.deepEqual(requests.slice(before).map(r => r.payload.model), ['anthropic/claude-opus-5.5', 'anthropic/claude-sonnet-5.5', 'anthropic/claude-sonnet-5.5']);
+  // Every Claude model refused: the assistant asks the gateway which models it may use and takes the best eligible one with tools.
+  process.env.FAKE_FREE_TIER = 'all';
+  const beforeAll = requests.length;
+  assert.equal((await f.admin('/api/assistant', { messages: [{ role: 'user', content: 'Where are we with Hang?' }] })).answer, `Found it: [Hang](/clients/${hang.id})`);
+  const used = requests.slice(beforeAll).map(r => r.payload.model);
+  assert.deepEqual(used.slice(-2), ['google/gemini-9.0-flash', 'google/gemini-9.0-flash']);
+  const other = requests.at(-1).payload;
+  assert.equal(typeof other.system, 'string');
+  assert.equal(other.output_config, undefined);
   const toolResult = JSON.parse(requests[1].payload.messages.at(-1).content[0].content);
   assert.equal(toolResult.clients[0].link, `/clients/${hang.id}`);
   assert.deepEqual(toolResult.intros, []);

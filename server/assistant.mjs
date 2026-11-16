@@ -135,31 +135,75 @@ export function assistantConfigured(env = process.env) {
 }
 
 // On the gateway's free tier some models are refused ("Free tier users do not have access to this model").
-// Step down this list until one is served; remember it, and retry the first choice every 30 minutes so
-// paid credit restores the best model without a change.
+// Try Claude first, best model down; if every Claude model is refused, ask the gateway which models this
+// team may use and take the best eligible one that can call tools. The working choice is remembered, and
+// the first choice is retried every 30 minutes so paid credit restores Claude without a change.
 const GATEWAY_MODELS = ['anthropic/claude-opus-5.5', 'anthropic/claude-sonnet-5.5', 'anthropic/claude-haiku-5.5', 'anthropic/claude-haiku-4.5'];
 const NO_EFFORT = new Set(['anthropic/claude-haiku-4.5']);
-let gatewayChoice = { index: 0, since: 0 };
-const modelRefused = error => error instanceof Anthropic.APIError && error.status === 403
-  && /access to this model|not have access|upgrade to paid/i.test(String(error.error?.error?.message ?? error.error?.message ?? error.message ?? ''));
+// Preferred families among non-Claude models, best first; anything else eligible comes after, cheapest first.
+const PREFERRED = [/^google\/gemini-[\d.]+-flash(?!-lite|-image)/, /^openai\/gpt-[\d.]+-mini/, /^google\/gemini-[\d.]+-flash-lite/,
+  /^deepseek\/deepseek-v[\d.]+/, /^openai\/gpt-[\d.]+-nano/, /^alibaba\/qwen/, /^meta\/llama/, /^mistral\//, /^xai\/grok-[\d.]+-(fast|mini)/];
+let gatewayChoice = { model: null, since: 0 };
+let discovered = { at: 0, models: [] };
+const errorText = error => String(error?.error?.error?.message ?? error?.error?.message ?? error?.message ?? '');
+const modelRefused = error => error instanceof Anthropic.APIError && [400, 403, 404].includes(error.status)
+  && /access to this model|not have access|upgrade to paid|free tier|not (available|supported|found)|ineligible/i.test(errorText(error));
+
+export function rankEligible(catalog) {
+  const usable = (catalog ?? []).filter(m => m?.type === 'language' && m.model_eligibility?.status === 'eligible'
+    && (m.tags ?? []).includes('tool-use') && !String(m.id).startsWith('anthropic/')
+    && !/-(batch|image|exp|ultrafast|omni|audio|tts|realtime)(-|$)|vision-exp/.test(String(m.id)));
+  const rank = id => { const i = PREFERRED.findIndex(re => re.test(id)); return i < 0 ? PREFERRED.length : i; };
+  const price = m => Number(m.pricing?.input ?? 0) + Number(m.pricing?.output ?? 0);
+  return usable.sort((a, b) => rank(a.id) - rank(b.id) || price(a) - price(b) || String(a.id).localeCompare(String(b.id))).map(m => m.id).slice(0, 6);
+}
+
+async function eligibleModels(client) {
+  if (Date.now() - discovered.at < 1800000) return discovered.models;
+  try {
+    const response = await fetch(`${String(client.baseURL).replace(/\/$/, '')}/v1/models?include_availability`,
+      { headers: { Authorization: `Bearer ${client.apiKey}` }, signal: AbortSignal.timeout(8000) });
+    const body = response.ok ? await response.json() : null;
+    discovered = { at: Date.now(), models: rankEligible(body?.data) };
+    if (!response.ok) console.error('Assistant: model list failed', response.status);
+  } catch (error) {
+    console.error('Assistant: model list failed', error.message);
+    discovered = { at: Date.now() - 1500000, models: [] };
+  }
+  return discovered.models;
+}
+
+function requestFor(model, request) {
+  const { output_config: outputConfig, system, ...rest } = request;
+  if (model.startsWith('anthropic/')) return { ...rest, system, model, ...(NO_EFFORT.has(model) ? {} : { output_config: outputConfig }) };
+  // Other providers get plain Messages fields: one system string, no Anthropic-only options.
+  return { ...rest, model, max_tokens: Math.min(rest.max_tokens, 8000), system: system.map(block => block.text).join('\n\n') };
+}
 
 async function createOnGateway(client, request) {
-  if (gatewayChoice.index && Date.now() - gatewayChoice.since > 1800000) gatewayChoice = { index: 0, since: 0 };
-  for (let index = gatewayChoice.index; index < GATEWAY_MODELS.length; index++) {
-    const model = GATEWAY_MODELS[index];
-    const { output_config: outputConfig, ...rest } = request;
-    try {
-      const response = await client.messages.create({ ...rest, model, ...(NO_EFFORT.has(model) ? {} : { output_config: outputConfig }) });
-      if (index !== gatewayChoice.index) {
-        console.warn(`Assistant: gateway refused ${GATEWAY_MODELS[gatewayChoice.index]}; using ${model}.`);
-        gatewayChoice = { index, since: Date.now() };
+  if (gatewayChoice.model && Date.now() - gatewayChoice.since > 1800000) gatewayChoice = { model: null, since: 0 };
+  const tried = new Set();
+  let lastError;
+  const attempt = async model => {
+    tried.add(model);
+    const response = await client.messages.create(requestFor(model, request));
+    if (model !== gatewayChoice.model && model !== GATEWAY_MODELS[0]) console.warn(`Assistant: using ${model} on the AI Gateway.`);
+    gatewayChoice = model === GATEWAY_MODELS[0] ? { model: null, since: 0 } : { model, since: gatewayChoice.model === model ? gatewayChoice.since : Date.now() };
+    return response;
+  };
+  const queue = gatewayChoice.model ? [gatewayChoice.model] : [...GATEWAY_MODELS];
+  for (let round = 0; round < 3; round++) {
+    for (const model of queue) {
+      if (tried.has(model)) continue;
+      try { return await attempt(model); } catch (error) {
+        if (!modelRefused(error)) throw error;
+        lastError = error;
       }
-      return response;
-    } catch (error) {
-      if (!modelRefused(error) || index === GATEWAY_MODELS.length - 1) throw error;
     }
+    if (round === 0) queue.splice(0, queue.length, ...GATEWAY_MODELS);
+    else if (round === 1) queue.splice(0, queue.length, ...await eligibleModels(client));
   }
-  throw new Error('No gateway model available.');
+  throw lastError ?? new Error('No gateway model available.');
 }
 
 async function connection(env = process.env) {
