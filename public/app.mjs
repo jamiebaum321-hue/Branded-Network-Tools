@@ -253,13 +253,14 @@ async function render({ focus = false } = {}) {
       html = contractsPage(await api('/api/contracts'));
     } else if (path === '/admin') {
       if (user.role !== 'admin') throw new RequestError(403, { error: 'Ask an admin for access.' });
-      const tab = ['audit','import','mcp'].includes(query.get('tab')) ? query.get('tab') : 'accounts';
+      const tab = ['audit','import','mcp','assistant'].includes(query.get('tab')) ? query.get('tab') : 'accounts';
       const ctxPromise = getContext();
       let data;
       if (tab === 'audit') {
         const [page, accounts] = await Promise.all([api(queryPath('/api/admin/audit', query)), api('/api/admin/accounts')]);
         data = { ...page, users: accounts.items };
-      } else data = tab === 'import' ? {} : await api(tab === 'mcp' ? '/api/admin/job-tokens' : '/api/admin/accounts');
+      } else if (tab === 'assistant') data = await api('/api/admin/assistant');
+      else data = tab === 'import' ? {} : await api(tab === 'mcp' ? '/api/admin/job-tokens' : '/api/admin/accounts');
       const ctx = await ctxPromise;
       if (current !== revision) return;
       context = ctx;

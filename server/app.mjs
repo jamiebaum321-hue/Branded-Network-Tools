@@ -8,7 +8,7 @@ import { clientDetail, copyFormLink, createClient, getSubmission, listClients, l
   revokeFormLinks, saveIntake, submitIntake, updateClient, deleteClient, updateNextStep } from './clients.mjs';
 import { contracts, followUps } from './accountwork.mjs';
 import { createRecord, deleteRecord, openIssues, updateRecord } from './records.mjs';
-import { askAssistant, assistantConfigured } from './assistant.mjs';
+import { askAssistant, assistantConfigured, assistantStatus, dailyAssistantCheck } from './assistant.mjs';
 import { addActivity, createApproval, decideApproval, listActivityLog, listApprovals, markReviewed, pendingCount, reviewCount } from './approvals.mjs';
 import { acknowledgeToday, metrics, today } from './dashboard.mjs';
 import { alerts, seeAlerts } from './events.mjs';
@@ -93,7 +93,9 @@ export function createHandler(store, config) {
   route('GET', '/api/cron/cleanup', async ({ req }) => {
     if (!config.cronSecret || req.headers.authorization !== `Bearer ${config.cronSecret}`) throw new AppError(401, 'Cron authorization required.');
     await cleanExpired(store);
-    return { ok: true };
+    // The daily run also checks the Ask assistant; a failure leaves a note in Approvals, never fails the cron.
+    const assistant = await dailyAssistantCheck(store).catch(error => ({ ok: false, error: error.message }));
+    return { ok: true, assistant: { ok: assistant.ok } };
   }, options);
   route('POST', '/api/session', async ({ res, data, ip, session }) => {
     const auth = await signIn(store, data, ip, session);
@@ -220,6 +222,7 @@ export function createHandler(store, config) {
     return { submission: await submitIntake(store, ids[0], data, config.linkSecret) };
   }, options);
 
+  route('GET', '/api/admin/assistant', ({ actor }) => assistantStatus(actor));
   route('GET', '/api/admin/accounts', async ({ actor }) => ({ items: await listAccounts(store, actor) }));
   route('POST', '/api/admin/accounts', ({ actor, data }) => inviteAccount(store, actor, data));
   route('PATCH', `/api/admin/accounts/${ident}`, async ({ actor, ids, data }) => ({ user: await changeAccount(store, actor, ids[0], data) }));

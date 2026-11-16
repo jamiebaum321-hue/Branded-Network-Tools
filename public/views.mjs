@@ -608,7 +608,17 @@ export function alertRows(data, zone) {
     <div class="row-main"><strong>${h(row.title)}</strong><small>${h(row.client_name)} · ${h(timeLabel(row.occurred_at, zone))}</small></div>${row.seen_at ? '' : badge('New', 'blue')}${navArrow()}</a>`).join('') : emptyState('You’re caught up.');
 }
 
-const adminSections = [['accounts', 'Accounts', 'team'], ['audit', 'Audit log', 'history'], ['import', 'Import JSON', 'upload'], ['mcp', 'MCP access', 'lock']];
+const adminSections = [['accounts', 'Accounts', 'team'], ['assistant', 'Assistant', 'reply'], ['audit', 'Audit log', 'history'], ['import', 'Import JSON', 'upload'], ['mcp', 'MCP access', 'lock']];
+
+function assistantStatusPanel(data, zone) {
+  const state = data.ok ? (data.claude ? badge('Working', 'green', 'check') : badge('Working on the free allowance', 'green', 'check')) : badge('Can’t reach the AI', 'red', 'close');
+  const detail = data.ok
+    ? `<p>Ask is answering with <strong>${h(data.model_label || data.model)}</strong>${data.claude ? '.' : ' because Claude needs paid AI Gateway credit. Answers use your tracker data either way.'}</p>`
+    : `<p>${h(data.error || 'The AI provider didn’t answer.')}</p><p class="muted">Ask still works without AI: it searches the tracker and links to matching clients and intros. To restore full answers, check the balance in Vercel → Branded team → AI Gateway and top up if the free allowance is used up, or add ANTHROPIC_API_KEY in the project settings.</p>`;
+  return `<section class="panel stack"><div class="section-head">${sectionLabel('Ask assistant', 'reply', data.ok ? 'green' : 'amber')}${btn('Run check again', { action: 'reload', glyph: 'history' })}</div>
+    <div class="chips">${state}</div>${detail}
+    <p class="muted small">Checked ${h(timeLabel(data.checked_at, zone))}. This check also runs every morning; if Ask can’t reach its AI, a note appears in <a class="text-link" href="/approvals">Approvals</a>.</p></section>`;
+}
 const roleOptions = [{ id: 'member', name: 'Member' }, { id: 'admin', name: 'Admin' }];
 
 function accountList(rows) {
@@ -665,6 +675,7 @@ export function adminPage(tab, data, context, query, zone, preview) {
     <section class="panel flush"><div id="audit-list">${data.items.length ? auditRows(data.items, zone) : emptyState('No matching audit events.')}</div>${pageMore('more-audit', data.next)}</section>`;
   else if (tab === 'import') content = `<div class="stack"><section class="panel stack"><div><h2>Seed existing records</h2><p class="muted">Preview a version 1 JSON export, review its counts, then apply it.</p></div>
     ${subjectForm('preview-import', '', `<label class="field"><span>JSON export</span><input type="file" name="file" accept=".json,application/json" required></label><div>${btn('Preview import', { kind: 'primary', type: 'submit', glyph: 'upload' })}</div>`)}</section>${importPreview(preview)}</div>`;
+  else if (tab === 'assistant') content = assistantStatusPanel(data, zone);
   else if (tab === 'mcp') content = `<div class="stack"><section class="panel stack"><div class="section-head">${sectionLabel('Claude job credentials', 'lock')}${btn('Create credential', { action: 'new-job', kind: 'primary', glyph: 'plus' })}</div>
     <p class="muted wrap">Endpoint · <code>${h(location.origin)}/mcp</code></p></section><div class="panel flush">${tokenList(data.items, context, zone)}</div></div>`;
   else content = `<div class="stack"><div class="section-head">${sectionLabel('Team accounts', 'team')}${btn('Invite user', { action: 'invite-account', glyph: 'plus', kind: 'primary' })}</div>${accountList(data.items)}</div>`;

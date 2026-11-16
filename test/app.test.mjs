@@ -559,6 +559,11 @@ test('assistant: not configured, tool loop over scoped data, links and rate limi
     let body = ''; for await (const chunk of req) body += chunk;
     const payload = JSON.parse(body);
     requests.push({ headers: req.headers, payload });
+    if (process.env.FAKE_FREE_TIER === 'down') {
+      res.writeHead(402, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ type: 'error', error: { type: 'insufficient_funds', message: 'Insufficient funds. Add credits to continue.' } }));
+      return;
+    }
     if (process.env.FAKE_FREE_TIER && (payload.model === 'anthropic/claude-opus-5.5' || process.env.FAKE_FREE_TIER === 'all' && payload.model.startsWith('anthropic/'))) {
       res.writeHead(403, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ type: 'error', error: { type: 'permission_error', message: 'Free tier users do not have access to this model. Upgrade to paid credits for unrestricted access.' } }));
@@ -611,6 +616,27 @@ test('assistant: not configured, tool loop over scoped data, links and rate limi
   const other = requests.at(-1).payload;
   assert.equal(typeof other.system, 'string');
   assert.equal(other.output_config, undefined);
+  // The admin status check runs the same route and reports which model answered.
+  const status = await f.admin('/api/admin/assistant');
+  assert.deepEqual([status.ok, status.model, status.claude], [true, 'google/gemini-9.0-flash', false]);
+  // No credit at all: Ask still answers, without AI, by searching the tracker and linking to matches.
+  process.env.FAKE_FREE_TIER = 'down';
+  const offline = await f.admin('/api/assistant', { messages: [{ role: 'user', content: 'Where are we with Hang and White Castle?' }] });
+  assert.equal(offline.offline, true);
+  assert.match(offline.answer, /AI isn’t available/);
+  assert.ok(offline.answer.includes(`[Hang](/clients/${hang.id})`));
+  assert.match(offline.answer, /\[Jamie Example, White Castle\]\(\/pipeline\/cards\//);
+  assert.equal((await f.admin('/api/admin/assistant')).ok, false);
+  // The daily cron notices and leaves one note per day in Approvals for admins.
+  f.config.cronSecret = 'cron-test-secret';
+  for (let i = 0; i < 2; i++) {
+    const cron = await f.check('/api/cron/cleanup', { headers: { Authorization: 'Bearer cron-test-secret' } });
+    assert.equal(cron.result.assistant.ok, false);
+  }
+  const notes = (await f.admin('/api/approvals')).items.filter(a => a.trigger === 'assistant-check');
+  assert.equal(notes.length, 1);
+  assert.match(notes[0].why, /Insufficient funds/);
+  process.env.FAKE_FREE_TIER = 'all';
   const toolResult = JSON.parse(requests[1].payload.messages.at(-1).content[0].content);
   assert.equal(toolResult.clients[0].link, `/clients/${hang.id}`);
   assert.deepEqual(toolResult.intros, []);

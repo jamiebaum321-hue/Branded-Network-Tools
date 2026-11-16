@@ -1,9 +1,9 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { AppError, clientScope, decode, requireHuman } from './store.mjs';
+import { AppError, clientScope, decode, requireAdmin, requireHuman, system } from './store.mjs';
 import { list, object, choice, str, validate } from './validation.mjs';
 import { presentClient } from './clients.mjs';
 import { followUps, contracts } from './accountwork.mjs';
-import { listActivityLog, listApprovals } from './approvals.mjs';
+import { insertApproval, listActivityLog, listApprovals } from './approvals.mjs';
 import { openIssues } from './records.mjs';
 
 const MODEL = 'claude-opus-5-5';
@@ -144,6 +144,7 @@ const NO_EFFORT = new Set(['anthropic/claude-haiku-4.5']);
 const PREFERRED = [/^google\/gemini-[\d.]+-flash(?!-lite|-image)/, /^openai\/gpt-[\d.]+-mini/, /^google\/gemini-[\d.]+-flash-lite/,
   /^deepseek\/deepseek-v[\d.]+/, /^openai\/gpt-[\d.]+-nano/, /^alibaba\/qwen/, /^meta\/llama/, /^mistral\//, /^xai\/grok-[\d.]+-(fast|mini)/];
 let gatewayChoice = { model: null, since: 0 };
+let lastModel = null;
 let discovered = { at: 0, models: [] };
 const errorText = error => String(error?.error?.error?.message ?? error?.error?.message ?? error?.message ?? '');
 const modelRefused = error => error instanceof Anthropic.APIError && [400, 403, 404].includes(error.status)
@@ -187,6 +188,7 @@ async function createOnGateway(client, request) {
   const attempt = async model => {
     tried.add(model);
     const response = await client.messages.create(requestFor(model, request));
+    lastModel = model;
     if (model !== gatewayChoice.model && model !== GATEWAY_MODELS[0]) console.warn(`Assistant: using ${model} on the AI Gateway.`);
     gatewayChoice = model === GATEWAY_MODELS[0] ? { model: null, since: 0 } : { model, since: gatewayChoice.model === model ? gatewayChoice.since : Date.now() };
     return response;
@@ -219,6 +221,93 @@ async function connection(env = process.env) {
   return { client: new Anthropic({ apiKey, baseURL: env.AI_GATEWAY_BASE_URL || GATEWAY_URL }), gateway: true, model: `anthropic/${MODEL.replace(/^claude-opus-(\d+)-(\d+)$/, 'claude-opus-$1.$2')}` };
 }
 
+// ---- Keeping the assistant working ----
+
+let lastHealth = null;
+const providerReason = (error, gateway) => {
+  const detail = String(error?.error?.error?.message ?? error?.error?.message ?? error?.message ?? '').replace(/\s+/g, ' ').trim().slice(0, 300);
+  return `${gateway ? 'Vercel AI Gateway' : 'The Anthropic API'} ${error?.status ? `returned ${error.status}` : 'could not be reached'}${detail ? `: ${detail}` : ''}`;
+};
+export const modelLabel = model => {
+  if (!model) return '';
+  const name = String(model).replace(/^[\w-]+\//, '');
+  const pretty = name.replace(/-/g, ' ').replace(/\b(gpt|ai)\b/gi, m => m.toUpperCase()).replace(/\b[a-z]/g, c => c.toUpperCase());
+  return pretty;
+};
+const isClaude = model => /^(anthropic\/)?claude/.test(String(model ?? ''));
+
+// Ask the provider for a one-word reply through the same route real questions take.
+export async function checkAssistant(env = process.env) {
+  const checkedAt = new Date().toISOString();
+  if (!assistantConfigured(env)) return (lastHealth = { ok: false, model: null, claude: false, error: 'No AI connection is configured (no ANTHROPIC_API_KEY and not running on Vercel).', checked_at: checkedAt });
+  try {
+    const link = await connection(env);
+    const request = { model: link.model, max_tokens: 50, output_config: { effort: 'low' },
+      system: [{ type: 'text', text: 'Reply with the single word OK.' }], messages: [{ role: 'user', content: 'Health check' }] };
+    let model = link.model;
+    if (link.gateway) { lastModel = null; await createOnGateway(link.client, request); model = lastModel ?? link.model; }
+    else await link.client.messages.create(request);
+    lastHealth = { ok: true, model, claude: isClaude(model), error: null, checked_at: checkedAt };
+  } catch (error) {
+    lastHealth = { ok: false, model: null, claude: false, checked_at: checkedAt,
+      error: error instanceof Anthropic.APIError || error instanceof Anthropic.APIConnectionError ? providerReason(error, !env.ANTHROPIC_API_KEY) : `Check failed: ${error.message}` };
+  }
+  return lastHealth;
+}
+
+export async function assistantStatus(actor, { run = true } = {}) {
+  requireAdmin(actor);
+  const health = run || !lastHealth ? await checkAssistant() : lastHealth;
+  return { ...health, model_label: modelLabel(health.model) };
+}
+
+// Daily: if the assistant can't answer, leave a note in Approvals for admins (one per day).
+export async function dailyAssistantCheck(store) {
+  const health = await checkAssistant();
+  if (health.ok) return health;
+  const day = health.checked_at.slice(0, 10);
+  await store.tx(() => insertApproval(store, system, { dedupe_key: `assistant-down-${day}`, kind: 'note', trigger: 'assistant-check',
+    title: 'The Ask assistant can’t reach its AI', source: 'Daily assistant check',
+    why: `${health.error}\n\nUntil this is fixed, Ask still answers by searching the tracker without AI. To fix it: check the balance in Vercel → Branded team → AI Gateway (top up if the free allowance is used up), or add ANTHROPIC_API_KEY in the project settings. Admin → Assistant runs this check again.`,
+    payload: {} }));
+  return health;
+}
+
+const STOP_WORDS = new Set(('the a an and or of to for in on at with about where what whats which who when how is are was were be been do does did '
+  + 'we our us me my i you your it its this that these those there their them they any all some anything everything tell show give find '
+  + 'list need needs please can could would should status update latest going with from into have has had not week today now').split(' '));
+const pageHints = [
+  [/contract|renew|expir|term|agreement|sca/i, '/contracts', 'Contracts'],
+  [/follow|overdue|quiet|attention|due|next step|stale/i, '/followups', 'Follow-ups'],
+  [/approv|draft|email/i, '/approvals', 'Approvals'],
+  [/activity|log|happened|recent/i, '/activity', 'Activity'],
+  [/intro|pipeline|contact|partner|lead/i, '/pipeline', 'Pipeline'],
+  [/prospect/i, '/prospects', 'Prospects'],
+  [/client|account/i, '/clients', 'Clients'],
+];
+
+// No-AI answer: look up names from the question and point to the right pages.
+export async function offlineAnswer(store, actor, config, question) {
+  const text = String(question ?? '').slice(0, 500);
+  const words = [...new Set(text.toLowerCase().match(/[a-z0-9&'’.-]{3,}/g) ?? [])].map(w => w.replace(/['’]s$|[.'’]+$/g, '')).filter(w => w.length >= 3 && !STOP_WORDS.has(w));
+  const clients = new Map();
+  const intros = new Map();
+  for (const word of words.slice(0, 8)) {
+    const found = await runTool(store, actor, config, 'search', { query: word });
+    // Whole words only, so "Hang" doesn't pull in "P.F. Chang's".
+    const whole = new RegExp(`(^|[^a-z0-9])${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i');
+    for (const row of found.clients ?? []) if (whole.test(row.name)) clients.set(row.id, row);
+    for (const row of found.intros ?? []) if (whole.test(row.company) || whole.test(row.person ?? '')) intros.set(row.id, row);
+  }
+  const pages = pageHints.filter(([pattern]) => pattern.test(text)).map(([, path, label]) => `[${label}](${path})`);
+  const lines = ['**The AI isn’t available right now**, so here’s what I found by searching the tracker:'];
+  if (clients.size) lines.push(...[...clients.values()].slice(0, 6).map(c => `- [${c.name}](${c.link})${c.deal_status ? ` – ${c.deal_status}` : ''}`));
+  if (intros.size) lines.push(...[...intros.values()].slice(0, 8).map(i => `- [${i.person ? `${i.person}, ${i.company}` : i.company}](${i.link}) – ${i.client_name}${i.intro_status ? ` · ${i.intro_status}` : ''}`));
+  if (!clients.size && !intros.size) lines.push('- No client or intro names matched your question.');
+  lines.push(`\n${pages.length ? `Open ${pages.slice(0, 3).join(', ')} for the full list.` : 'Try a client or company name, or open [Follow-ups](/followups) or [Clients](/clients).'}`);
+  return lines.join('\n');
+}
+
 export async function askAssistant(store, actor, config, input) {
   requireHuman(actor);
   if (!assistantConfigured()) throw new AppError(503, 'The assistant isn’t set up yet. An admin needs to add ANTHROPIC_API_KEY in Vercel.');
@@ -227,7 +316,8 @@ export async function askAssistant(store, actor, config, input) {
   let link;
   try { link = await connection(); } catch (error) {
     console.error('Assistant connection failed:', error.message);
-    throw new AppError(503, 'The assistant couldn\u2019t connect to Claude. Check that the project\u2019s Vercel AI Gateway is enabled.');
+    lastHealth = { ok: false, model: null, claude: false, error: `Couldn’t connect to the AI Gateway: ${error.message}`, checked_at: new Date().toISOString() };
+    return { answer: await offlineAnswer(store, actor, config, data.messages.at(-1).content), offline: true };
   }
   const messages = data.messages.map(m => ({ role: m.role, content: m.content }));
   const context = `The person asking is ${actor.name} (${actor.role}). Today is ${new Date().toISOString().slice(0, 10)}.`;
@@ -240,18 +330,13 @@ export async function askAssistant(store, actor, config, input) {
       response = link.gateway ? await createOnGateway(link.client, request)
         : await link.client.beta.messages.create({ ...request, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' });
     } catch (error) {
-      if (error instanceof Anthropic.RateLimitError) throw new AppError(429, 'The assistant is busy. Try again in a minute.');
-      if (error instanceof Anthropic.APIError && [401, 402, 403].includes(error.status)) {
-        // The provider's own explanation (no secrets) tells an admin exactly what to fix, e.g. a missing card or no credit.
-        const reason = String(error.error?.error?.message ?? error.error?.message ?? error.message ?? '').replace(/\s+/g, ' ').slice(0, 400);
-        console.error('Assistant access error:', error.status, JSON.stringify(error.error ?? {}).slice(0, 1000));
-        throw new AppError(503, `${link.gateway ? 'Vercel AI Gateway' : 'The Anthropic API'} refused the request: ${reason || `HTTP ${error.status}`}`);
-      }
-      if (error instanceof Anthropic.APIError) {
-        console.error('Assistant API error:', error.status, JSON.stringify(error.error ?? {}).slice(0, 1000));
-        throw new AppError(502, 'The assistant could not answer. Try again.');
-      }
-      throw error;
+      // Whatever went wrong with the AI provider (no credit, a refused model, an outage, a timeout),
+      // still answer: search the tracker without AI and link to what matches.
+      if (!(error instanceof Anthropic.APIError || error instanceof Anthropic.APIConnectionError)) throw error;
+      const reason = providerReason(error, link.gateway);
+      console.error('Assistant provider error:', error.status ?? 'connection', JSON.stringify(error.error ?? {}).slice(0, 1000));
+      lastHealth = { ok: false, model: null, claude: false, error: reason, checked_at: new Date().toISOString() };
+      return { answer: await offlineAnswer(store, actor, config, data.messages.at(-1).content), offline: true };
     }
     if (response.stop_reason === 'refusal') return { answer: 'I can’t help with that request.' };
     const text = response.content.filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
