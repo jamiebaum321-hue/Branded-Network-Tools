@@ -45,11 +45,11 @@ function greeting(name, zone) {
   return `Good ${part}${first ? `, ${first}` : ''}.`;
 }
 
-// Inline "Ask Claude" box on Today; it hands the question to the Ask panel.
-const todayAsk = () => `<form class="today-ask" role="search" aria-label="Ask Claude">
+// Inline "Ask anything" box on Today; it hands the question to the Ask panel.
+const todayAsk = () => `<form class="today-ask" role="search" aria-label="Ask anything">
   <span class="today-ask-icon" aria-hidden="true">${icon('reply')}</span>
-  <label class="visually-hidden" for="today-ask-input">Ask Claude anything</label>
-  <input id="today-ask-input" name="question" type="text" maxlength="2000" autocomplete="off" placeholder="Ask Claude anything – a client, an intro, a contract, a follow-up…">
+  <label class="visually-hidden" for="today-ask-input">Ask anything</label>
+  <input id="today-ask-input" name="question" type="text" maxlength="2000" autocomplete="off" placeholder="Ask anything – a client, an intro, a contract, a follow-up…">
   <button type="submit" class="button primary" aria-label="Ask">${icon('arrow')}</button></form>
   <div class="today-ask-chips">${['What needs my attention this week?', 'Which contracts end in the next 60 days?', 'Which intros have gone quiet?']
     .map(text => `<button type="button" class="ask-chip" data-ask-today="${h(text)}">${h(text)}</button>`).join('')}</div>`;

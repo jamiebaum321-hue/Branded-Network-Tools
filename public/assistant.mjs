@@ -69,7 +69,7 @@ export function mountAssistant(api) {
   panel.hidden = true;
   panel.setAttribute('role', 'dialog');
   panel.setAttribute('aria-label', 'Ask the assistant');
-  panel.innerHTML = `<header class="ask-head"><div><strong>Ask the tracker</strong><small>Answers come from your Branded Network records.</small></div>
+  panel.innerHTML = `<header class="ask-head"><div><strong>Ask the tracker</strong><small>Answers come from your Branded Solutions records.</small></div>
     <div class="ask-head-actions"><button type="button" class="icon-button" data-ask-clear title="New conversation" aria-label="New conversation">${icon('history')}</button>
     <button type="button" class="icon-button" data-ask-close aria-label="Close">${icon('close')}</button></div></header>
     <div class="ask-messages" aria-live="polite"></div>
