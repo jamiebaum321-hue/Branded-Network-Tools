@@ -35,8 +35,12 @@ export const addSuggestionSchema = object({ client_id: str(80), company: str(180
 
 const cardFrom = `FROM cards p JOIN clients c ON c.id=p.client_id JOIN users u ON u.id=p.owner_id
   LEFT JOIN followups f ON f.card_id=p.id AND f.status='pending'`;
+// Any logged contact counts as a touch: emails either way, notes and the introduction itself.
+const lastTouch = `(SELECT max(a.occurred_at) FROM activity a WHERE a.card_id=p.id AND a.kind IN ('sent','reply','note','introduction'))`;
+// Most recently touched first, so live conversations sit at the top of each column.
+const cardOrder = `${lastTouch} DESC NULLS LAST,p.updated_at DESC,p.id`;
 const cardSelect = `p.*,c.name AS client_name,u.name AS owner_name,f.due_at,f.id AS followup_id,
-  (SELECT max(a.occurred_at) FROM activity a WHERE a.card_id=p.id AND a.kind='sent') AS last_touch,
+  ${lastTouch} AS last_touch,
   coalesce((SELECT d.status FROM drafts d WHERE d.card_id=p.id AND d.followup_id=f.id LIMIT 1),
     (SELECT d.status FROM drafts d WHERE d.card_id=p.id AND d.status IN ('awaiting_review','needs_review','reviewed')
       ORDER BY d.updated_at DESC,d.id LIMIT 1)) AS draft_status`;
@@ -69,20 +73,27 @@ export async function listCards(store, actor, input) {
   const limit = input.limit ?? 40;
   const offset = input.offset ?? 0;
   const rows = await store.all(`SELECT ${cardSelect} ${cardFrom} WHERE ${where}
-    ORDER BY p.updated_at DESC,p.id LIMIT ? OFFSET ?`, ...params, limit + 1, offset);
+    ORDER BY ${cardOrder} LIMIT ? OFFSET ?`, ...params, limit + 1, offset);
   return { items: rows.slice(0, limit), next_offset: rows.length > limit ? offset + limit : null };
 }
 
 export async function board(store, actor, input) {
   const [where, params] = filtersFor(actor, input, { withStage: false });
   const rows = await store.all(`WITH listed AS (
-    SELECT ${cardSelect},row_number() OVER(PARTITION BY p.stage ORDER BY p.updated_at DESC,p.id) AS rn,
+    SELECT ${cardSelect},row_number() OVER(PARTITION BY p.stage ORDER BY ${cardOrder}) AS rn,
       count(*) OVER(PARTITION BY p.stage) AS total ${cardFrom} WHERE ${where}
     ) SELECT * FROM listed WHERE rn<=30 ORDER BY stage,rn`, ...params);
   return stages.map(stage => {
     const selected = rows.filter(row => row.stage === stage);
     return { stage, total: selected[0]?.total ?? 0, items: selected.map(({ total, rn, ...row }) => row) };
   });
+}
+
+// Open and total cards per client, for the client switcher above the board. Ignores the client filter itself.
+export async function boardClients(store, actor, input) {
+  const [where, params] = filtersFor(actor, { ...input, client_id: '' }, { withStage: false });
+  return store.all(`SELECT p.client_id AS id,c.name,count(*)::int AS total,count(*) FILTER (WHERE p.stage<>'closed')::int AS open
+    ${cardFrom} WHERE ${where} GROUP BY p.client_id,c.name ORDER BY count(*) FILTER (WHERE p.stage<>'closed') DESC,c.name`, ...params);
 }
 
 export async function cardDetail(store, actor, cardId, activityId) {

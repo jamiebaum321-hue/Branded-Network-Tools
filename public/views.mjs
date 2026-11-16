@@ -81,22 +81,41 @@ function filters(kind, query, context, expanded = Boolean(query.size)) {
 
 export function boardCard(row, zone) {
   const due = row.due_at && new Date(row.due_at) <= new Date();
+  // Only show what the card actually has; empty fields stay off the card.
+  const meta = [
+    row.introduced_by && `${icon('user')}<span>Intro by ${h(row.introduced_by)}</span>`,
+    row.last_touch && `${icon('history')}<span>Touched ${h(formatDate(row.last_touch, zone))}</span>`,
+    `${icon('clock')}<span>${h(stageDuration(row.entered_at))} in stage</span>`,
+  ].filter(Boolean);
   return `<a class="board-card" href="/pipeline/cards/${pathId(row.id)}" draggable="true" data-card="${h(row.id)}" data-version="${row.version}" data-stage="${h(row.stage)}">
     <div class="board-identity"><span class="contact-avatar ${stages[row.stage].tone}" aria-hidden="true">${h(initials(row.person || row.company))}</span>${identity(row)}
     <span class="drag-grip">${icon('grip')}</span></div>
-    <div class="chips">${due ? badge('Follow-up due', 'amber', 'clock') : row.suggestion_id ? badge('Approved lead', 'green', 'check') : row.outcome ? badge(row.outcome, 'green', 'check') : ''}
-    ${row.intro_status && row.intro_status !== row.outcome ? badge(row.intro_status, 'neutral') : ''}</div>
-    <small class="muted">${h(row.client_name)}</small>
-    <dl><dt>${icon('user')}Intro by</dt><dd>${h(row.introduced_by || '—')}</dd><dt>${icon('history')}Last touch</dt><dd>${h(formatDate(row.last_touch, zone))}</dd>
-    <dt>${icon('flag')}Next step</dt><dd>${h(row.next_step || '—')}</dd><dt>${icon('clock')}In stage</dt><dd>${h(stageDuration(row.entered_at))}</dd>
-    ${row.due_at ? `<dt>${icon('today')}Follow-up</dt><dd>${h(formatDate(row.due_at, zone))}</dd>` : ''}</dl></a>`;
+    <div class="chips">${badge(row.client_name, 'neutral')}${due ? badge('Follow-up due', 'amber', 'clock') : row.suggestion_id ? badge('Approved lead', 'green', 'check') : row.outcome && row.outcome !== row.intro_status ? badge(row.outcome, 'green', 'check') : ''}
+    ${row.intro_status ? badge(row.intro_status, stages[row.stage].tone) : ''}</div>
+    ${row.next_step ? `<p class="board-next">${icon('flag')}<span>${h(row.next_step)}</span></p>` : ''}
+    ${row.due_at && !due ? `<p class="board-next">${icon('today')}<span>Follow-up ${h(formatDate(row.due_at, zone))}</span></p>` : ''}
+    <div class="board-meta">${meta.map(item => `<span>${item}</span>`).join('')}</div></a>`;
 }
 
-export function boardPage(groups, context, query, zone, currentStage) {
+function clientSwitcher(clients, query) {
+  if (!clients?.length || clients.length < 2 && !query.get('client_id')) return '';
+  const chosen = query.get('client_id') ?? '';
+  const hrefFor = clientId => {
+    const next = new URLSearchParams(query);
+    if (clientId) next.set('client_id', clientId); else next.delete('client_id');
+    return `/pipeline${next.size ? `?${next}` : ''}`;
+  };
+  const open = clients.reduce((sum, row) => sum + row.open, 0);
+  return `<nav class="client-switch" aria-label="Show one client">
+    <a href="${h(hrefFor(''))}" ${chosen ? '' : 'aria-current="true"'}>All clients<span>${open}</span></a>
+    ${clients.map(row => `<a href="${h(hrefFor(row.id))}" ${row.id === chosen ? 'aria-current="true"' : ''} title="${row.open} open of ${row.total}">${h(row.name)}<span>${row.open}</span></a>`).join('')}</nav>`;
+}
+
+export function boardPage(groups, context, query, zone, currentStage, clients = []) {
   const addContact = btn('Add contact', { kind: 'primary', glyph: 'plus', action: 'add-card' });
   const emptyBoard = !context.clients.length || (!query.size && groups.every(group => group.total === 0));
   const top = `${heading('Partner pipeline', 'Track outreach and introductions.', emptyBoard ? '' : addContact, { art: 'signal-pipeline', signature: true })}
-    ${toolbar('board', filters('board', query, context))}`;
+    ${clientSwitcher(clients, query)}${toolbar('board', filters('board', query, context))}`;
   if (emptyBoard) {
     return `${top}<section class="panel flush">${context.clients.length
       ? illustratedState('pipeline-board', 'No contacts yet', 'Add a contact to start tracking introductions.', addContact)

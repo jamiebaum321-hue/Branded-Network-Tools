@@ -620,3 +620,20 @@ dialog::backdrop { background: linear-gradient(145deg, #2319486b, #17152d69); ba
 .brand .brand-wordmark { width: auto; height: 30px; border-radius: 0; box-shadow: none; }
 .brand-lockup small { margin-top: 3px; }
 @media (max-width: 480px) { .brand .brand-mark { width: 34px; height: 34px; } .brand .brand-wordmark { height: 26px; } }
+
+/* Pipeline board: compact cards and a one-tap client switcher. */
+.board-card { gap: 7px; padding: 11px 12px; }
+.board-card .chips { gap: 5px; }
+.board-card .chips .badge { font-size: .7rem; padding: 2px 8px; }
+.board-next { display: flex; gap: 6px; align-items: flex-start; margin: 0; font-size: .8rem; line-height: 1.4; color: var(--ink, inherit); }
+.board-next .icon { width: 13px; height: 13px; margin-top: 2px; flex: none; color: var(--muted); }
+.board-next span { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.board-meta { display: flex; flex-wrap: wrap; gap: 3px 12px; font-size: .74rem; color: var(--muted); }
+.board-meta > span { display: inline-flex; gap: 4px; align-items: center; }
+.board-meta .icon { width: 12px; height: 12px; }
+.client-switch { display: flex; gap: 6px; overflow-x: auto; padding: 2px 1px 6px; margin-bottom: 4px; scrollbar-width: thin; }
+.client-switch a { display: inline-flex; align-items: center; gap: 7px; flex: none; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); background: white; color: inherit; text-decoration: none; font-size: .84rem; font-weight: 600; }
+.client-switch a span { font-size: .72rem; font-weight: 700; color: var(--muted); }
+.client-switch a:hover { border-color: var(--iris-line, var(--primary)); }
+.client-switch a[aria-current="true"] { background: var(--primary); border-color: var(--primary); color: white; }
+.client-switch a[aria-current="true"] span { color: #ffffffd0; }

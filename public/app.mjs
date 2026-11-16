@@ -203,7 +203,7 @@ async function render({ focus = false } = {}) {
       const [data, ctx] = await Promise.all([api(queryPath('/api/board', query)), getContext()]);
       if (current !== revision) return;
       context = ctx;
-      html = boardPage(data.groups, ctx, query, zone, stage);
+      html = boardPage(data.groups, ctx, query, zone, stage, data.clients);
     } else if (path === '/pipeline/metrics') {
       const [data, ctx] = await Promise.all([api(queryPath('/api/metrics', query)), getContext()]);
       html = metricsPage(data, ctx, query, zone);

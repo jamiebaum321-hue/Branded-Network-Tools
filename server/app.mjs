@@ -13,7 +13,7 @@ import { addActivity, createApproval, decideApproval, listActivityLog, listAppro
 import { acknowledgeToday, metrics, today } from './dashboard.mjs';
 import { alerts, seeAlerts } from './events.mjs';
 import { metadata, mcpHttp } from './mcp.mjs';
-import { attachMailId, board, cardDetail, completeFollowup, createCard, decideSuggestion, listActivity, listCards,
+import { attachMailId, board, boardClients, cardDetail, completeFollowup, createCard, decideSuggestion, listActivity, listCards,
   listSuggestions, manualActivity, refreshDue, reviewDraft, staffDraft, stages, suggestionFor, updateCard } from './pipeline.mjs';
 import { submissionPdf } from './pdf.mjs';
 import { importSeed } from './seed.mjs';
@@ -122,7 +122,10 @@ export function createHandler(store, config) {
   route('GET', '/api/alerts', async ({ actor }) => { await refreshDue(store); return alerts(store, actor); });
   route('POST', '/api/alerts/seen', ({ actor, data }) => seeAlerts(store, actor,
     validate(object({ ids: list(str(80), 30) }), data).ids));
-  route('GET', '/api/board', async ({ actor, url }) => ({ groups: await board(store, actor, boardQuery(url)) }));
+  route('GET', '/api/board', async ({ actor, url }) => {
+    const input = boardQuery(url);
+    return { groups: await board(store, actor, input), clients: await boardClients(store, actor, input) };
+  });
   route('GET', '/api/cards', ({ actor, url }) => listCards(store, actor, boardQuery(url)));
   route('POST', '/api/cards', async ({ actor, data }) => ({ card: await createCard(store, actor, data) }));
   route('GET', `/api/cards/${ident}`, async ({ actor, ids, url }) => {
