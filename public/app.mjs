@@ -198,7 +198,7 @@ async function render({ focus = false } = {}) {
     else if (path === '/' || path === '/signin' || path === '/today') {
       if (path !== '/today') history.replaceState(null, '', '/today');
       todayResult = await api('/api/today');
-      html = todayPage(todayResult, zone);
+      html = todayPage(todayResult, zone, user);
     } else if (path === '/pipeline') {
       const [data, ctx] = await Promise.all([api(queryPath('/api/board', query)), getContext()]);
       if (current !== revision) return;

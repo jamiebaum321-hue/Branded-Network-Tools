@@ -11,6 +11,22 @@ const suggestions = [
 let conversation = [];
 let busy = false;
 let mounted = false;
+let openWith = null;
+
+document.addEventListener('submit', event => {
+  const form = event.target.closest('form.today-ask');
+  if (!form) return;
+  event.preventDefault();
+  const input = form.querySelector('input');
+  const question = input.value.trim();
+  if (!question || !openWith) return;
+  input.value = '';
+  openWith(question);
+});
+document.addEventListener('click', event => {
+  const chip = event.target.closest('[data-ask-today]');
+  if (chip && openWith) openWith(chip.dataset.askToday);
+});
 
 // Minimal, safe Markdown: escape everything, then allow **bold**, bullet lines and links to pages inside the app.
 function render(text) {
@@ -87,6 +103,8 @@ export function mountAssistant(api) {
   }
 
   fab.addEventListener('click', open);
+  // The Today page has its own ask box; questions from it open this panel and are answered here.
+  openWith = question => { open(); ask(question); };
   panel.querySelector('[data-ask-close]').addEventListener('click', close);
   panel.querySelector('[data-ask-clear]').addEventListener('click', () => { if (!busy) { conversation = []; paint(); input.focus(); } });
   panel.addEventListener('keydown', event => { if (event.key === 'Escape') close(); });
@@ -111,4 +129,5 @@ export function unmountAssistant() {
   document.querySelectorAll('.ask-fab, .ask-panel').forEach(el => el.remove());
   conversation = [];
   mounted = false;
+  openWith = null;
 }

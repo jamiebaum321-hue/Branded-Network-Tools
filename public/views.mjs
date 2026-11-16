@@ -37,7 +37,24 @@ export function setupPage(info, key) {
     ${btn('Activate account', { kind: 'primary', type: 'submit', glyph: 'lock' })}`)}</div></div>`;
 }
 
-export function todayPage(data, zone) {
+// "Good morning, Daniel." in the workspace time zone.
+function greeting(name, zone) {
+  const hour = Number(new Intl.DateTimeFormat('en-US', { timeZone: zone, hour: 'numeric', hourCycle: 'h23' }).format(new Date()));
+  const part = hour < 5 ? 'evening' : hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening';
+  const first = String(name ?? '').trim().split(/\s+/)[0];
+  return `Good ${part}${first ? `, ${first}` : ''}.`;
+}
+
+// Inline "Ask Claude" box on Today; it hands the question to the Ask panel.
+const todayAsk = () => `<form class="today-ask" role="search" aria-label="Ask Claude">
+  <span class="today-ask-icon" aria-hidden="true">${icon('reply')}</span>
+  <label class="visually-hidden" for="today-ask-input">Ask Claude anything</label>
+  <input id="today-ask-input" name="question" type="text" maxlength="2000" autocomplete="off" placeholder="Ask Claude anything – a client, an intro, a contract, a follow-up…">
+  <button type="submit" class="button primary" aria-label="Ask">${icon('arrow')}</button></form>
+  <div class="today-ask-chips">${['What needs my attention this week?', 'Which contracts end in the next 60 days?', 'Which intros have gone quiet?']
+    .map(text => `<button type="button" class="ask-chip" data-ask-today="${h(text)}">${h(text)}</button>`).join('')}</div>`;
+
+export function todayPage(data, zone, user) {
   const today = formatDate(new Date(), zone, { year: 'numeric' });
   const dueLabel = row => formatDate(row.at, zone, { year: 'numeric' }) === today
     ? badge('Due today', 'amber', 'clock') : badge(`Overdue · ${formatDate(row.at, zone)}`, 'red', 'clock');
@@ -47,7 +64,7 @@ export function todayPage(data, zone) {
     { key: 'replies', title: 'Replies since last visit', glyph: 'reply', tone: 'green', empty: 'No new replies since your last visit.', label: row => badge(timeLabel(row.at, zone), 'green') },
     { key: 'leads', title: 'Suggested leads', glyph: 'shortlist', tone: 'blue', empty: 'No leads are waiting for your review.', label: row => badge(row.extra, 'blue') },
   ];
-  const title = heading('Today', 'Follow-ups, drafts, and replies in one place.', '', { art: 'signal-today', date: currentDate(zone), signature: true });
+  const title = heading(greeting(user?.name, zone), 'Here’s where Branded Solutions stands today.', todayAsk(), { art: 'signal-today', date: currentDate(zone), signature: true });
   if (!data.more_replies && panels.every(panel => !data[panel.key].length)) {
     return `${title}<section class="panel flush">${illustratedState('today-caught-up', 'You’re caught up',
       'There are no follow-ups, drafts, replies, or leads waiting for you.', link('/pipeline', 'Open pipeline', 'arrow'))}</section>`;
