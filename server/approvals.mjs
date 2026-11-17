@@ -1,7 +1,8 @@
 import { AppError, audit, clientFor, clientScope, decode, encode, id, iso, requireAdmin, requireHuman } from './store.mjs';
+import { introStatuses } from '../public/account-fields.mjs';
 import { bool, choice, day, json, list, nullable, object, str, validate } from './validation.mjs';
 
-export const approvalKinds = ['email_draft', 'record_update', 'note'];
+export const approvalKinds = ['email_draft', 'record_update', 'note', 'intro_update'];
 export const approvalStatuses = ['pending', 'approved', 'rejected', 'done'];
 
 // Tracker field names a record_update may carry, and the client columns they map to.
@@ -61,7 +62,10 @@ export async function listApprovals(store, actor, { status = 'pending', client_i
   ...args, ...statuses, client_id ?? null, client_id ?? null);
   const items = rows.map(present);
   // Show the current value beside each proposed record change so the approver sees what will be replaced.
-  for (const item of items) if (item.kind === 'record_update') item.changes = await describeChanges(store, item);
+  for (const item of items) {
+    if (item.kind === 'record_update') item.changes = await describeChanges(store, item);
+    if (item.kind === 'intro_update') item.changes = await describeIntroChanges(store, item);
+  }
   return { items };
 }
 
@@ -82,8 +86,9 @@ async function describeChanges(store, approval) {
 
 async function applyRecordUpdate(store, actor, approval) {
   if (!approval.client_id) throw new AppError(409, 'This proposal is not linked to a client, so there is nothing to update.');
+  // Proposals from the old tracker name the record they target; only company records can change here.
   const path = String(approval.payload?.path ?? '');
-  if (!path.startsWith('companies/')) throw new AppError(409, 'Only client next steps can be updated from an approval. Make this change by hand.');
+  if (path && !path.startsWith('companies/')) throw new AppError(409, 'Only client next steps can be updated from an approval. Make this change by hand.');
   const changes = await describeChanges(store, approval);
   const unsupported = changes.filter(change => !change.supported).map(change => change.field);
   if (unsupported.length || !changes.length) throw new AppError(409, `These fields can't be changed from an approval: ${unsupported.join(', ') || 'none listed'}. Make this change by hand.`);
@@ -97,6 +102,38 @@ async function applyRecordUpdate(store, actor, approval) {
   return `Applied: ${changes.map(change => `${change.label} → ${values[change.column] ?? 'cleared'}`).join('; ')}`;
 }
 
+// ---- Intro updates: status and next step on one pipeline card ----
+const introFieldLabels = { intro_status: 'intro status', next_step: 'next step' };
+
+async function introCard(store, approval) {
+  const cardId = String(approval.payload?.card_id ?? '');
+  return cardId ? store.get('SELECT * FROM cards WHERE id=? AND client_id=?', cardId, approval.client_id) : null;
+}
+
+async function describeIntroChanges(store, approval) {
+  const card = await introCard(store, approval);
+  const fields = approval.payload?.fields ?? {};
+  return Object.entries(fields).map(([field, value]) => ({ field, column: introFieldLabels[field] ? field : null,
+    label: `${card?.company ?? 'Intro'}: ${introFieldLabels[field] ?? field}`, current: card?.[field] ?? '', proposed: value ?? '',
+    supported: Boolean(introFieldLabels[field]) && Boolean(card) }));
+}
+
+async function applyIntroUpdate(store, actor, approval) {
+  const card = await introCard(store, approval);
+  if (!card) throw new AppError(409, 'That intro is no longer on the pipeline. Make this change by hand.');
+  const fields = approval.payload?.fields ?? {};
+  const status = fields.intro_status === undefined ? card.intro_status : validate(choice('', ...Object.keys(introStatuses)), fields.intro_status, 'Intro status');
+  const nextStep = fields.next_step === undefined ? card.next_step : validate(str(300, 0), fields.next_step, 'Next step');
+  const stage = introStatuses[status] ?? card.stage;
+  const now = iso();
+  await store.run(`UPDATE cards SET intro_status=?,next_step=?,stage=?,outcome=CASE WHEN ?='closed' THEN ? ELSE outcome END,
+    entered_at=CASE WHEN stage=? THEN entered_at ELSE ? END,updated_at=?,version=version+1 WHERE id=?`,
+  status, nextStep, stage, stage, status, stage, now, now, card.id);
+  await audit(store, actor, 'card.updated_from_approval', 'card', card.id, card.client_id, { approval_id: approval.id,
+    changes: [['intro_status', card.intro_status, status], ['next_step', card.next_step, nextStep]].filter(([, a, b]) => a !== b) });
+  return `Applied to ${card.company}: ${[status !== card.intro_status && `status → ${status}`, nextStep !== card.next_step && 'next step updated'].filter(Boolean).join('; ') || 'no change needed'}`;
+}
+
 export async function decideApproval(store, actor, approvalId, input) {
   requireHuman(actor);
   const data = validate(object({ decision: choice('approve', 'reject'), note: str(2000, 0) }, ['decision']), input);
@@ -106,6 +143,7 @@ export async function decideApproval(store, actor, approvalId, input) {
     let status = data.decision === 'reject' ? 'rejected' : approval.kind === 'note' ? 'done' : 'approved';
     let result = data.note ?? '';
     if (data.decision === 'approve' && approval.kind === 'record_update') result = [await applyRecordUpdate(store, actor, approval), result].filter(Boolean).join('. ');
+    if (data.decision === 'approve' && approval.kind === 'intro_update') result = [await applyIntroUpdate(store, actor, approval), result].filter(Boolean).join('. ');
     if (data.decision === 'approve' && approval.kind === 'email_draft') result = result || 'Approved. Opened as a draft in the approver’s mail app; nothing was sent by the app.';
     await store.run('UPDATE approvals SET status=?,result=?,decided_by=?,decided_at=? WHERE id=?', status, result, actor.name, iso(), approvalId);
     await audit(store, actor, `approval.${data.decision === 'reject' ? 'rejected' : 'approved'}`, 'approval', approvalId, approval.client_id, { kind: approval.kind });

@@ -680,7 +680,7 @@ export function adminPage(tab, data, context, query, zone, preview) {
 }
 
 // ---- Approvals queue ----
-const approvalKindLabel = { email_draft: 'Email draft', record_update: 'Record update', note: 'Note' };
+const approvalKindLabel = { email_draft: 'Email draft', record_update: 'Record update', note: 'Note', intro_update: 'Intro update' };
 const approvalStatusTone = { pending: 'amber', approved: 'green', done: 'green', rejected: 'neutral' };
 const triggerLabel = value => String(value || '').replace(/-/g, ' ').replace(/^\w/, c => c.toUpperCase());
 
@@ -690,7 +690,7 @@ function approvalCard(row, zone) {
       <dl class="summary-grid"><div><dt>To</dt><dd>${h((p.to ?? []).join(', ') || '—')}</dd></div><div><dt>Cc</dt><dd>${h((p.cc ?? []).join(', ') || '—')}</dd></div>
       <div class="wide"><dt>Subject</dt><dd>${h(p.subject ?? '')}</dd></div></dl>
       <p class="multiline draft-body">${h(p.body ?? '')}</p></div>` : '';
-  const changes = row.kind === 'record_update' ? `<table class="data-table"><thead><tr><th scope="col">Field</th><th scope="col">Now</th><th scope="col">Proposed</th></tr></thead>
+  const changes = ['record_update', 'intro_update'].includes(row.kind) ? `<table class="data-table"><thead><tr><th scope="col">Field</th><th scope="col">Now</th><th scope="col">Proposed</th></tr></thead>
       <tbody>${(row.changes ?? []).map(c => `<tr><td>${h(c.label)}${c.supported ? '' : ' <small class="muted">(change by hand)</small>'}</td><td>${h(c.current || '—')}</td><td>${h(c.proposed || '—')}</td></tr>`).join('')}</tbody></table>` : '';
   const pending = row.status === 'pending';
   const actions = pending ? `<div class="actions">
@@ -703,6 +703,7 @@ function approvalCard(row, zone) {
       <small>${h([row.client_name ?? 'Whole workspace', triggerLabel(row.trigger), formatDate(row.created_at, zone)].filter(Boolean).join(' · '))}</small></div>
       <div class="chips">${badge(approvalKindLabel[row.kind] ?? row.kind, 'violet')}${badge(row.status === 'done' ? 'Done' : row.status[0].toUpperCase() + row.status.slice(1), approvalStatusTone[row.status])}</div></div>
     ${row.why ? `<p class="multiline">${h(row.why)}</p>` : ''}${draft}${changes}
+    ${row.kind === 'intro_update' && row.payload?.card_id ? `<p>${link(`/pipeline/cards/${pathId(row.payload.card_id)}`, 'Open the intro', 'arrow', 'small')}</p>` : ''}
     ${row.source ? `<p class="muted small">Source: ${h(row.source)}</p>` : ''}${actions}</article>`;
 }
 

@@ -305,7 +305,7 @@ test('persistent store keeps accounts across restarts and only runs migrations o
   const reopened = await openStore(databaseUrl, { schema });
   try {
     assert.equal((await reopened.get('SELECT email FROM users')).email, adminEmail);
-    assert.deepEqual((await reopened.all('SELECT version FROM schema_migrations')).map(row => row.version), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    assert.deepEqual((await reopened.all('SELECT version FROM schema_migrations')).map(row => row.version), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
   } finally { await reopened.close(); }
 });
 
@@ -826,4 +826,27 @@ test('the team tour shows once per login and is remembered', async t => {
   await f.admin('/api/tour-done', {});
   assert.equal((await f.admin('/api/session')).user.tour_done, true);
   await f.check('/api/tour-done', { method: 'POST', body: {} }, 401);
+});
+
+test('approvals can update an intro, and next-step proposals without a tracker path apply', async t => {
+  const f = await fixture(t);
+  await f.admin('/api/admin/import/apply', { version: 1, namespace: 'solutions-tracker',
+    clients: [{ id: 'hang', name: 'Hang', stage: 'current', next_step: 'Old' }],
+    partners: [{ id: 'hang-001', client_id: 'hang', company: 'White Castle', stage: 'reached_out', intro_status: 'Awaiting Response', next_step: 'Await reply' }],
+    approvals: [
+      { id: 'scan-intro', client_id: 'hang', kind: 'intro_update', status: 'pending', title: 'White Castle meeting booked',
+        payload: { partner_id: 'hang-001', fields: { intro_status: 'Meeting Scheduled', next_step: 'Demo Nov 24' } } },
+      { id: 'scan-step', client_id: 'hang', kind: 'record_update', status: 'pending', title: 'New next step',
+        payload: { fields: { nxt: 'Nov 19 check-in', nxt_due: '2026-11-19' } } }] });
+  const pending = (await f.admin('/api/approvals')).items;
+  const intro = pending.find(row => row.kind === 'intro_update');
+  assert.deepEqual(intro.changes.map(c => [c.label, c.current, c.proposed, c.supported]),
+    [['White Castle: intro status', 'Awaiting Response', 'Meeting Scheduled', true], ['White Castle: next step', 'Await reply', 'Demo Nov 24', true]]);
+  await f.admin(`/api/approvals/${intro.id}/decision`, { decision: 'approve' });
+  const card = (await f.admin('/api/board')).groups.flatMap(g => g.items).find(c => c.company === 'White Castle');
+  assert.deepEqual([card.stage, card.intro_status, card.next_step], ['in_conversation', 'Meeting Scheduled', 'Demo Nov 24']);
+  const step = pending.find(row => row.kind === 'record_update');
+  await f.admin(`/api/approvals/${step.id}/decision`, { decision: 'approve' });
+  const hang = (await f.admin('/api/clients?q=Hang')).items[0];
+  assert.deepEqual([hang.next_step, hang.next_due], ['Nov 19 check-in', '2026-11-19']);
 });

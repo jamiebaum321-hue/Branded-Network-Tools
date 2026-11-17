@@ -71,9 +71,16 @@ async function writeRow(store, actor, namespace, kind, row) {
     }
     if (kind === 'activity_log') return (await insertActivity(store, actor, { client_id: clientId, company_label: row.company_label,
       at: time(row.at), text: row.text, source: row.source, review: row.review, message_ids: row.message_ids }, time(row.at))).id;
+    // An imported intro update names its card by tracker ID; point it at the card on this site.
+    let payload = row.payload ?? {};
+    if (row.kind === 'intro_update') {
+      const cardId = payload.partner_id ? await imported(store, namespace, 'partners', String(payload.partner_id)) : null;
+      if (!cardId) throw new AppError(400, `Intro reference ${payload.partner_id ?? '(missing)'} was not found in this import namespace.`);
+      payload = { ...payload, card_id: cardId };
+    }
     const decided = row.status !== 'pending';
     return (await insertApproval(store, actor, { dedupe_key: `${namespace}:${row.id}`, client_id: clientId, kind: row.kind, trigger: row.trigger,
-      title: row.title, why: row.why, source: row.source, payload: row.payload ?? {} }, { status: row.status,
+      title: row.title, why: row.why, source: row.source, payload }, { status: row.status,
       createdAt: row.created_at ? time(row.created_at) : undefined,
       decision: decided ? { result: row.result ?? '', decided_by: row.decided_by || null, decided_at: row.decided_at ? time(row.decided_at) : null } : {} })).id;
   }
