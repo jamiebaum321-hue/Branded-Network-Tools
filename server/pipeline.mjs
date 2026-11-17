@@ -1,6 +1,6 @@
 import { AppError, actorName, audit, canAccessClient, clientFor, clientScope, decode, digest, encode, id, iso, requireHuman, system } from './store.mjs';
 import { emit } from './events.mjs';
-import { choice, email, int, list, nullable, num, object, str, time, validate } from './validation.mjs';
+import { bool, choice, email, int, list, nullable, num, object, str, time, validate } from './validation.mjs';
 import { introStatuses } from '../public/account-fields.mjs';
 
 export const stages = ['to_contact', 'reached_out', 'in_conversation', 'closed'];
@@ -515,5 +515,17 @@ export async function decideSuggestion(store, actor, suggestionId, decision) {
     { suggestionId: row.id, reason: row.reason });
     await audit(store, actor, `suggestion.${decision}`, 'suggestion', row.id, row.client_id);
     return await suggestionFor(store, actor, suggestionId);
+  });
+}
+
+// Hide one intro or target from the client portal (or show it again).
+export async function setPortalHidden(store, actor, cardId, input) {
+  requireHuman(actor);
+  const { hidden } = validate(object({ hidden: bool }), input);
+  return store.tx(async () => {
+    const card = await cardFor(store, actor, cardId);
+    await store.run('UPDATE cards SET portal_hidden=? WHERE id=?', hidden ? 1 : 0, cardId);
+    await audit(store, actor, hidden ? 'portal.card_hidden' : 'portal.card_shown', 'card', cardId, card.client_id);
+    return cardFor(store, actor, cardId);
   });
 }

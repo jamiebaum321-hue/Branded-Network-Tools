@@ -305,7 +305,7 @@ test('persistent store keeps accounts across restarts and only runs migrations o
   const reopened = await openStore(databaseUrl, { schema });
   try {
     assert.equal((await reopened.get('SELECT email FROM users')).email, adminEmail);
-    assert.deepEqual((await reopened.all('SELECT version FROM schema_migrations')).map(row => row.version), [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    assert.deepEqual((await reopened.all('SELECT version FROM schema_migrations')).map(row => row.version), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   } finally { await reopened.close(); }
 });
 
@@ -731,6 +731,42 @@ test('client portal logins: one company, portal only, refused by every internal 
   const preview = await f.admin(`/api/admin/clients/${arc.id}/portal-preview`);
   for (const key of ['client', 'agreement', 'summary', 'intros', 'targets']) assert.deepEqual(preview[key], home[key]);
   await client(`/api/admin/clients/${arc.id}/portal-preview`, undefined, 'GET', 403);
+
+  // Phase 3: nothing extra is shared until someone turns it on.
+  assert.equal(home.next_step, null);
+  assert.deepEqual(home.updates, []);
+  await f.admin(`/api/clients/${arc.id}/next-step`, { next_step: 'Book RFDC 1:1s with Mike', next_due: '2026-11-20' });
+  await f.admin('/api/activity-log', { client_id: arc.id, text: 'Internal: Dave annoyed about the logo', source: 'Email' });
+  const shared = (await f.admin('/api/activity-log', { client_id: arc.id, text: 'Intro to Slim Chickens made; meeting set for RFDC.', shared: true })).entry;
+  await f.admin('/api/activity-log', { text: 'Workspace note', shared: true }, 'POST', 400);
+  await f.admin(`/api/clients/${arc.id}/share-next-step`, { shared: true });
+  const slim = (await f.admin('/api/board')).groups.flatMap(g => g.items).find(c => c.company === 'Cafe Rio');
+  await f.admin(`/api/cards/${slim.id}/portal`, { hidden: true });
+  let view = await client('/api/portal');
+  assert.deepEqual(view.next_step, { text: 'Book RFDC 1:1s with Mike', due: '2026-11-20' });
+  assert.deepEqual(view.updates.map(row => row.text), ['Intro to Slim Chickens made; meeting set for RFDC.']);
+  assert.deepEqual(Object.keys(view.updates[0]).sort(), ['on', 'text']);
+  assert.ok(!view.intros.some(row => row.company === 'Cafe Rio'));
+  assert.doesNotMatch(JSON.stringify(view), /annoyed|Workspace note|Email/);
+  // Editing the next step's wording switches sharing off until someone shares it again.
+  await f.admin(`/api/clients/${arc.id}`, { next_step: 'Internal: chase Mike for the logo fix' }, 'PATCH');
+  view = await client('/api/portal');
+  assert.equal(view.next_step, null);
+  assert.equal((await f.admin(`/api/clients/${arc.id}`)).client.next_step_shared, 0);
+  // Unsharing an update and un-hiding an intro.
+  await f.admin(`/api/activity-log/${shared.id}/share`, { shared: false });
+  await f.admin(`/api/cards/${slim.id}/portal`, { hidden: false });
+  view = await client('/api/portal');
+  assert.deepEqual(view.updates, []);
+  assert.ok(view.intros.some(row => row.company === 'Cafe Rio'));
+  // Clients can't flip any switch; sharing needs access to that client.
+  await client(`/api/clients/${arc.id}/share-next-step`, { shared: true }, 'POST', 403);
+  await client(`/api/activity-log/${shared.id}/share`, { shared: true }, 'POST', 403);
+  await client(`/api/cards/${slim.id}/portal`, { hidden: false }, 'POST', 403);
+  const { setup: memberSetup } = await f.admin('/api/admin/accounts', { name: 'Outsider', email: 'outsider@example.test', role: 'member' });
+  const outsider = f.as((await f.activate(memberSetup.path)).cookie);
+  await outsider(`/api/clients/${arc.id}/share-next-step`, { shared: true }, 'POST', 404);
+  await outsider(`/api/activity-log/${shared.id}/share`, { shared: true }, 'POST', 404);
   assert.equal((await client('/api/session')).user.role, 'client');
 
   // Deny by default: every internal route refuses the client login.

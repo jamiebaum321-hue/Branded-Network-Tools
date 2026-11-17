@@ -1,7 +1,7 @@
 import { createHmac } from 'node:crypto';
 import { sections } from '../public/intake-fields.mjs';
 import { AppError, audit, canAccessClient, clientFor, clientScope, decode, digest, encode, id, iso, requireAdmin, requireHuman } from './store.mjs';
-import { choice, day, email, int, list, nullable, num, object, str, validate } from './validation.mjs';
+import { bool, choice, day, email, int, list, nullable, num, object, str, validate } from './validation.mjs';
 import { agreementStatuses, clientStages, dealStatuses } from '../public/account-fields.mjs';
 import { emit } from './events.mjs';
 import { listCards } from './pipeline.mjs';
@@ -111,6 +111,20 @@ export async function updateNextStep(store, actor, clientId, input) {
       await store.run(`UPDATE clients SET updated_at=?${fields.map(key => `,${key}=?`).join('')} WHERE id=?`, iso(), ...fields.map(key => data[key]), clientId);
       await audit(store, actor, 'client.next_step', 'client', clientId, clientId, { fields });
     }
+    return presentClient(await clientFor(store, actor, clientId));
+  });
+}
+
+// Share (or stop sharing) the client's current next step with their portal. Editing the wording later
+// switches sharing off again (a database trigger), so only reviewed text reaches the client.
+export async function shareNextStep(store, actor, clientId, input) {
+  requireHuman(actor);
+  const { shared } = validate(object({ shared: bool }), input);
+  return store.tx(async () => {
+    const client = await clientFor(store, actor, clientId);
+    if (shared && !String(client.next_step ?? '').trim()) throw new AppError(400, 'Write a next step before sharing it.');
+    await store.run('UPDATE clients SET next_step_shared=? WHERE id=?', shared ? 1 : 0, clientId);
+    await audit(store, actor, shared ? 'portal.next_step_shared' : 'portal.next_step_unshared', 'client', clientId, clientId);
     return presentClient(await clientFor(store, actor, clientId));
   });
 }

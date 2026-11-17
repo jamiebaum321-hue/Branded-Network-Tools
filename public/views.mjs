@@ -229,7 +229,10 @@ export function cardPage(data, zone, toStage, hash) {
       ${card.fit_reason ? `<div><h3>Why it fit</h3><p class="muted multiline">${h(card.fit_reason)}</p>
         ${card.suggestion_id ? link(`/pipeline/suggestions/${pathId(card.suggestion_id)}`, 'View lead evidence', 'arrow', 'small') : ''}</div>` : ''}
       ${card.branded_relationship ? `<div><h3>Branded relationship</h3><p class="muted multiline">${h(card.branded_relationship)}</p></div>` : ''}
-      ${card.followup_id ? `<div>${btn('Complete follow-up', { action: 'complete-followup', glyph: 'check', data: `data-card="${h(card.id)}" data-id="${h(card.followup_id)}"` })}</div>` : ''}</section>
+      ${card.followup_id ? `<div>${btn('Complete follow-up', { action: 'complete-followup', glyph: 'check', data: `data-card="${h(card.id)}" data-id="${h(card.followup_id)}"` })}</div>` : ''}
+      <div class="share-row">${card.portal_hidden ? badge('Hidden from the client portal', 'neutral', 'lock')
+        : card.stage === 'closed' && card.intro_status !== 'Won' ? badge('Not shown in the portal (closed)', 'neutral', 'lock') : badge('Shown in the client portal', 'blue', 'check')}
+        ${btn(card.portal_hidden ? 'Show in portal' : 'Hide from portal', { action: 'portal-hide', kind: 'quiet', data: `data-id="${h(card.id)}" data-hidden="${card.portal_hidden ? 'false' : 'true'}"` })}</div></section>
       ${cardEdit(data, toStage)}${cardDrafts(card, drafts, hash, zone)}</div>
       <section class="panel"><div class="section-head">${sectionLabel('Activity', 'history')}</div>${logForm(card, drafts)}
       <div id="activity-list">${history.items.length ? activityItems(history.items, zone) : emptyState('No activity recorded yet.')}</div>
@@ -387,6 +390,9 @@ function nextStepPanel(client) {
   return `<section class="panel stack"><div class="section-head">${sectionLabel('Next step', 'flag', 'amber')}
     ${due !== null ? badge(due < 0 ? `Overdue · ${dayLabel(client.next_due)}` : `Due ${dayLabel(client.next_due)}`, due < 0 ? 'red' : due <= 7 ? 'amber' : 'neutral', 'clock') : ''}</div>
     <p class="multiline">${h(client.next_step || 'No next step recorded.')}</p>${client.next_owner ? `<p class="muted small">Owner · ${h(client.next_owner)}</p>` : ''}
+    ${client.next_step ? `<div class="share-row">${client.next_step_shared ? badge('Shared with client', 'green', 'check') : badge('Internal only', 'neutral', 'lock')}
+      ${btn(client.next_step_shared ? 'Stop sharing' : 'Share with client', { action: 'share-next-step', kind: 'quiet', data: `data-id="${h(client.id)}" data-shared="${client.next_step_shared ? 'false' : 'true'}"` })}
+      ${client.next_step_shared ? '<span class="muted small">Editing the wording stops sharing until you share it again.</span>' : ''}</div>` : ''}
     ${client.latest ? client.latest.length > 360
       ? `<details><summary class="small">Latest · ${h(client.latest.slice(0, 140))}…</summary><p class="muted multiline">${h(client.latest)}</p></details>`
       : `<div><h3>Latest</h3><p class="muted multiline">${h(client.latest)}</p></div>` : ''}
@@ -409,7 +415,7 @@ function contactsPanel(client) {
 function introsPanel(client, intros) {
   const open = intros.filter(row => row.stage !== 'closed');
   const rows = (list) => list.map(row => `<a class="list-row" href="/pipeline/cards/${pathId(row.id)}"><div class="row-main"><strong>${h(row.company)}</strong>
-    <small>${h([row.person, row.intro_status || stages[row.stage]?.label, row.introduced_by ? `by ${row.introduced_by}` : ''].filter(Boolean).join(' · '))}</small></div>${stageBadge(row.stage)}${navArrow()}</a>`).join('');
+    <small>${h([row.person, row.intro_status || stages[row.stage]?.label, row.introduced_by ? `by ${row.introduced_by}` : ''].filter(Boolean).join(' · '))}</small></div>${row.portal_hidden ? badge('Hidden from portal', 'neutral', 'lock') : ''}${stageBadge(row.stage)}${navArrow()}</a>`).join('');
   const closed = intros.length - open.length;
   return `<section class="panel flush"><div class="panel-title"><span class="panel-icon blue">${icon('board')}</span><h2>Intros & targets</h2>${badge(open.length, 'blue')}</div>
     ${open.length ? rows(open.slice(0, 12)) : emptyState('No open intros or targets.')}
@@ -712,7 +718,8 @@ export function activityLogRows(items, zone) {
       <span class="muted small">${h(timeLabel(row.at, zone))}</span>${row.review ? badge('Needs review', 'amber', 'flag') : ''}</div>
     <p class="multiline">${h(row.text)}</p>
     <p class="muted small">Source: ${h(row.source || '—')}${row.reviewed_by ? ` · Reviewed by ${h(row.reviewed_by)}` : ''}</p>
-    ${row.review ? `<div>${btn('Mark reviewed', { action: 'review-log', kind: 'quiet', glyph: 'check', data: `data-id="${h(row.id)}"` })}</div>` : ''}</article>`).join('');
+    <div class="share-row">${row.review ? btn('Mark reviewed', { action: 'review-log', kind: 'quiet', glyph: 'check', data: `data-id="${h(row.id)}"` }) : ''}
+      ${row.client_id ? `${row.shared ? badge('Shared with client', 'green', 'check') : ''}${btn(row.shared ? 'Stop sharing' : 'Share with client', { action: 'share-update', kind: 'quiet', data: `data-id="${h(row.id)}" data-shared="${row.shared ? 'false' : 'true'}"` })}` : ''}</div></article>`).join('');
 }
 
 export function activityLogPage(data, context, query, zone) {
@@ -729,7 +736,8 @@ export function logActivityForm(context, clientId = '') {
   return subjectForm('log-activity', '', `${fieldset(`${select('Client', 'client_id', names(context.clients), clientId, context.user.role === 'admin' ? 'Whole workspace' : undefined)}
     <div class="wide">${field('What happened', 'text', '', { type: 'textarea', required: true, max: 4000 })}</div>
     <div class="wide">${field('Source', 'source', '', { max: 1000, placeholder: 'e.g. Email from Dave Lewis, Nov 12' })}</div>
-    <label class="check"><input type="checkbox" name="review">Needs review</label>`)}
+    <label class="check"><input type="checkbox" name="review">Needs review</label>
+    <label class="check"><input type="checkbox" name="shared">Share with the client in their portal</label>`)}
     <div class="actions">${btn('Save', { kind: 'primary', type: 'submit' })}</div>`);
 }
 
@@ -746,7 +754,7 @@ export function clientActivityPanel(client, log, approvals, zone) {
 const portalTone = { 'Meeting set': 'green', 'In discussion': 'violet', Introduced: 'blue', Won: 'green', 'Intro requested': 'amber', Planned: 'neutral' };
 
 export function portalPage(data) {
-  const { client, agreement, summary, intros, targets } = data;
+  const { client, agreement, summary, intros, targets, next_step: nextStep, updates = [] } = data;
   const term = agreement.start && agreement.end ? `${dayLabel(agreement.start)} – ${dayLabel(agreement.end)}` : agreement.end ? `Through ${dayLabel(agreement.end)}` : '';
   const facts = [
     agreement.status && ['Agreement', agreement.status],
@@ -770,6 +778,10 @@ export function portalPage(data) {
         <p class="muted small">Restaurant and hospitality groups Branded has introduced you to, and where each conversation stands.</p>
         ${introRows || emptyState('No introductions yet.')}</section>
       <div class="stack">
+        ${nextStep ? `<section class="panel stack"><div class="section-head">${sectionLabel('What’s next', 'flag', 'amber')}${nextStep.due ? badge(dayLabel(nextStep.due), 'amber', 'clock') : ''}</div>
+          <p class="multiline">${h(nextStep.text)}</p></section>` : ''}
+        ${updates.length ? `<section class="panel stack"><div class="section-head">${sectionLabel('Updates from Branded', 'history', 'violet')}</div>
+          ${updates.map(row => `<article class="portal-update"><span class="muted small">${h(dayLabel(row.on))}</span><p class="multiline">${h(row.text)}</p></article>`).join('')}</section>` : ''}
         <section class="panel stack"><div class="section-head">${sectionLabel('Your agreement', 'draft', 'violet')}</div>
           ${facts.length ? `<dl class="summary-grid">${facts.map(([key, value]) => `<div><dt>${h(key)}</dt><dd>${h(value)}</dd></div>`).join('')}</dl>` : emptyState('Agreement details will appear here.')}</section>
         <section class="panel stack"><div class="section-head">${sectionLabel('Brands we’re working on', 'leads', 'amber')}${badge(targets.length, 'amber')}</div>

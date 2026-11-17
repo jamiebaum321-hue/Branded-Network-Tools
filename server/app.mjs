@@ -5,16 +5,16 @@ import { AppError, audit, clientScope } from './store.mjs';
 import { auditPage, changeAccount, createJobToken, finishSetup, inviteAccount, listAccounts, listJobTokens, rateLimit,
   resetAccount, revokeJobToken, sessionUser, setupInfo, signIn, signOut } from './accounts.mjs';
 import { clientDetail, copyFormLink, createClient, getSubmission, listClients, listSubmissions, publicForm,
-  revokeFormLinks, saveIntake, submitIntake, updateClient, deleteClient, updateNextStep } from './clients.mjs';
+  revokeFormLinks, saveIntake, submitIntake, updateClient, deleteClient, updateNextStep, shareNextStep } from './clients.mjs';
 import { contracts, followUps } from './accountwork.mjs';
 import { createRecord, deleteRecord, openIssues, updateRecord } from './records.mjs';
 import { askAssistant, assistantConfigured, assistantStatus, dailyAssistantCheck } from './assistant.mjs';
-import { addActivity, createApproval, decideApproval, listActivityLog, listApprovals, markReviewed, pendingCount, reviewCount } from './approvals.mjs';
+import { addActivity, createApproval, decideApproval, listActivityLog, listApprovals, markReviewed, pendingCount, reviewCount, shareActivity } from './approvals.mjs';
 import { acknowledgeToday, metrics, today } from './dashboard.mjs';
 import { alerts, seeAlerts } from './events.mjs';
 import { metadata, mcpHttp } from './mcp.mjs';
 import { attachMailId, board, boardClients, cardDetail, completeFollowup, createCard, decideSuggestion, listActivity, listCards,
-  listSuggestions, manualActivity, refreshDue, reviewDraft, staffDraft, stages, suggestionFor, updateCard } from './pipeline.mjs';
+  listSuggestions, manualActivity, refreshDue, reviewDraft, staffDraft, stages, suggestionFor, updateCard, setPortalHidden } from './pipeline.mjs';
 import { submissionPdf } from './pdf.mjs';
 import { importSeed } from './seed.mjs';
 import { boundedInt, choice, int, list, object, str, validate } from './validation.mjs';
@@ -182,6 +182,9 @@ export function createHandler(store, config) {
     client_id: url.searchParams.get('client_id') || undefined, review: url.searchParams.get('review') === '1' ? 1 : undefined,
     before: url.searchParams.get('before') || undefined }));
   route('POST', '/api/activity-log', async ({ actor, data }) => ({ entry: await addActivity(store, actor, data) }));
+  route('POST', `/api/activity-log/${ident}/share`, async ({ actor, ids, data }) => ({ entry: await shareActivity(store, actor, ids[0], data) }));
+  route('POST', `/api/cards/${ident}/portal`, async ({ actor, ids, data }) => ({ card: await setPortalHidden(store, actor, ids[0], data) }));
+  route('POST', `/api/clients/${ident}/share-next-step`, async ({ actor, ids, data }) => ({ client: await shareNextStep(store, actor, ids[0], data) }));
   route('POST', `/api/activity-log/${ident}/reviewed`, async ({ actor, ids }) => ({ entry: await markReviewed(store, actor, ids[0]) }));
   route('GET', '/api/badges', async ({ actor }) => ({ approvals: await pendingCount(store, actor), review: await reviewCount(store, actor) }));
   route('GET', '/api/assistant', () => ({ configured: assistantConfigured() }));

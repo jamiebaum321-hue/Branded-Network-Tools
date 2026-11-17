@@ -435,7 +435,7 @@ const forms = {
   },
   async 'log-activity'(form, data) {
     await api('/api/activity-log', 'POST', { client_id: data.get('client_id') || undefined, text: data.get('text'),
-      source: data.get('source') || '', review: data.has('review') });
+      source: data.get('source') || '', review: data.has('review'), shared: data.has('shared') && Boolean(data.get('client_id')) });
     dialog.close(); notify('Update logged.'); await render();
   },
   async 'next-step'(form, data) {
@@ -682,6 +682,23 @@ const actions = {
     await render();
   },
   'copy-approval': button => clipboard(draftText(approvalCache.get(button.dataset.id)), 'Draft copied.'),
+  'share-next-step': async button => {
+    const sharing = button.dataset.shared === 'true';
+    if (sharing && !confirm('Share this next step with the client? They will see the wording exactly as written.')) return;
+    await api(`/api/clients/${pathId(button.dataset.id)}/share-next-step`, 'POST', { shared: sharing });
+    notify(sharing ? 'Next step shared with the client.' : 'Next step is internal again.'); await render();
+  },
+  'share-update': async button => {
+    const sharing = button.dataset.shared === 'true';
+    if (sharing && !confirm('Share this update with the client? They will see the text exactly as written.')) return;
+    await api(`/api/activity-log/${pathId(button.dataset.id)}/share`, 'POST', { shared: sharing });
+    notify(sharing ? 'Update shared with the client.' : 'Update is internal again.'); await render();
+  },
+  'portal-hide': async button => {
+    const hiding = button.dataset.hidden === 'true';
+    await api(`/api/cards/${pathId(button.dataset.id)}/portal`, 'POST', { hidden: hiding });
+    notify(hiding ? 'Hidden from the client portal.' : 'Shown in the client portal.'); await render();
+  },
   'review-log': async button => {
     await api(`/api/activity-log/${pathId(button.dataset.id)}/reviewed`, 'POST');
     notify('Marked reviewed.'); await render();

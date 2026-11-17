@@ -115,15 +115,15 @@ export async function decideApproval(store, actor, approvalId, input) {
 
 // ---- Activity log ----
 
-const activitySchema = object({ client_id: str(80), text: str(4000), source: str(1000, 0), review: bool, at: str(40) }, ['text']);
-const presentActivity = row => row && ({ ...row, message_ids: decode(row.message_ids), review: Boolean(row.review) });
+const activitySchema = object({ client_id: str(80), text: str(4000), source: str(1000, 0), review: bool, at: str(40), shared: bool }, ['text']);
+const presentActivity = row => row && ({ ...row, message_ids: decode(row.message_ids), review: Boolean(row.review), shared: Boolean(row.shared) });
 
 export async function insertActivity(store, actor, data, createdAt = iso()) {
   if (data.client_id) await clientFor(store, actor, data.client_id);
   const entryId = id();
-  await store.run(`INSERT INTO activity_log(id,client_id,company_label,at,text,source,review,message_ids,created_by,created_at)
-    VALUES(?,?,?,?,?,?,?,?,?,?)`, entryId, data.client_id ?? null, data.company_label ?? '', data.at ?? createdAt, data.text, data.source ?? '',
-  data.review ? 1 : 0, encode(data.message_ids ?? []), actor.name ?? 'System', createdAt);
+  await store.run(`INSERT INTO activity_log(id,client_id,company_label,at,text,source,review,message_ids,created_by,created_at,shared)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?)`, entryId, data.client_id ?? null, data.company_label ?? '', data.at ?? createdAt, data.text, data.source ?? '',
+  data.review ? 1 : 0, encode(data.message_ids ?? []), actor.name ?? 'System', createdAt, data.shared && data.client_id ? 1 : 0);
   return presentActivity(await store.get('SELECT * FROM activity_log WHERE id=?', entryId));
 }
 
@@ -131,6 +131,7 @@ export async function addActivity(store, actor, input) {
   requireHuman(actor);
   const data = validate(activitySchema, input);
   if (!data.client_id) requireAdmin(actor);
+  if (data.shared && !data.client_id) throw new AppError(400, 'Only updates about a client can be shared with that client.');
   if (data.at && !Number.isFinite(Date.parse(data.at))) throw new AppError(400, 'Enter a valid date and time.');
   return store.tx(async () => {
     const entry = await insertActivity(store, actor, { ...data, source: data.source || `Logged by ${actor.name}`, at: data.at ? new Date(data.at).toISOString() : undefined });
@@ -176,3 +177,17 @@ export const importedApprovalSchema = object({
 export const importedActivitySchema = object({
   id: str(250), client_id: str(250), company_label: str(300, 0), at: str(40), text: str(8000), source: str(2000, 0), review: bool, message_ids: list(str(1000), 200),
 }, ['id', 'at', 'text']);
+
+// Share (or stop sharing) one client update with that client's portal.
+export async function shareActivity(store, actor, entryId, input) {
+  requireHuman(actor);
+  const { shared } = validate(object({ shared: bool }), input);
+  return store.tx(async () => {
+    const row = await store.get('SELECT * FROM activity_log WHERE id=?', entryId);
+    if (!row?.client_id) throw new AppError(404, 'Only updates about a client can be shared.');
+    await clientFor(store, actor, row.client_id);
+    await store.run('UPDATE activity_log SET shared=? WHERE id=?', shared ? 1 : 0, entryId);
+    await audit(store, actor, shared ? 'portal.update_shared' : 'portal.update_unshared', 'activity_log', entryId, row.client_id);
+    return presentActivity(await store.get('SELECT * FROM activity_log WHERE id=?', entryId));
+  });
+}

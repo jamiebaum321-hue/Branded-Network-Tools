@@ -669,3 +669,7 @@ a.panel.stat:hover { border-color: var(--iris-line, var(--primary)); }
 .preview-note .icon { width: 17px; height: 17px; margin-top: 2px; flex: none; color: var(--primary); }
 .portal-foot { margin-top: 18px; }
 #portal-access .section-head .actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.share-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.portal-update { display: grid; gap: 3px; padding-block: 8px; border-top: 1px solid var(--line); }
+.portal-update:first-of-type { border-top: 0; }
+.portal-update p { margin: 0; }
