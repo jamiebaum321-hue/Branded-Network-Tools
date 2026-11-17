@@ -19,7 +19,7 @@ import { submissionPdf } from './pdf.mjs';
 import { importSeed } from './seed.mjs';
 import { boundedInt, choice, int, list, object, str, validate } from './validation.mjs';
 import { changePortalUser, cleanExpired, invitePortalUser, listPortalUsers, resetPortalUser } from './accounts.mjs';
-import { finishPortalTour, portalHome, portalPreview } from './portal.mjs';
+import { finishPortalTour, finishTour, portalHome, portalPreview } from './portal.mjs';
 import { assertWebOrigin, clientIp, empty, json, protect, readJson, readSession, sessionCookie } from './http.mjs';
 
 const assets = new Map(Object.entries({
@@ -202,6 +202,7 @@ export function createHandler(store, config) {
   route('POST', `/api/admin/clients/${ident}/portal-users/${ident}/setup`, async ({ actor, ids }) => ({ setup: await resetPortalUser(store, actor, ids[0], ids[1]) }));
   route('GET', '/api/portal', ({ actor }) => portalHome(store, actor), { portal: true });
   route('POST', '/api/portal/tour-done', ({ actor }) => finishPortalTour(store, actor), { portal: true });
+  route('POST', '/api/tour-done', ({ actor }) => finishTour(store, actor));
   route('GET', `/api/admin/clients/${ident}/portal-preview`, ({ actor, ids }) => portalPreview(store, actor, ids[0]));
   route('POST', `/api/clients/${ident}/form-link`, ({ actor, ids }) => copyFormLink(store, actor, ids[0], config.linkSecret));
   route('POST', `/api/clients/${ident}/form-link/revoke`, ({ actor, ids }) => revokeFormLinks(store, actor, ids[0]));

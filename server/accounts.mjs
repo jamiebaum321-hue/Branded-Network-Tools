@@ -11,7 +11,7 @@ const unusedHash = `${'0'.repeat(64)}.${'0'.repeat(64)}`;
 const fields = 'id,name,email,role,enabled,oauth_subject,onboarding_alerts,created_at,password_hash IS NOT NULL AS has_password';
 const userRow = (store, userId) => store.get(`SELECT ${fields} FROM users WHERE id=?`, userId);
 const principal = (user) => ({ kind: 'user', id: user.id, name: user.name, email: user.email, role: user.role,
-  ...(user.role === 'client' ? { portal_client_id: user.portal_client_id } : {}) });
+  ...(user.role === 'client' ? { portal_client_id: user.portal_client_id } : {}), tour_done: Boolean(user.tour_done) });
 
 export async function hashPassword(password) {
   if (typeof password !== 'string' || password.length < 12 || password.length > 256) {
@@ -122,7 +122,7 @@ export async function resetAccount(store, actor, userId) {
 }
 
 async function validSetup(store, value) {
-  const user = await store.get(`SELECT u.id,u.name,u.email,u.role,u.portal_client_id FROM setup_tokens t JOIN users u ON u.id=t.user_id
+  const user = await store.get(`SELECT u.id,u.name,u.email,u.role,u.portal_client_id,u.portal_tour_done_at IS NOT NULL AS tour_done FROM setup_tokens t JOIN users u ON u.id=t.user_id
     WHERE t.token_hash=? AND t.expires_at>? AND u.enabled=1`, digest(value), Date.now());
   if (!user) throw new AppError(410, 'This setup link has expired or already been used. Ask an admin for a new link.');
   return user;
@@ -161,10 +161,10 @@ export async function signIn(store, input, ip, currentSession) {
   const address = input.email.trim().toLowerCase();
   await rateLimit(store, `signin:ip:${ip}`, 100, 15 * 60 * 1000);
   await rateLimit(store, `signin:account:${address}`, 10, 15 * 60 * 1000);
-  const user = await store.get('SELECT id,name,email,role,portal_client_id,password_hash FROM users WHERE email=? AND enabled=1', address);
+  const user = await store.get('SELECT id,name,email,role,portal_client_id,portal_tour_done_at IS NOT NULL AS tour_done,password_hash FROM users WHERE email=? AND enabled=1', address);
   if (!await matchesPassword(input.password, user?.password_hash) || !user) throw new AppError(401, 'Email or password is incorrect.');
   return store.tx(async () => {
-    const current = await store.get('SELECT id,name,email,role,portal_client_id,password_hash FROM users WHERE id=? AND enabled=1', user.id);
+    const current = await store.get('SELECT id,name,email,role,portal_client_id,portal_tour_done_at IS NOT NULL AS tour_done,password_hash FROM users WHERE id=? AND enabled=1', user.id);
     if (!current || current.password_hash !== user.password_hash) throw new AppError(401, 'Email or password is incorrect.');
     if (currentSession) await store.run('DELETE FROM sessions WHERE token_hash=?', digest(currentSession));
     await store.run('DELETE FROM rate_limits WHERE key=?', digest(`signin:account:${address}`));
@@ -176,7 +176,7 @@ export async function signIn(store, input, ip, currentSession) {
 
 export async function sessionUser(store, value) {
   if (!value || !/^[a-zA-Z0-9_-]{43}$/.test(value)) return null;
-  const user = await store.get(`SELECT u.id,u.name,u.email,u.role,u.portal_client_id FROM sessions s JOIN users u ON u.id=s.user_id
+  const user = await store.get(`SELECT u.id,u.name,u.email,u.role,u.portal_client_id,u.portal_tour_done_at IS NOT NULL AS tour_done FROM sessions s JOIN users u ON u.id=s.user_id
     WHERE s.token_hash=? AND s.expires_at>? AND u.enabled=1`, digest(value), Date.now());
   return user ? principal(user) : null;
 }

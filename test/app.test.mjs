@@ -819,3 +819,11 @@ test('client portal logins: one company, portal only, refused by every internal 
   await f.admin(`/api/clients/${arc.id}`, {}, 'DELETE');
   await f.check('/api/portal', { cookie: again.cookie }, 401);
 });
+
+test('the team tour shows once per login and is remembered', async t => {
+  const f = await fixture(t);
+  assert.equal((await f.admin('/api/session')).user.tour_done, false);
+  await f.admin('/api/tour-done', {});
+  assert.equal((await f.admin('/api/session')).user.tour_done, true);
+  await f.check('/api/tour-done', { method: 'POST', body: {} }, 401);
+});

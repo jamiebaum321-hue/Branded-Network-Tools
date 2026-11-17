@@ -116,6 +116,32 @@ function suggestionQuery(query) {
   return result;
 }
 
+function startTeamTour() {
+  startTour({ team: true, user, onDone: () => api('/api/tour-done', 'POST', {}).catch(() => {}) });
+}
+
+function clientStageOnPage() {
+  return document.querySelector('[data-client-stage]')?.dataset.clientStage ?? '';
+}
+
+function updateSelection() {
+  const count = document.querySelectorAll('#client-list [data-pick]:checked').length;
+  const label = document.getElementById('select-count');
+  if (label) label.textContent = count ? `${count} selected` : 'Select the ones to delete.';
+}
+
+// In select mode a tap on a card ticks it instead of opening it.
+document.addEventListener('click', event => {
+  const card = event.target.closest('#client-list.selecting .client-card');
+  if (!card) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const box = card.parentElement.querySelector('[data-pick]');
+  box.checked = !box.checked;
+  updateSelection();
+}, true);
+document.addEventListener('change', event => { if (event.target.matches?.('#client-list [data-pick]')) updateSelection(); });
+
 function navigate(path, { replace = false } = {}) {
   const target = new URL(path, location.origin);
   if (target.origin !== location.origin) return;
@@ -185,6 +211,7 @@ async function render({ focus = false } = {}) {
   try {
     let html;
     let todayResult;
+    let teamTour = false;
     portalData = null;
     if (path.startsWith('/setup/')) {
       const key = path.split('/').at(-1);
@@ -207,6 +234,7 @@ async function render({ focus = false } = {}) {
     else if (path === '/' || path === '/signin' || path === '/today') {
       if (path !== '/today') history.replaceState(null, '', '/today');
       html = todayPage(await api('/api/followups'), zone, user);
+      teamTour = !user.tour_done;
     } else if (path === '/pipeline') {
       const [data, ctx] = await Promise.all([api(queryPath('/api/board', query)), getContext()]);
       if (current !== revision) return;
@@ -285,6 +313,8 @@ async function render({ focus = false } = {}) {
     }
     if (todayResult) todayAcknowledgement = api('/api/today/seen', 'POST', { reply_cursor: todayResult.reply_cursor }).catch(() => {});
     if (user && !publicRoute && user.role !== 'client') { refreshAlertDot(); refreshBadges(); mountAssistant(api); }
+    // A team member's first visit to Today opens the tour of the tracker; it's remembered on their account.
+    if (teamTour) { user.tour_done = true; startTeamTour(); }
   } catch (error) {
     if (current === revision) showError(error, focus);
   }
@@ -619,7 +649,12 @@ const actions = {
   alerts: showAlerts,
   'mark-alerts': async button => { await api('/api/alerts/seen', 'POST', { ids: button.dataset.ids.split(',') }); await showAlerts(); },
   account: () => showDialog('Account', `<div class="stack"><div><strong>${h(user.name)}</strong><p class="muted">${h(user.email)}</p></div>
-    <div>${btn('Sign out', { action: 'logout', glyph: 'logout' })}</div></div>`, { glyph: 'user' }),
+    <div class="actions">${btn('Take the tour', { action: user.role === 'client' ? 'portal-tour' : 'team-tour', glyph: 'today', kind: 'quiet' })}${btn('Sign out', { action: 'logout', glyph: 'logout' })}</div></div>`, { glyph: 'user' }),
+  'team-tour': async () => {
+    if (dialog.open) dialog.close();
+    if (location.pathname !== '/today') { navigate('/today'); await new Promise(resolve => setTimeout(resolve, 600)); }
+    startTeamTour();
+  },
   logout: async () => { stopTour(); await api('/api/session/logout', 'POST'); user = null; context = null; unmountAssistant(); navigate('/signin', { replace: true }); },
   'close-dialog': () => dialog.close(),
   'clear-filters': () => navigate(location.pathname),
@@ -629,6 +664,7 @@ const actions = {
     clientForm(context, button.dataset.stage ? { stage: button.dataset.stage } : undefined), { glyph: 'building' }),
   'invite-account': () => showDialog('Invite user', inviteForm(), { glyph: 'team' }),
   'portal-tour': () => {
+    if (dialog.open) dialog.close();
     if (!portalData) return;
     startTour({ clientName: portalData.client.name, onDone: portalData.preview ? undefined : () => api('/api/portal/tour-done', 'POST', {}).catch(() => {}) });
   },
@@ -740,10 +776,34 @@ const actions = {
     await render();
   },
   'delete-client': async button => {
-    if (!confirm(`Permanently delete ${button.dataset.name} and all of its contacts, drafts, activity and onboarding submissions? This cannot be undone.`)) return;
+    if (!confirm(`Permanently delete ${button.dataset.name} and everything recorded under it (intros, targets, notes, issues, billing, activity and portal logins)? This cannot be undone.`)) return;
+    const prospect = ['pipeline', 'passed'].includes(clientStageOnPage());
     await api(`/api/clients/${pathId(button.dataset.id)}`, 'DELETE');
     context = null;
-    notify('Client deleted.'); navigate('/clients');
+    notify(`${button.dataset.name} deleted.`); navigate(prospect ? '/prospects' : '/clients');
+  },
+  'select-clients': () => {
+    const list = document.getElementById('client-list');
+    const bar = document.getElementById('select-bar');
+    if (!list || !bar) return;
+    const on = !list.classList.contains('selecting');
+    list.classList.toggle('selecting', on);
+    bar.hidden = !on;
+    if (!on) list.querySelectorAll('[data-pick]').forEach(box => { box.checked = false; });
+    updateSelection();
+  },
+  'delete-selected': async () => {
+    const picked = [...document.querySelectorAll('#client-list [data-pick]:checked')];
+    if (!picked.length) { notify('Select at least one first.'); return; }
+    const names = picked.map(box => box.dataset.name);
+    if (!confirm(`Permanently delete ${names.length === 1 ? names[0] : `these ${names.length}`}?\n\n${names.join('\n')}\n\nEverything recorded under them (intros, targets, notes, issues, billing, activity and portal logins) goes too. This cannot be undone.`)) return;
+    const failed = [];
+    for (const box of picked) {
+      try { await api(`/api/clients/${pathId(box.dataset.pick)}`, 'DELETE'); } catch { failed.push(box.dataset.name); }
+    }
+    context = null;
+    notify(failed.length ? `Deleted ${picked.length - failed.length}; couldn't delete ${failed.join(', ')}.` : `Deleted ${picked.length}.`);
+    await render();
   },
   'revoke-job': async button => {
     if (!confirm('Revoke this Claude job credential?')) return;

@@ -61,3 +61,10 @@ export async function portalPreview(store, actor, clientId) {
   requireAdmin(actor);
   return { preview: true, user: { name: actor.name, email: actor.email }, ...(await portalView(store, clientId)) };
 }
+
+// The team's tour of the main software: also once per login, remembered the same way.
+export async function finishTour(store, actor) {
+  if (actor?.kind !== 'user') throw new AppError(403, 'Sign in to continue.');
+  await store.run('UPDATE users SET portal_tour_done_at=coalesce(portal_tour_done_at,?) WHERE id=?', iso(), actor.id);
+  return { ok: true };
+}

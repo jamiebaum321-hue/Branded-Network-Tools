@@ -693,3 +693,15 @@ a.panel.stat:hover { border-color: var(--iris-line, var(--primary)); }
 .tour-nav { display: flex; gap: 8px; margin-inline-start: auto; }
 .tour-nav .button { display: inline-flex; align-items: center; gap: 6px; }
 @media (prefers-reduced-motion: reduce) { .tour-ring { transition: none; } }
+
+/* Clients / Prospects: select several to delete (admins). */
+.client-slot { position: relative; display: grid; min-width: 0; }
+.client-check { display: none; position: absolute; z-index: 2; top: 10px; right: 10px; padding: 6px; border-radius: 10px; background: white; box-shadow: var(--shadow-card); }
+.client-check input { width: 20px; height: 20px; accent-color: var(--red-fg, #b42318); }
+#client-list.selecting .client-check { display: flex; }
+#client-list.selecting .client-card { cursor: pointer; }
+#client-list.selecting .client-slot:has(:checked) .client-card { outline: 2px solid var(--red-fg, #b42318); outline-offset: 2px; }
+.select-bar { position: sticky; top: 8px; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 10px 14px; margin-bottom: 12px; border-radius: 12px; border: 1px solid var(--line); background: white; box-shadow: var(--shadow-card); font-weight: 600; }
+.select-bar[hidden] { display: none; }
+.tour-card.sheet.sheet-top { inset: 0 0 auto 0 !important; border-radius: 0 0 18px 18px; padding-top: calc(14px + env(safe-area-inset-top)); padding-bottom: 14px; }

@@ -46,12 +46,12 @@ function greeting(name, zone) {
 }
 
 // Inline "Ask anything" box on Today; it hands the question to the Ask panel.
-const todayAsk = () => `<form class="today-ask" role="search" aria-label="Ask anything">
+const todayAsk = () => `<form class="today-ask" role="search" aria-label="Ask anything" data-tour="ask">
   <span class="today-ask-icon" aria-hidden="true">${icon('reply')}</span>
   <label class="visually-hidden" for="today-ask-input">Ask anything</label>
   <input id="today-ask-input" name="question" type="text" maxlength="2000" autocomplete="off" placeholder="Ask anything – a client, an intro, a contract, a follow-up…">
   <button type="submit" class="button primary" aria-label="Ask">${icon('arrow')}</button></form>
-  <div class="today-ask-chips">${['What needs my attention this week?', 'Which contracts end in the next 60 days?', 'Which intros have gone quiet?']
+  <div class="today-ask-chips"><button type="button" class="ask-chip tour-chip" data-action="team-tour">Take the tour</button>${['What needs my attention this week?', 'Which contracts end in the next 60 days?', 'Which intros have gone quiet?']
     .map(text => `<button type="button" class="ask-chip" data-ask-today="${h(text)}">${h(text)}</button>`).join('')}</div>`;
 
 export function todayPage(data, zone, user) {
@@ -68,11 +68,11 @@ export function todayPage(data, zone, user) {
     ['Due this week', data.accounts.filter(row => row.bucket === 'week').length, 'amber', 'today'],
     ['Quiet intros', data.intros.length, 'violet', 'reply'], ['Contracts to act on', data.contracts.length, 'blue', 'draft']];
   return `${title}
-    <div class="stat-grid">${stats.map(([label, value, tone, glyph]) => `<a class="panel stat" href="/followups"><span class="panel-icon ${tone}">${icon(glyph)}</span><div><strong>${value}</strong><span class="stat-label">${label}</span></div></a>`).join('')}</div>
-    <div class="grid-two top-aligned"><section class="panel stack"><div class="section-head">${sectionLabel('Next steps due', 'flag', 'amber')}${badge(due.length, due.length ? 'amber' : 'neutral')}</div>
+    <div class="stat-grid" data-tour="today-numbers">${stats.map(([label, value, tone, glyph]) => `<a class="panel stat" href="/followups"><span class="panel-icon ${tone}">${icon(glyph)}</span><div><strong>${value}</strong><span class="stat-label">${label}</span></div></a>`).join('')}</div>
+    <div class="grid-two top-aligned"><section class="panel stack" data-tour="due"><div class="section-head">${sectionLabel('Next steps due', 'flag', 'amber')}${badge(due.length, due.length ? 'amber' : 'neutral')}</div>
       ${due.length ? due.slice(0, 10).map(stepRow).join('') : emptyState('Nothing is due this week.')}
       <div class="pagination">${link('/followups', 'All follow-ups', 'arrow')}</div></section>
-    <section class="panel stack"><div class="section-head">${sectionLabel('Contracts ending', 'draft', 'blue')}${badge(data.contracts.length, data.contracts.length ? 'blue' : 'neutral')}</div>
+    <section class="panel stack" data-tour="ending"><div class="section-head">${sectionLabel('Contracts ending', 'draft', 'blue')}${badge(data.contracts.length, data.contracts.length ? 'blue' : 'neutral')}</div>
       ${data.contracts.length ? data.contracts.map(contractRow).join('') : emptyState('No contracts end in the next 60 days.')}
       <div class="pagination">${link('/contracts', 'All contracts', 'arrow')}</div></section></div>`;
 }
@@ -301,13 +301,14 @@ export function clientRows(rows, zone) {
   return rows.map(row => {
     const shade = [...row.name].reduce((hash, char) => (hash * 31 + char.codePointAt(0)) >>> 0, 0) % accents.length;
     const terms = [row.monthly_fee ? `${money(row.monthly_fee)}/mo` : '', row.contract_end ? `ends ${dayLabel(row.contract_end)}` : ''].filter(Boolean).join(' · ');
-    return `<a class="client-card" data-accent="${accents[shade]}" href="/clients/${pathId(row.id)}">
+    return `<div class="client-slot"><label class="client-check"><input type="checkbox" data-pick="${h(row.id)}" data-name="${h(row.name)}"><span class="visually-hidden">Select ${h(row.name)}</span></label>
+      <a class="client-card" data-accent="${accents[shade]}" href="/clients/${pathId(row.id)}">
       <span class="client-watermark">${icon('building')}</span>
       <div class="client-card-top"><span class="client-mark" aria-hidden="true">${h(initials(row.name))}</span>
         <div class="row-main"><strong>${h(row.name)}</strong><small>${icon('user')}<span>${h(row.team || brandedOwner(row))}</span></small></div>
         <span class="client-open">${icon('arrow')}</span></div>
       ${row.deal_status || terms ? `<p class="muted small">${h([row.deal_status, terms].filter(Boolean).join(' · '))}</p>` : ''}
-      <div class="client-facts"><span class="client-count">${icon('board')}${row.open_cards} open ${row.open_cards === 1 ? 'intro' : 'intros'}</span></div></a>`;
+      <div class="client-facts"><span class="client-count">${icon('board')}${row.open_cards} open ${row.open_cards === 1 ? 'intro' : 'intros'}</span></div></a></div>`;
   }).join('');
 }
 
@@ -321,10 +322,12 @@ export function clientsPage(data, query, user, zone, group = 'clients') {
     : `<div class="panel">${emptyState(prospects ? 'No matching prospects.' : 'No matching clients.')}</div>`;
   const prospects = group === 'prospects';
   return `${heading(prospects ? 'Prospects' : 'Clients', '',
-    user.role === 'admin' ? btn(prospects ? 'Add prospect' : 'Add client', { action: 'add-client', glyph: 'plus', kind: 'primary', data: `data-stage="${prospects ? 'pipeline' : 'current'}"` }) : '',
+    user.role === 'admin' ? `<span class="actions">${btn('Select to delete', { action: 'select-clients', glyph: 'check', kind: 'quiet' })}${btn(prospects ? 'Add prospect' : 'Add client', { action: 'add-client', glyph: 'plus', kind: 'primary', data: `data-stage="${prospects ? 'pipeline' : 'current'}"` })}</span>` : '',
     { art: 'signal-clients', signature: true })}
     <form class="client-search" data-form="filter">${field(prospects ? 'Search prospects' : 'Search clients', 'q', query.get('q'), { type: 'search', placeholder: 'Company name', max: 180, glyph: 'search' })}
     <div class="actions">${btn('Search', { type: 'submit' })}${query.size ? btn('Clear', { action: 'clear-filters', kind: 'quiet' }) : ''}</div></form>
+    ${user.role === 'admin' ? `<div class="select-bar" id="select-bar" hidden role="region" aria-label="Delete several"><span id="select-count">Select the ones to delete.</span>
+      <span class="actions">${btn('Cancel', { action: 'select-clients', kind: 'quiet' })}${btn('Delete selected', { action: 'delete-selected', kind: 'danger', glyph: 'close' })}</span></div>` : ''}
     <div class="stack" id="client-list">${sections}</div>${pageMore('more-clients', data.next_offset)}`;
 }
 
@@ -428,8 +431,9 @@ export function clientPage(data, context, zone) {
   const { client } = data;
   const prospect = ['pipeline', 'passed'].includes(client.stage);
   return `${link(prospect ? '/prospects' : '/clients', prospect ? 'Back to prospects' : 'Back to clients', 'back', 'back-link')}${heading(client.name, `${clientStages[client.stage]?.label ?? ''} · Branded owner · ${brandedOwner(client)}`,
-    btn('Add contact', { kind: 'primary', glyph: 'plus', action: 'add-card', data: `data-client="${h(client.id)}"` }), )}
-    <div class="grid-two top-aligned">${accountPanel(client, zone)}${nextStepPanel(client)}</div>
+    `<span class="actions">${context.user.role === 'admin' ? btn('Delete', { action: 'delete-client', kind: 'danger', glyph: 'close', data: `data-id="${h(client.id)}" data-name="${h(client.name)}"` }) : ''}
+    ${btn('Add contact', { kind: 'primary', glyph: 'plus', action: 'add-card', data: `data-client="${h(client.id)}"` })}</span>`)}
+    <div class="grid-two top-aligned" data-client-stage="${h(client.stage)}">${accountPanel(client, zone)}${nextStepPanel(client)}</div>
     <div class="grid-two top-aligned">${introsPanel(client, data.intros ?? [])}${contactsPanel(client) || '<div></div>'}</div>
     ${recordsPanel(client, data.records)}
     ${data.activity ? clientActivityPanel(client, data.activity, data.approvals, zone) : ''}

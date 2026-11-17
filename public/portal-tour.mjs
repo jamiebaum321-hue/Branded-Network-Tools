@@ -1,8 +1,8 @@
-// A short guided tour of the client portal. It spotlights one part of the page at a time and explains it in
+// Short guided tours: one for the client portal and one for the team's tracker. It spotlights one part of the page at a time and explains it in
 // plain words. Steps whose section isn't on the page (for example no shared next step yet) are skipped.
 import { h, icon } from './ui.mjs';
 
-const steps = clientName => [
+const portalSteps = clientName => [
   { title: 'Welcome to your Branded Solutions portal',
     body: `This is where you can follow the introductions Branded is making for ${clientName}, see where each one stands, and check your agreement. The tour takes about a minute.` },
   { target: '[data-tour="numbers"]', title: 'Your numbers at a glance',
@@ -25,11 +25,46 @@ const steps = clientName => [
     body: 'Take the tour again whenever you like. That’s it, thanks for taking a look.' },
 ];
 
+const nav = path => `.main-nav a[href="${path}"]`;
+const teamSteps = user => [
+  { title: 'Welcome to the Branded Solutions tracker',
+    body: 'This is where the Solutions team keeps clients, introductions, contracts and follow-ups in one place. Here’s a two-minute look around.' },
+  { target: '[data-tour="ask"]', title: 'Ask anything',
+    body: 'Type a question about a client, an intro, a contract or a follow-up. The assistant answers from the tracker and links you straight to the right page.' },
+  { target: '[data-tour="today-numbers"]', title: 'Today at a glance',
+    body: 'Overdue next steps, what’s due this week, intros that have gone quiet, and contracts to act on. Click any number to see the full list.' },
+  { target: '[data-tour="due"]', title: 'Next steps due',
+    body: 'Each client’s next step that’s overdue or due this week, with who owns it. Click one to open the client.' },
+  { target: '[data-tour="ending"]', title: 'Contracts ending',
+    body: 'Clients whose contracts end in the next 60 days, so renewals never sneak up on you.' },
+  { target: nav('/pipeline'), title: 'Pipeline',
+    body: 'Every intro and target on one board: To contact, Reached out, In conversation and Closed. Filter to one client in a tap, and drag cards between columns as things move.' },
+  { target: nav('/clients'), title: 'Clients',
+    body: 'Current clients and referral partners. Open one for its agreement, next step, contacts, intros, issues, billing and activity, and to manage its client portal. Admins can delete clients here too.' },
+  { target: nav('/prospects'), title: 'Prospects',
+    body: 'Companies we’re pitching. When one signs, change its stage to Current Client and it moves over to Clients.' },
+  { target: nav('/approvals'), title: 'Approvals',
+    body: 'Things waiting for a person to decide. Nothing is sent or changed until someone approves it.' },
+  { target: nav('/activity'), title: 'Activity',
+    body: 'A running log of client updates. Log an update, and choose whether to share it in that client’s portal.' },
+  { target: nav('/followups'), title: 'Follow-ups',
+    body: 'Everything that needs chasing: overdue next steps, quiet intros, contracts ending and open issues.' },
+  { target: nav('/contracts'), title: 'Contracts',
+    body: 'Every client’s term on one timeline, with renewal dates and monthly retainers.' },
+  ...(user?.role === 'admin' ? [{ target: nav('/admin'), title: 'Admin',
+    body: 'Team accounts, the assistant’s status check and the audit log of every change.' }] : []),
+  { target: '.ask-fab', title: 'Ask from any page',
+    body: 'The Ask button follows you around, so you can look something up without leaving the page you’re on.' },
+  { target: '[data-tour="account"]', title: 'Your account',
+    body: 'Sign out, or take this tour again, from here. That’s it, you’re all set.' },
+];
+
 let active = null;
 
-export function startTour({ clientName, onDone } = {}) {
+export function startTour({ clientName, team, user, onDone } = {}) {
   if (active) return;
-  const list = steps(clientName || 'your company').filter(step => !step.target || document.querySelector(step.target));
+  const visible = el => el && el.getClientRects().length > 0;
+  const list = (team ? teamSteps(user) : portalSteps(clientName || 'your company')).filter(step => !step.target || visible(document.querySelector(step.target)));
   const opener = document.activeElement;
   const shade = document.createElement('div');
   shade.className = 'tour-shade';
@@ -55,10 +90,13 @@ export function startTour({ clientName, onDone } = {}) {
     ring.hidden = !target;
     card.classList.toggle('centered', !target);
     card.classList.toggle('sheet', narrow && Boolean(target));
+    if (!target) card.classList.remove('sheet-top');
     if (!target) { card.style.top = ''; card.style.left = ''; return; }
     const box = target.getBoundingClientRect();
     const pad = 8;
     Object.assign(ring.style, { top: `${box.top - pad}px`, left: `${box.left - pad}px`, width: `${box.width + pad * 2}px`, height: `${box.height + pad * 2}px` });
+    // On phones the card is a sheet; it moves to the top when the highlighted item is low on the screen (the bottom menu).
+    card.classList.toggle('sheet-top', narrow && box.top + box.height / 2 > window.innerHeight / 2);
     if (narrow) { card.style.top = ''; card.style.left = ''; return; }
     const width = card.offsetWidth;
     const height = card.offsetHeight;
