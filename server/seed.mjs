@@ -34,7 +34,7 @@ const definitions = {
 
 async function accountId(store, address) {
   if (!address) return undefined;
-  const row = await store.get('SELECT id FROM users WHERE email=? AND enabled=1', email(address));
+  const row = await store.get("SELECT id FROM users WHERE email=? AND enabled=1 AND role<>'client'", email(address));
   if (!row) throw new AppError(400, 'The specified owner or reviewer does not have an active account.');
   return row.id;
 }

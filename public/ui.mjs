@@ -106,7 +106,7 @@ export function heading(title, detail = '', action = '', { date, hero = false } 
   return `<div class="heading page-hero signature no-art"><div class="hero-copy">${copy}${action ? `<div class="hero-actions">${action}</div>` : ''}</div></div>`;
 }
 // Branded Hospitality logo: the B mark and the wordmark, with the app name underneath.
-export const brand = () => `<a class="brand" href="/today" aria-label="Branded Hospitality · Solutions Network">
+export const brand = (home = '/today') => `<a class="brand" href="${home}" aria-label="Branded Hospitality · Solutions Network">
   <img class="brand-mark" width="40" height="40" src="/assets/brand/branded-mark.png" alt="">
   <span class="brand-lockup"><img class="brand-wordmark" width="99" height="48" src="/assets/brand/branded-wordmark.png" alt="Branded Hospitality"><small>Solutions Network</small></span></a>`;
 
@@ -120,6 +120,10 @@ export function outboundLink(value) {
 
 export function shell(user, location) {
   if (!user) return '';
+  // Client logins get a plain portal header: no team navigation, alerts or workspace tools.
+  if (user.role === 'client') return `<header class="app-header portal-header"><div class="bar"><div class="bar-brand">${brand('/portal')}</div>
+    <div class="workspace-context" aria-hidden="true"><strong>Client portal</strong></div>
+    <div class="account-actions"><button class="account-button" data-action="account" aria-label="Account menu for ${h(user.name)}" title="${h(user.name)}"><span class="avatar" aria-hidden="true">${h(initials(user.name))}</span><span class="account-name" aria-hidden="true">${h(user.name)}${icon('down')}</span></button></div></div></header>`;
   const sections = [
     ['/today', 'Today', 'today', location === '/' || location === '/today'],
     ['/pipeline', 'Pipeline', 'board', location.startsWith('/pipeline')],

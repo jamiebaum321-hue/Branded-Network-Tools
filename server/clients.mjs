@@ -50,7 +50,7 @@ export async function listClients(store, actor, { q, group, limit = 50, offset =
 }
 
 async function ensureActive(store, userId) {
-  if (!await store.get('SELECT 1 FROM users WHERE id=? AND enabled=1', userId)) throw new AppError(400, 'Choose an active account.');
+  if (!await store.get("SELECT 1 FROM users WHERE id=? AND enabled=1 AND role<>'client'", userId)) throw new AppError(400, 'Choose an active account.');
 }
 
 export async function insertClient(store, actor, data, createdAt = iso()) {
@@ -292,6 +292,13 @@ export async function deleteClient(store, actor, clientId) {
     await store.run('DELETE FROM client_members WHERE client_id=?', clientId);
     await store.run('DELETE FROM client_records WHERE client_id=?', clientId);
     await store.run('DELETE FROM approvals WHERE client_id=?', clientId);
+    // The client's portal logins go with it.
+    const portal = "SELECT id FROM users WHERE role='client' AND portal_client_id=?";
+    await store.run(`DELETE FROM sessions WHERE user_id IN (${portal})`, clientId);
+    await store.run(`DELETE FROM setup_tokens WHERE user_id IN (${portal})`, clientId);
+    await store.run(`DELETE FROM today_visits WHERE user_id IN (${portal})`, clientId);
+    await store.run(`DELETE FROM event_recipients WHERE user_id IN (${portal})`, clientId);
+    await store.run("DELETE FROM users WHERE role='client' AND portal_client_id=?", clientId);
     await store.run('DELETE FROM activity_log WHERE client_id=?', clientId);
     await store.run('UPDATE audit_log SET client_id=NULL WHERE client_id=?', clientId);
     await store.run('DELETE FROM clients WHERE id=?', clientId);

@@ -10,7 +10,8 @@ const setupMs = 24 * 60 * 60 * 1000;
 const unusedHash = `${'0'.repeat(64)}.${'0'.repeat(64)}`;
 const fields = 'id,name,email,role,enabled,oauth_subject,onboarding_alerts,created_at,password_hash IS NOT NULL AS has_password';
 const userRow = (store, userId) => store.get(`SELECT ${fields} FROM users WHERE id=?`, userId);
-const principal = (user) => ({ kind: 'user', id: user.id, name: user.name, email: user.email, role: user.role });
+const principal = (user) => ({ kind: 'user', id: user.id, name: user.name, email: user.email, role: user.role,
+  ...(user.role === 'client' ? { portal_client_id: user.portal_client_id } : {}) });
 
 export async function hashPassword(password) {
   if (typeof password !== 'string' || password.length < 12 || password.length > 256) {
@@ -63,7 +64,7 @@ export async function bootstrap(store, name, address) {
 
 export function listAccounts(store, actor) {
   requireAdmin(actor);
-  return store.all(`SELECT ${fields} FROM users ORDER BY lower(name), id`);
+  return store.all(`SELECT ${fields} FROM users WHERE role<>'client' ORDER BY lower(name), id`);
 }
 
 export async function inviteAccount(store, actor, input) {
@@ -86,7 +87,7 @@ export async function changeAccount(store, actor, userId, input) {
     oauth_subject: str(300, 0), onboarding_alerts: bool }, []), input);
   return store.tx(async () => {
     const user = await userRow(store, userId);
-    if (!user) throw new AppError(404, 'Account not found.');
+    if (!user || user.role === 'client') throw new AppError(404, 'Account not found.');
     const role = data.role ?? user.role;
     const enabled = data.enabled === undefined ? user.enabled : Number(data.enabled);
     const subject = data.oauth_subject === undefined ? user.oauth_subject : data.oauth_subject || null;
@@ -114,14 +115,14 @@ export async function resetAccount(store, actor, userId) {
   requireAdmin(actor);
   return store.tx(async () => {
     const user = await userRow(store, userId);
-    if (!user?.enabled) throw new AppError(404, 'Active account not found.');
+    if (!user?.enabled || user.role === 'client') throw new AppError(404, 'Active account not found.');
     await audit(store, actor, 'account.setup_link_issued', 'user', userId);
     return issueSetup(store, userId);
   });
 }
 
 async function validSetup(store, value) {
-  const user = await store.get(`SELECT u.id,u.name,u.email,u.role FROM setup_tokens t JOIN users u ON u.id=t.user_id
+  const user = await store.get(`SELECT u.id,u.name,u.email,u.role,u.portal_client_id FROM setup_tokens t JOIN users u ON u.id=t.user_id
     WHERE t.token_hash=? AND t.expires_at>? AND u.enabled=1`, digest(value), Date.now());
   if (!user) throw new AppError(410, 'This setup link has expired or already been used. Ask an admin for a new link.');
   return user;
@@ -147,6 +148,7 @@ export async function finishSetup(store, value, password, ip) {
     await store.run('UPDATE users SET password_hash=? WHERE id=?', hash, user.id);
     await store.run('DELETE FROM setup_tokens WHERE user_id=?', user.id);
     await store.run('DELETE FROM sessions WHERE user_id=?', user.id);
+    await store.run('UPDATE users SET last_sign_in_at=? WHERE id=?', iso(), user.id);
     await audit(store, principal(user), 'account.password_set', 'user', user.id);
     return issueSession(store, user);
   });
@@ -159,13 +161,14 @@ export async function signIn(store, input, ip, currentSession) {
   const address = input.email.trim().toLowerCase();
   await rateLimit(store, `signin:ip:${ip}`, 100, 15 * 60 * 1000);
   await rateLimit(store, `signin:account:${address}`, 10, 15 * 60 * 1000);
-  const user = await store.get('SELECT id,name,email,role,password_hash FROM users WHERE email=? AND enabled=1', address);
+  const user = await store.get('SELECT id,name,email,role,portal_client_id,password_hash FROM users WHERE email=? AND enabled=1', address);
   if (!await matchesPassword(input.password, user?.password_hash) || !user) throw new AppError(401, 'Email or password is incorrect.');
   return store.tx(async () => {
-    const current = await store.get('SELECT id,name,email,role,password_hash FROM users WHERE id=? AND enabled=1', user.id);
+    const current = await store.get('SELECT id,name,email,role,portal_client_id,password_hash FROM users WHERE id=? AND enabled=1', user.id);
     if (!current || current.password_hash !== user.password_hash) throw new AppError(401, 'Email or password is incorrect.');
     if (currentSession) await store.run('DELETE FROM sessions WHERE token_hash=?', digest(currentSession));
     await store.run('DELETE FROM rate_limits WHERE key=?', digest(`signin:account:${address}`));
+    await store.run('UPDATE users SET last_sign_in_at=? WHERE id=?', iso(), current.id);
     await audit(store, principal(current), 'session.signed_in', 'user', current.id);
     return issueSession(store, current);
   });
@@ -173,7 +176,7 @@ export async function signIn(store, input, ip, currentSession) {
 
 export async function sessionUser(store, value) {
   if (!value || !/^[a-zA-Z0-9_-]{43}$/.test(value)) return null;
-  const user = await store.get(`SELECT u.id,u.name,u.email,u.role FROM sessions s JOIN users u ON u.id=s.user_id
+  const user = await store.get(`SELECT u.id,u.name,u.email,u.role,u.portal_client_id FROM sessions s JOIN users u ON u.id=s.user_id
     WHERE s.token_hash=? AND s.expires_at>? AND u.enabled=1`, digest(value), Date.now());
   return user ? principal(user) : null;
 }
@@ -269,5 +272,62 @@ export async function bootstrapFromEnv(store, env) {
     const issued = setup.path.split('/').at(-1);
     await store.run('UPDATE setup_tokens SET token_hash=? WHERE token_hash=?', hash, digest(issued));
     return true;
+  });
+}
+
+// ---- Client portal logins ----
+// A client login belongs to exactly one client company and can only use the portal.
+const portalFields = 'id,name,email,enabled,created_at,last_sign_in_at,password_hash IS NOT NULL AS has_password';
+
+export async function listPortalUsers(store, actor, clientId) {
+  requireAdmin(actor);
+  await clientFor(store, actor, clientId);
+  return store.all(`SELECT ${portalFields} FROM users WHERE role='client' AND portal_client_id=? ORDER BY lower(name), id`, clientId);
+}
+
+export async function invitePortalUser(store, actor, clientId, input) {
+  requireAdmin(actor);
+  const data = validate(object({ name: str(100), email: str(254) }), input);
+  data.email = email(data.email);
+  return store.tx(async () => {
+    await clientFor(store, actor, clientId);
+    if (await store.get('SELECT 1 FROM users WHERE email=?', data.email)) throw new AppError(409, 'An account already uses that email.');
+    const userId = id();
+    await store.run(`INSERT INTO users(id,name,email,role,portal_client_id,created_at) VALUES(?,?,?,'client',?,?)`,
+      userId, data.name, data.email, clientId, iso());
+    await audit(store, actor, 'portal.user_invited', 'user', userId, clientId);
+    const setup = await issueSetup(store, userId);
+    return { user: await store.get(`SELECT ${portalFields} FROM users WHERE id=?`, userId), setup };
+  });
+}
+
+async function portalUser(store, clientId, userId) {
+  const user = await store.get(`SELECT ${portalFields} FROM users WHERE id=? AND role='client' AND portal_client_id=?`, userId, clientId);
+  if (!user) throw new AppError(404, 'Portal login not found.');
+  return user;
+}
+
+export async function changePortalUser(store, actor, clientId, userId, input) {
+  requireAdmin(actor);
+  const data = validate(object({ enabled: bool }), input);
+  return store.tx(async () => {
+    await portalUser(store, clientId, userId);
+    await store.run('UPDATE users SET enabled=? WHERE id=?', Number(data.enabled), userId);
+    if (!data.enabled) {
+      await store.run('DELETE FROM sessions WHERE user_id=?', userId);
+      await store.run('DELETE FROM setup_tokens WHERE user_id=?', userId);
+    }
+    await audit(store, actor, data.enabled ? 'portal.user_enabled' : 'portal.user_disabled', 'user', userId, clientId);
+    return portalUser(store, clientId, userId);
+  });
+}
+
+export async function resetPortalUser(store, actor, clientId, userId) {
+  requireAdmin(actor);
+  return store.tx(async () => {
+    const user = await portalUser(store, clientId, userId);
+    if (!user.enabled) throw new AppError(409, 'Turn this login back on before issuing a new link.');
+    await audit(store, actor, 'portal.setup_link_issued', 'user', userId, clientId);
+    return issueSetup(store, userId);
   });
 }

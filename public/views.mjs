@@ -427,6 +427,7 @@ export function clientPage(data, context, zone) {
     <div class="grid-two top-aligned">${introsPanel(client, data.intros ?? [])}${contactsPanel(client) || '<div></div>'}</div>
     ${recordsPanel(client, data.records)}
     ${data.activity ? clientActivityPanel(client, data.activity, data.approvals, zone) : ''}
+    ${data.portal_users ? portalAccessPanel(client, data.portal_users, zone) : ''}
     ${context.user.role === 'admin' ? `<details class="panel">${disclosure('Client settings', 'settings')}${clientForm(context, data)}
       <div class="actions">${btn('Delete client', { action: 'delete-client', kind: 'danger', glyph: 'close', data: `data-id="${h(client.id)}" data-name="${h(client.name)}"` })}</div></details>` : ''}`;
 }
@@ -739,4 +740,30 @@ export function clientActivityPanel(client, log, approvals, zone) {
       ${btn('Log an update', { action: 'log-activity', glyph: 'plus', kind: 'quiet', data: `data-client="${h(client.id)}"` })}</div></div>
     <div id="log-list">${log.items.length ? activityLogRows(log.items, zone) : emptyState('No activity yet.')}</div>
     ${log.next ? `<div class="pagination">${link(`/activity?client_id=${pathId(client.id)}`, 'See the full log', 'arrow')}</div>` : ''}</section>`;
+}
+
+// ---- Client portal ----
+export function portalPage(data) {
+  return `${heading(data.client.name, 'Branded Solutions client portal')}
+    <section class="panel stack portal-welcome"><div class="section-head">${sectionLabel(`Welcome, ${String(data.user.name).split(/\s+/)[0]}`, 'check', 'green')}</div>
+      <p>This is where you’ll follow the introductions Branded is making for ${h(data.client.name)}, the brands we’re working on for you, and your agreement details.</p>
+      <p class="muted">We’re setting up your view now. Your Branded team will let you know when it’s ready. Questions in the meantime? Reply to your Branded contact.</p></section>`;
+}
+
+export function portalAccessPanel(client, users, zone) {
+  const rows = users.map(row => `<div class="list-row"><div class="row-main"><strong>${h(row.name)}</strong><small>${h(row.email)}</small>
+      <small class="muted">${row.last_sign_in_at ? `Last signed in ${h(timeLabel(row.last_sign_in_at, zone))}` : row.has_password ? 'Hasn’t signed in since setting a password' : 'Invited · setup link not used yet'}</small></div>
+      <span class="chips">${row.enabled ? badge('Active', 'green') : badge('Turned off', 'neutral')}</span>
+      <span class="actions">${row.enabled ? btn('New setup link', { action: 'portal-link', kind: 'quiet', data: `data-client="${h(client.id)}" data-id="${h(row.id)}"` }) : ''}
+      ${btn(row.enabled ? 'Turn off' : 'Turn on', { action: 'portal-toggle', kind: row.enabled ? 'danger' : 'quiet', data: `data-client="${h(client.id)}" data-id="${h(row.id)}" data-enabled="${row.enabled ? 'false' : 'true'}" data-name="${h(row.name)}"` })}</span></div>`).join('');
+  return `<section class="panel stack" id="portal-access"><div class="section-head">${sectionLabel('Portal access', 'lock', 'blue')}
+      ${btn('Invite to portal', { action: 'portal-invite', glyph: 'plus', kind: 'primary', data: `data-client="${h(client.id)}" data-name="${h(client.name)}"` })}</div>
+    <p class="muted small">People at ${h(client.name)} who can sign in to the read-only client portal. They only ever see ${h(client.name)}.</p>
+    ${rows || emptyState('No one from this client has portal access yet.')}</section>`;
+}
+
+export function portalInviteForm(clientId, clientName) {
+  return subjectForm('portal-invite', clientId, `<p class="muted">They’ll get read-only access to the ${h(clientName)} portal only. You’ll get a one-time setup link to send them.</p>
+    ${fieldset(`${field('Name', 'name', '', { required: true, max: 100 })}${field('Email', 'email', '', { type: 'email', required: true, max: 254 })}`)}
+    <div class="actions">${btn('Create portal login', { kind: 'primary', type: 'submit' })}</div>`);
 }

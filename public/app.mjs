@@ -4,7 +4,7 @@ import { mountAssistant, unmountAssistant } from './assistant.mjs';
 import { btn, emptyState, h, heading, icon, link, pathId, shell, stages } from './ui.mjs';
 import { activityItems, adminPage, alertRows, auditRows, boardCard, boardPage, cardPage, clientForm, clientPage,
   clientRows, clientsPage, contractsPage, followupsPage, recordForm, approvalsPage, activityLogPage, activityLogRows, logActivityForm, createCardForm, intakePage, inviteForm, jobTokenForm, metricsPage, setupPage, signInPage,
-  submissionPage, submissionRows, suggestionPage, suggestionRows, suggestionsPage, todayPage } from './views.mjs';
+  submissionPage, submissionRows, suggestionPage, suggestionRows, suggestionsPage, todayPage, portalPage, portalInviteForm } from './views.mjs';
 
 const main = document.querySelector('#main');
 const chrome = document.querySelector('#shell');
@@ -195,6 +195,11 @@ async function render({ focus = false } = {}) {
       }
       html = intakePage(wizard.info, key, wizard.step, wizard.answers);
     } else if (!user) html = signInPage();
+    else if (user.role === 'client') {
+      // Client logins only ever see their portal.
+      if (path !== '/portal') history.replaceState(null, '', '/portal');
+      html = portalPage(await api('/api/portal'));
+    }
     else if (path === '/' || path === '/signin' || path === '/today') {
       if (path !== '/today') history.replaceState(null, '', '/today');
       html = todayPage(await api('/api/followups'), zone, user);
@@ -224,7 +229,9 @@ async function render({ focus = false } = {}) {
     } else if (/^\/clients\/[\w-]+\/submissions\/[\w-]+$/.test(path)) {
       html = submissionPage((await api(`/api${path}`)).submission, zone);
     } else if (path.startsWith('/clients/')) {
+      const portalUsers = user.role === 'admin' ? api(`/api/admin${path}/portal-users`).then(result => result.items) : null;
       const [data, ctx] = await Promise.all([api(`/api${path}`), getContext()]);
+      if (portalUsers) data.portal_users = await portalUsers;
       if (current !== revision) return;
       context = ctx;
       remember(Object.values(data.records ?? {}).flat());
@@ -264,7 +271,7 @@ async function render({ focus = false } = {}) {
     if (current !== revision) return;
     show(html, focus, hash);
     if (todayResult) todayAcknowledgement = api('/api/today/seen', 'POST', { reply_cursor: todayResult.reply_cursor }).catch(() => {});
-    if (user && !publicRoute) { refreshAlertDot(); refreshBadges(); mountAssistant(api); }
+    if (user && !publicRoute && user.role !== 'client') { refreshAlertDot(); refreshBadges(); mountAssistant(api); }
   } catch (error) {
     if (current === revision) showError(error, focus);
   }
@@ -341,13 +348,14 @@ const forms = {
   },
   async signin(form, data) {
     user = (await api('/api/session', 'POST', Object.fromEntries(data))).user;
-    if (['/', '/signin'].includes(location.pathname)) navigate('/today', { replace: true });
+    if (user.role === 'client') navigate('/portal', { replace: true });
+    else if (['/', '/signin'].includes(location.pathname)) navigate('/today', { replace: true });
     else await render({ focus: true });
   },
   async setup(form, data) {
     if (data.get('password') !== data.get('confirmation')) throw new Error('The passwords do not match.');
     user = (await api(`/api/setup/${pathId(form.dataset.id)}`, 'POST', { password: data.get('password') })).user;
-    navigate('/today', { replace: true });
+    navigate(user.role === 'client' ? '/portal' : '/today', { replace: true });
   },
   async 'add-card'(form, data) {
     const value = Object.fromEntries(data);
@@ -434,6 +442,12 @@ const forms = {
     await render();
   },
   async intake(form) { await advanceWizard(form, 'next'); },
+  async 'portal-invite'(form, data) {
+    const result = await api(`/api/admin/clients/${pathId(form.dataset.id)}/portal-users`, 'POST', Object.fromEntries(data));
+    await render();
+    revealValue('One-time portal setup link', new URL(result.setup.path, location.origin).href,
+      `Send this to ${result.user.name}. It expires in 24 hours and only opens the client portal.`);
+  },
   async 'invite-account'(form, data) {
     const result = await api('/api/admin/accounts', 'POST', Object.fromEntries(data));
     await render();
@@ -601,6 +615,18 @@ const actions = {
   'add-client': button => showDialog(button.dataset.stage === 'pipeline' ? 'Add prospect' : 'Add client',
     clientForm(context, button.dataset.stage ? { stage: button.dataset.stage } : undefined), { glyph: 'building' }),
   'invite-account': () => showDialog('Invite user', inviteForm(), { glyph: 'team' }),
+  'portal-invite': button => showDialog(`Invite to the ${button.dataset.name} portal`, portalInviteForm(button.dataset.client, button.dataset.name), { glyph: 'lock' }),
+  'portal-toggle': async button => {
+    const enabling = button.dataset.enabled === 'true';
+    if (!enabling && !confirm(`Turn off portal access for ${button.dataset.name}? They'll be signed out right away.`)) return;
+    await api(`/api/admin/clients/${pathId(button.dataset.client)}/portal-users/${pathId(button.dataset.id)}`, 'PATCH', { enabled: enabling });
+    notify(enabling ? 'Portal access turned on.' : 'Portal access turned off.');
+    await render();
+  },
+  'portal-link': async button => {
+    const { setup } = await api(`/api/admin/clients/${pathId(button.dataset.client)}/portal-users/${pathId(button.dataset.id)}/setup`, 'POST');
+    revealValue('One-time portal setup link', new URL(setup.path, location.origin).href, 'This replaces any earlier link. It expires in 24 hours.');
+  },
   'new-job': () => showDialog('Create Claude job credential', jobTokenForm(context), { glyph: 'lock' }),
   'copy-dialog-value': () => clipboard(dialog.querySelector('textarea').value, 'Copied.'),
   'copy-draft': button => {

@@ -305,7 +305,7 @@ test('persistent store keeps accounts across restarts and only runs migrations o
   const reopened = await openStore(databaseUrl, { schema });
   try {
     assert.equal((await reopened.get('SELECT email FROM users')).email, adminEmail);
-    assert.deepEqual((await reopened.all('SELECT version FROM schema_migrations')).map(row => row.version), [1, 2, 3, 4, 5, 6, 7, 8]);
+    assert.deepEqual((await reopened.all('SELECT version FROM schema_migrations')).map(row => row.version), [1, 2, 3, 4, 5, 6, 7, 8, 9]);
   } finally { await reopened.close(); }
 });
 
@@ -691,4 +691,70 @@ test('tracker sync updates imported records once, adds new ones and never re-cre
   await f.admin(`/api/clients/${arc.id}`, { next_step: 'Edited on the site' }, 'PATCH');
   assert.equal(await applySealedImport(f.store, { TRACKER_IMPORT_KEY: key }, pathToFileURL(file)), null);
   assert.equal((await f.admin(`/api/clients/${arc.id}`)).client.next_step, 'Edited on the site');
+});
+
+test('client portal logins: one company, portal only, refused by every internal route', async t => {
+  const f = await fixture(t);
+  const arc = await f.addClient('ARC', { stage: 'current', next_step: 'Internal: chase invoice', latest: 'Internal note' });
+  const other = await f.addClient('Other Co', { stage: 'current' });
+  const card = await f.addCard(arc, { company: 'Slim Chickens' });
+
+  // Only admins manage portal logins; the login is tied to one client.
+  const invited = await f.admin(`/api/admin/clients/${arc.id}/portal-users`, { name: 'Dave Client', email: 'Dave@ARC.example' });
+  assert.equal(invited.user.email, 'dave@arc.example');
+  await f.admin(`/api/admin/clients/${arc.id}/portal-users`, { name: 'Dup', email: 'dave@arc.example' }, 'POST', 409);
+  const portal = await f.activate(invited.setup.path);
+  assert.equal(portal.user.role, 'client');
+  const client = f.as(portal.cookie);
+
+  // The portal shows their company and nothing internal.
+  const home = await client('/api/portal');
+  assert.deepEqual(home, { user: { name: 'Dave Client', email: 'dave@arc.example' }, client: { name: 'ARC' } });
+  assert.doesNotMatch(JSON.stringify(home), /Internal|invoice|Slim/);
+  assert.equal((await client('/api/session')).user.role, 'client');
+
+  // Deny by default: every internal route refuses the client login.
+  const id = arc.id;
+  const internal = [
+    ['GET', '/api/context'], ['GET', '/api/today'], ['POST', '/api/today/seen', {}], ['GET', '/api/alerts'], ['GET', '/api/board'],
+    ['GET', '/api/cards'], ['POST', '/api/cards', { client_id: id, company: 'X' }], ['GET', `/api/cards/${card.id}`],
+    ['PATCH', `/api/cards/${card.id}`, { version: 1 }], ['GET', `/api/cards/${card.id}/activity`], ['GET', '/api/metrics'],
+    ['GET', '/api/suggestions'], ['GET', '/api/clients'], ['POST', '/api/clients', { name: 'X' }], ['GET', `/api/clients/${id}`],
+    ['GET', `/api/clients/${other.id}`], ['PATCH', `/api/clients/${id}`, { name: 'X' }], ['POST', `/api/clients/${id}/next-step`, { next_step: 'x' }],
+    ['POST', `/api/clients/${id}/records`, { kind: 'issues', data: { issue: 'x' } }], ['GET', '/api/issues'], ['GET', '/api/approvals'],
+    ['POST', '/api/approvals', { dedupe_key: 'x', kind: 'note', title: 'x' }], ['GET', '/api/activity-log'], ['POST', '/api/activity-log', { text: 'x' }],
+    ['GET', '/api/badges'], ['GET', '/api/assistant'], ['POST', '/api/assistant', { messages: [{ role: 'user', content: 'list clients' }] }],
+    ['GET', '/api/followups'], ['GET', '/api/contracts'], ['DELETE', `/api/clients/${id}`], ['POST', `/api/clients/${id}/form-link`, {}],
+    ['GET', `/api/clients/${id}/submissions`], ['GET', '/api/admin/accounts'], ['GET', '/api/admin/audit'], ['GET', '/api/admin/assistant'],
+    ['GET', `/api/admin/clients/${id}/portal-users`], ['POST', `/api/admin/clients/${id}/portal-users`, { name: 'x', email: 'x@x.example' }],
+  ];
+  for (const [method, path, body] of internal) {
+    const { res } = await f.check(path, { cookie: portal.cookie, method, ...(body ? { body } : {}) }, 403);
+    assert.equal(res.status, 403, `${method} ${path}`);
+  }
+  // Team members can't use the portal route, and client logins never appear as team accounts or owners.
+  await f.admin('/api/portal', undefined, 'GET', 403);
+  assert.ok(!(await f.admin('/api/admin/accounts')).items.some(row => row.role === 'client'));
+  assert.ok(!(await f.admin('/api/context')).owners.some(row => row.id === portal.user.id));
+  await f.admin(`/api/clients/${other.id}`, { owner_id: portal.user.id }, 'PATCH', 400);
+  await f.admin(`/api/admin/accounts/${portal.user.id}`, { role: 'admin' }, 'PATCH', 404);
+
+  // Admin view of portal access: last sign-in, turn off (signs them out), new link, turn back on.
+  const listed = (await f.admin(`/api/admin/clients/${arc.id}/portal-users`)).items;
+  assert.equal(listed.length, 1);
+  assert.ok(listed[0].last_sign_in_at);
+  assert.equal((await f.admin(`/api/admin/clients/${other.id}/portal-users`)).items.length, 0);
+  await f.admin(`/api/admin/clients/${other.id}/portal-users/${portal.user.id}`, { enabled: false }, 'PATCH', 404);
+  await f.admin(`/api/admin/clients/${arc.id}/portal-users/${portal.user.id}`, { enabled: false }, 'PATCH');
+  await f.check('/api/portal', { cookie: portal.cookie }, 401);
+  await f.admin(`/api/admin/clients/${arc.id}/portal-users/${portal.user.id}/setup`, {}, 'POST', 409);
+  await f.admin(`/api/admin/clients/${arc.id}/portal-users/${portal.user.id}`, { enabled: true }, 'PATCH');
+  const relink = await f.admin(`/api/admin/clients/${arc.id}/portal-users/${portal.user.id}/setup`, {});
+  const again = await f.activate(relink.setup.path);
+  assert.equal((await f.as(again.cookie)('/api/portal')).client.name, 'ARC');
+
+  // Visits are audited; deleting the client removes its portal logins.
+  assert.ok((await f.admin('/api/admin/audit')).items.some(row => row.action === 'portal.viewed'));
+  await f.admin(`/api/clients/${arc.id}`, {}, 'DELETE');
+  await f.check('/api/portal', { cookie: again.cookie }, 401);
 });

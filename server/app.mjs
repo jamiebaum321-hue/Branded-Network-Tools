@@ -18,7 +18,8 @@ import { attachMailId, board, boardClients, cardDetail, completeFollowup, create
 import { submissionPdf } from './pdf.mjs';
 import { importSeed } from './seed.mjs';
 import { boundedInt, choice, int, list, object, str, validate } from './validation.mjs';
-import { cleanExpired } from './accounts.mjs';
+import { changePortalUser, cleanExpired, invitePortalUser, listPortalUsers, resetPortalUser } from './accounts.mjs';
+import { portalHome } from './portal.mjs';
 import { assertWebOrigin, clientIp, empty, json, protect, readJson, readSession, sessionCookie } from './http.mjs';
 
 const assets = new Map(Object.entries({
@@ -49,7 +50,7 @@ const imageAssets = [
     .map(name => [`artwork/${name}.webp`, 'image/webp']),
 ];
 for (const [path, type] of imageAssets) assets.set(`/assets/${path}`, [`assets/${path}`, type]);
-const shellPath = /^(?:\/|\/today|\/signin|\/pipeline(?:\/(?:metrics|cards\/[\w-]+|suggestions(?:\/[\w-]+)?))?|\/clients(?:\/[\w-]+(?:\/submissions\/[\w-]+)?)?|\/prospects|\/approvals|\/activity|\/followups|\/contracts|\/admin|\/setup\/[\w-]+|\/onboard\/[\w.-]+)$/;
+const shellPath = /^(?:\/|\/today|\/signin|\/pipeline(?:\/(?:metrics|cards\/[\w-]+|suggestions(?:\/[\w-]+)?))?|\/clients(?:\/[\w-]+(?:\/submissions\/[\w-]+)?)?|\/prospects|\/approvals|\/activity|\/followups|\/contracts|\/admin|\/portal|\/setup\/[\w-]+|\/onboard\/[\w.-]+)$/;
 const ident = '([a-zA-Z0-9_-]{1,80})';
 const options = { public: true };
 
@@ -70,7 +71,7 @@ function boardQuery(url) {
 }
 
 async function visibleOwners(store, actor) {
-  if (actor.role === 'admin') return store.all('SELECT id,name,enabled FROM users ORDER BY name');
+  if (actor.role === 'admin') return store.all("SELECT id,name,enabled FROM users WHERE role<>'client' ORDER BY name");
   const [where, args] = clientScope(actor, 'c.id');
   return store.all(`WITH accessible AS (SELECT c.id,c.owner_id FROM clients c WHERE ${where})
     SELECT DISTINCT u.id,u.name,u.enabled FROM users u WHERE u.id=? OR u.id IN (
@@ -191,6 +192,11 @@ export function createHandler(store, config) {
   route('GET', '/api/followups', ({ actor }) => followUps(store, actor, config.timeZone));
   route('GET', '/api/contracts', ({ actor }) => contracts(store, actor, config.timeZone));
   route('DELETE', `/api/clients/${ident}`, ({ actor, ids }) => deleteClient(store, actor, ids[0]));
+  route('GET', `/api/admin/clients/${ident}/portal-users`, async ({ actor, ids }) => ({ items: await listPortalUsers(store, actor, ids[0]) }));
+  route('POST', `/api/admin/clients/${ident}/portal-users`, ({ actor, ids, data }) => invitePortalUser(store, actor, ids[0], data));
+  route('PATCH', `/api/admin/clients/${ident}/portal-users/${ident}`, async ({ actor, ids, data }) => ({ user: await changePortalUser(store, actor, ids[0], ids[1], data) }));
+  route('POST', `/api/admin/clients/${ident}/portal-users/${ident}/setup`, async ({ actor, ids }) => ({ setup: await resetPortalUser(store, actor, ids[0], ids[1]) }));
+  route('GET', '/api/portal', ({ actor }) => portalHome(store, actor), { portal: true });
   route('POST', `/api/clients/${ident}/form-link`, ({ actor, ids }) => copyFormLink(store, actor, ids[0], config.linkSecret));
   route('POST', `/api/clients/${ident}/form-link/revoke`, ({ actor, ids }) => revokeFormLinks(store, actor, ids[0]));
   route('GET', `/api/clients/${ident}/submissions`, ({ actor, ids, url }) => listSubmissions(store, actor, ids[0],
@@ -261,6 +267,8 @@ export function createHandler(store, config) {
         const session = readSession(req, config);
         const actor = await sessionUser(store, session);
         if (!actor && !found.policy.public) { req.resume(); throw new AppError(401, 'Sign in to continue.'); }
+        // Deny by default: a client (portal) login may only use public routes and routes marked for the portal.
+        if (actor?.role === 'client' && !found.policy.public && !found.policy.portal) { req.resume(); throw new AppError(403, 'This page is for the Branded team.'); }
         if (path.startsWith('/api/admin/') && actor?.role !== 'admin') { req.resume(); throw new AppError(403, 'Admin access is required.'); }
         const isWrite = req.method !== 'GET';
         if (isWrite) assertWebOrigin(req, config);

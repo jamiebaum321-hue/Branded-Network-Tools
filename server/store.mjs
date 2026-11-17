@@ -31,6 +31,7 @@ const migrations = [
   { version: 6, sql: () => readFileSync(new URL('./migrations/006-approvals-activity.sql', import.meta.url), 'utf8') },
   { version: 7, sql: () => readFileSync(new URL('./migrations/007-solutions-only.sql', import.meta.url), 'utf8') },
   { version: 8, sql: () => readFileSync(new URL('./migrations/008-liz-offboarding.sql', import.meta.url), 'utf8') },
+  { version: 9, sql: () => readFileSync(new URL('./migrations/009-client-portal.sql', import.meta.url), 'utf8') },
 ];
 
 // Queries are written with `?` placeholders; translate them to $1..$n outside string literals.
@@ -132,6 +133,8 @@ export function requireHuman(actor) {
 // The expression is supplied by callers, never interpolated from a request.
 export function clientScope(actor, column) {
   if (actor.kind === 'user' && actor.role === 'admin') return ['1=1', []];
+  // Portal (client) logins never see internal client data; the portal has its own narrow queries.
+  if (actor.kind === 'user' && actor.role === 'client') return ['1=0', []];
   if (actor.kind === 'claude') {
     return actor.all_clients ? ['1=1', []] : [
       `EXISTS (SELECT 1 FROM mcp_clients access WHERE access.client_id=${column} AND access.token_id=?)`, [actor.id],
