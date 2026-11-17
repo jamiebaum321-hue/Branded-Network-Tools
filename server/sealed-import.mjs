@@ -2,6 +2,7 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:
 import { existsSync, readFileSync } from 'node:fs';
 import { gunzipSync, gzipSync } from 'node:zlib';
 import { importSeed } from './seed.mjs';
+import { decideApproval } from './approvals.mjs';
 import { accountFields } from './clients.mjs';
 import { introStatuses } from '../public/account-fields.mjs';
 import { recordData } from './records.mjs';
@@ -42,6 +43,7 @@ export async function applySealedImport(store, env, file = sealedFile) {
   const text = readFileSync(file, 'utf8');
   const input = unseal(text, env.TRACKER_IMPORT_KEY);
   if (input.sync) return applyTrackerSync(store, input, createHash('sha256').update(text).digest('hex'));
+  if (input.decisions) return applyDecisions(store, input, createHash('sha256').update(text).digest('hex'));
   const total = recordSets.reduce((sum, kind) => sum + (input[kind]?.length ?? 0), 0);
   return store.tx(async () => {
     await store.exec("SELECT pg_advisory_xact_lock(hashtext('branded_sealed_import'))");
@@ -132,5 +134,27 @@ export async function applyTrackerSync(store, input, marker) {
     await store.run('INSERT INTO imported_records VALUES(?,?,?,?)', namespace, 'sync', marker, now);
     console.log('Tracker sync applied:', JSON.stringify({ ...counts, added: added.counts }));
     return { ...counts, added: added.counts };
+  });
+}
+
+// ---- Decisions an admin asked for outside the app ----
+// A decisions file approves or rejects named pending proposals through the normal approval path (same
+// checks, same audit trail), as the admin named in the file. It runs once; already-decided items are skipped.
+export async function applyDecisions(store, input, marker) {
+  return store.tx(async () => {
+    await store.exec("SELECT pg_advisory_xact_lock(hashtext('branded_sealed_import'))");
+    if (await store.get("SELECT 1 FROM imported_records WHERE namespace='decisions' AND kind='file' AND source_id=?", marker)) return null;
+    const admin = await store.get("SELECT id,name,email,role FROM users WHERE role='admin' AND enabled=1 AND email=?", String(input.admin_email ?? '').toLowerCase());
+    if (!admin) { console.error('Decisions skipped: the named admin account was not found.'); return null; }
+    const results = [];
+    for (const item of input.decisions) {
+      const row = await store.get('SELECT id,status FROM approvals WHERE dedupe_key=?', item.dedupe_key);
+      if (!row || row.status !== 'pending') { results.push({ key: item.dedupe_key, result: row ? `already ${row.status}` : 'not found' }); continue; }
+      const decided = await decideApproval(store, { kind: 'user', ...admin }, row.id, { decision: item.decision, note: item.note ?? '' });
+      results.push({ key: item.dedupe_key, result: decided.status });
+    }
+    await store.run('INSERT INTO imported_records VALUES(?,?,?,?)', 'decisions', 'file', marker, iso());
+    console.log('Decisions applied:', JSON.stringify(results));
+    return results;
   });
 }
