@@ -29,6 +29,7 @@ const migrations = [
   { version: 4, sql: () => readFileSync(new URL('./migrations/004-tracker-corrections.sql', import.meta.url), 'utf8') },
   { version: 5, sql: () => readFileSync(new URL('./migrations/005-mercosa-signed.sql', import.meta.url), 'utf8') },
   { version: 6, sql: () => readFileSync(new URL('./migrations/006-approvals-activity.sql', import.meta.url), 'utf8') },
+  { version: 7, sql: () => readFileSync(new URL('./migrations/007-solutions-only.sql', import.meta.url), 'utf8') },
 ];
 
 // Queries are written with `?` placeholders; translate them to $1..$n outside string literals.

@@ -99,12 +99,11 @@ export const btn = (label, { kind = '', action, data = '', glyph, endGlyph, type
   `<button type="${type}" class="button ${h(kind)}"${action ? ` data-action="${h(action)}"` : ''}${data ? ` ${data}` : ''}>${glyph ? icon(glyph) : ''}${h(label)}${endGlyph ? `<span class="button-end">${icon(endGlyph)}</span>` : ''}</button>`;
 export const link = (href, label, glyph, extra = '') => `<a href="${h(href)}" class="text-link ${h(extra)}">${glyph ? icon(glyph) : ''}${h(label)}</a>`;
 export const emptyState = (title, detail = '') => `<div class="empty"><strong>${h(title)}</strong>${detail ? `<p>${h(detail)}</p>` : ''}</div>`;
-export function heading(title, detail = '', action = '', { art, date, compact = false, signature = false } = {}) {
+export function heading(title, detail = '', action = '', { date, hero = false } = {}) {
   const copy = `${date ? `<span class="date-label">${h(date)}</span>` : ''}<h1>${h(title)}</h1>${detail ? `<p>${h(detail)}</p>` : ''}`;
-  if (!art) return `<div class="heading"><div>${copy}</div>${action}</div>`;
-  return `<div class="heading page-hero${compact ? ' compact' : ''}${signature ? ' signature' : ''}" data-art="${h(art)}">
-    <div class="hero-copy">${copy}${action ? `<div class="hero-actions">${action}</div>` : ''}</div>
-    <div class="hero-visual" aria-hidden="true"><img src="/assets/artwork/${h(art)}.webp" width="240" height="136" alt="" decoding="async"></div></div>`;
+  // Only Today gets the colored banner; every other page is a plain title.
+  if (!hero) return `<div class="heading"><div>${copy}</div>${action}</div>`;
+  return `<div class="heading page-hero signature no-art"><div class="hero-copy">${copy}${action ? `<div class="hero-actions">${action}</div>` : ''}</div></div>`;
 }
 // Branded Hospitality logo: the B mark and the wordmark, with the app name underneath.
 export const brand = () => `<a class="brand" href="/today" aria-label="Branded Hospitality · Solutions Network">
@@ -144,8 +143,6 @@ export function shell(user, location) {
 export function pipelineTabs(selected) {
   return `<nav class="subnav" aria-label="Pipeline">${[
     ['/pipeline', 'Board', 'board', 'board'],
-    ['/pipeline/metrics', 'Metrics', 'metrics', 'metrics'],
-    ['/pipeline/suggestions', 'Suggested leads', 'suggestions', 'shortlist'],
   ].map(([url, title, key, glyph]) => `<a href="${url}"${key === selected ? ' aria-current="page"' : ''}>${icon(glyph)}${title}</a>`).join('')}</nav>`;
 }
 

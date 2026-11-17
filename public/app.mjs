@@ -197,27 +197,22 @@ async function render({ focus = false } = {}) {
     } else if (!user) html = signInPage();
     else if (path === '/' || path === '/signin' || path === '/today') {
       if (path !== '/today') history.replaceState(null, '', '/today');
-      todayResult = await api('/api/today');
-      html = todayPage(todayResult, zone, user);
+      html = todayPage(await api('/api/followups'), zone, user);
     } else if (path === '/pipeline') {
       const [data, ctx] = await Promise.all([api(queryPath('/api/board', query)), getContext()]);
       if (current !== revision) return;
       context = ctx;
       html = boardPage(data.groups, ctx, query, zone, stage, data.clients);
-    } else if (path === '/pipeline/metrics') {
-      const [data, ctx] = await Promise.all([api(queryPath('/api/metrics', query)), getContext()]);
-      html = metricsPage(data, ctx, query, zone);
-    } else if (path === '/pipeline/suggestions') {
-      const [data, ctx] = await Promise.all([api(queryPath('/api/suggestions', suggestionQuery(query))), getContext()]);
-      html = suggestionsPage(data, ctx, query);
+    } else if (path === '/pipeline/metrics' || path.startsWith('/pipeline/suggestions')) {
+      // Metrics and suggested leads were removed; old links land on the board.
+      navigate('/pipeline', { replace: true });
+      return;
     } else if (path.startsWith('/pipeline/cards/')) {
       const cardId = path.split('/').at(-1);
       const activity = hash.startsWith('#activity-') ? `?activity_id=${pathId(hash.slice(10))}` : '';
       const data = await api(`/api/cards/${pathId(cardId)}${activity}`);
       const chosen = query.get('stage');
       html = cardPage(data, zone, Object.hasOwn(stages, chosen ?? '') ? chosen : '', hash);
-    } else if (path.startsWith('/pipeline/suggestions/')) {
-      html = suggestionPage((await api(`/api/suggestions/${pathId(path.split('/').at(-1))}`)).suggestion);
     } else if (path === '/clients' || path === '/prospects') {
       const group = path === '/prospects' ? 'prospects' : 'clients';
       const listQuery = new URLSearchParams(query);
@@ -253,7 +248,7 @@ async function render({ focus = false } = {}) {
       html = contractsPage(await api('/api/contracts'));
     } else if (path === '/admin') {
       if (user.role !== 'admin') throw new RequestError(403, { error: 'Ask an admin for access.' });
-      const tab = ['audit','import','mcp','assistant'].includes(query.get('tab')) ? query.get('tab') : 'accounts';
+      const tab = ['audit','assistant'].includes(query.get('tab')) ? query.get('tab') : 'accounts';
       const ctxPromise = getContext();
       let data;
       if (tab === 'audit') {

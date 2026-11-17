@@ -305,7 +305,7 @@ test('persistent store keeps accounts across restarts and only runs migrations o
   const reopened = await openStore(databaseUrl, { schema });
   try {
     assert.equal((await reopened.get('SELECT email FROM users')).email, adminEmail);
-    assert.deepEqual((await reopened.all('SELECT version FROM schema_migrations')).map(row => row.version), [1, 2, 3, 4, 5, 6]);
+    assert.deepEqual((await reopened.all('SELECT version FROM schema_migrations')).map(row => row.version), [1, 2, 3, 4, 5, 6, 7]);
   } finally { await reopened.close(); }
 });
 
@@ -421,47 +421,48 @@ test('a sealed import applies once as the first admin and never twice', async t 
   assert.equal((await f.admin('/api/cards')).items[0].intro_status, 'Awaiting Response');
 });
 
-test('client records: sections, keyed months, access rules, workspace issues and import', async t => {
+test('client records: issues and billing only, access rules, workspace issues and import', async t => {
   const f = await fixture(t);
   const client = await f.addClient('Records Client');
   const issue = (await f.admin(`/api/clients/${client.id}/records`, { kind: 'issues', data: { issue: 'SCA countersignature missing', priority: 'High', status: 'Open', owner: 'Daniel' } })).record;
   assert.equal(issue.data.priority, 'High');
   await f.admin(`/api/clients/${client.id}/records`, { kind: 'issues', data: { priority: 'High' } }, 'POST', 400);
-  await f.admin(`/api/clients/${client.id}/records`, { kind: 'kpis', data: { month: '2026-11', posts: 3, meetings: 1 } });
-  await f.admin(`/api/clients/${client.id}/records`, { kind: 'kpis', data: { month: '2026-11', posts: 1 } }, 'POST', 409);
-  await f.admin(`/api/clients/${client.id}/records`, { kind: 'kpis', data: { month: '2026-13' } }, 'POST', 400);
-  await f.admin(`/api/clients/${client.id}/records`, { kind: 'intel', data: { headline: 'Competitor raises', url: 'javascript:alert(1)' } }, 'POST', 400);
+  // Only issues and billing are kept; the old KPI, intel, brief and onboarding sections are gone.
+  for (const kind of ['kpis', 'intel', 'briefs', 'onboarding', 'wins', 'reports']) {
+    await f.admin(`/api/clients/${client.id}/records`, { kind, data: { month: '2026-11' } }, 'POST', 400);
+  }
   await f.admin(`/api/clients/${client.id}/records`, { kind: 'billing', data: { invoice_no: '6292110', amount: 12500, status: 'Invoiced' } });
   await f.admin(`/api/records/${issue.id}`, { data: { issue: 'SCA countersignature missing', status: 'Resolved' } }, 'PATCH');
   const workspace = (await f.admin('/api/records', { kind: 'issues', data: { issue: 'Owners need to update the tracker weekly', status: 'Open' } })).record;
-  await f.admin('/api/records', { kind: 'kpis', data: { month: '2026-11' } }, 'POST', 400);
+  await f.admin('/api/records', { kind: 'billing', data: { status: 'Paid' } }, 'POST', 400);
 
   const detail = await f.admin(`/api/clients/${client.id}`);
-  assert.deepEqual(Object.keys(detail.records), ['issues', 'onboarding', 'kpis', 'reports', 'billing', 'intel', 'briefs', 'wins']);
+  assert.deepEqual(Object.keys(detail.records), ['issues', 'billing']);
   assert.equal(detail.records.issues[0].data.status, 'Resolved');
-  assert.equal(detail.records.kpis[0].data.posts, 3);
+  assert.equal(detail.records.billing[0].data.amount, 12500);
   assert.deepEqual((await f.admin('/api/issues')).items.map(row => row.id), [workspace.id]);
 
   const { setup } = await f.admin('/api/admin/accounts', { name: 'Member', email: 'member@example.test', role: 'member' });
   const member = await f.activate(setup.path);
   const personal = f.as(member.cookie);
-  await personal(`/api/clients/${client.id}/records`, { kind: 'wins', data: { week: '2026-11-09', win: 'Featured' } }, 'POST', 404);
+  await personal(`/api/clients/${client.id}/records`, { kind: 'issues', data: { issue: 'Featured' } }, 'POST', 404);
   await personal(`/api/records/${workspace.id}`, { data: { issue: 'x' } }, 'PATCH', 403);
   assert.deepEqual((await personal('/api/issues')).items, []);
   await f.admin(`/api/clients/${client.id}`, { member_ids: [member.user.id] }, 'PATCH');
-  await personal(`/api/clients/${client.id}/records`, { kind: 'wins', data: { week: '2026-11-09', win: 'Featured in the newsletter' } });
+  await personal(`/api/clients/${client.id}/records`, { kind: 'issues', data: { issue: 'Logo missing from the newsletter' } });
   await personal(`/api/records/${issue.id}`, {}, 'DELETE');
 
   const result = await f.admin('/api/admin/import/apply', { version: 1, namespace: 'tracker-records', clients: [{ id: 'arc', name: 'ARC' }],
     client_records: [{ id: 'I-02', client_id: 'arc', kind: 'issues', data: { issue: 'Confirm term dates', priority: 'Medium', status: 'Open' } },
       { id: 'I-20', kind: 'issues', data: { issue: 'Workspace-wide data cleanup', status: 'In Progress' } },
-      { id: 'arc-onb-1', client_id: 'arc', kind: 'onboarding', data: { no: 1, item: 'Company profile', status: 'Complete' } }] });
+      { id: 'arc-bill-1', client_id: 'arc', kind: 'billing', data: { invoice_no: '6292108', status: 'Invoiced', amount: 20000 } }] });
   assert.equal(result.counts.client_records.added, 3);
-  assert.equal((await f.admin('/api/issues')).items.length, 3);
+  // Two imported issues, the workspace issue and the member's open client issue.
+  assert.equal((await f.admin('/api/issues')).items.length, 4);
   const arc = (await f.admin('/api/clients?q=ARC')).items[0];
-  assert.equal((await f.admin(`/api/clients/${arc.id}`)).records.onboarding[0].data.item, 'Company profile');
+  assert.equal((await f.admin(`/api/clients/${arc.id}`)).records.billing[0].data.invoice_no, '6292108');
   await f.admin(`/api/clients/${arc.id}`, {}, 'DELETE');
-  assert.equal((await f.admin('/api/issues')).items.length, 2);
+  assert.equal((await f.admin('/api/issues')).items.length, 3);
 });
 
 test('approvals queue: dedupe, decide, guarded record updates, access and import', async t => {
@@ -653,4 +654,41 @@ test('assistant: not configured, tool loop over scoped data, links and rate limi
   assert.deepEqual(seen.clients.map(c => c.name), ['Hang']);
   assert.match((await runAssistantTool(f.store, memberActor, f.config, 'client_details', { client_id: hidden.id })).error, /No client/);
   await f.admin('/api/assistant', { messages: [{ role: 'assistant', content: 'Hi' }] }, 'POST', 400);
+});
+
+test('tracker sync updates imported records once, adds new ones and never re-creates a deleted client', async t => {
+  const f = await fixture(t);
+  await f.admin('/api/admin/import/apply', { version: 1, namespace: 'solutions-tracker',
+    clients: [{ id: 'arc', name: 'ARC', stage: 'pipeline', next_step: 'Old step', next_due: '2026-11-04' }, { id: 'gone', name: 'Gone Co', stage: 'current' }],
+    partners: [{ id: 'arc-001', client_id: 'arc', company: 'Slim Chickens', stage: 'reached_out', intro_status: 'Awaiting Response' }] });
+  const gone = (await f.admin('/api/clients?q=Gone')).items[0];
+  await f.admin(`/api/clients/${gone.id}`, {}, 'DELETE');
+
+  const sync = { version: 1, namespace: 'solutions-tracker', sync: true,
+    clients: [{ id: 'arc', name: 'ARC', stage: 'current', deal_status: 'Active – Paying', next_step: 'Make intros for the new targets', next_due: null },
+      { id: 'gone', name: 'Gone Co', stage: 'current' }],
+    partners: [{ id: 'arc-001', client_id: 'arc', company: 'Slim Chickens', stage: 'in_conversation', intro_status: 'Meeting Scheduled', next_step: 'Meet at RFDC' },
+      { id: 'arc-t-new', client_id: 'arc', company: 'Popeyes', stage: 'to_contact', intro_status: 'To Introduce' },
+      { id: 'gone-001', client_id: 'gone', company: 'Should Not Appear', stage: 'to_contact' }] };
+  const key = randomBytes(32).toString('base64url');
+  const file = join(mkdtempSync(join(tmpdir(), 'sync-')), 'tracker-import.sealed');
+  writeFileSync(file, seal(sync, key));
+  const first = await applySealedImport(f.store, { TRACKER_IMPORT_KEY: key }, pathToFileURL(file));
+  assert.equal(first.clients_updated, 1);
+  assert.equal(first.cards_updated, 1);
+  assert.equal(first.added.partners.added, 1);
+
+  const clients = (await f.admin('/api/clients?group=clients')).items;
+  assert.deepEqual(clients.map(c => c.name), ['ARC']);
+  const arc = (await f.admin(`/api/clients/${clients[0].id}`)).client;
+  assert.deepEqual([arc.stage, arc.deal_status, arc.next_step, arc.next_due], ['current', 'Active – Paying', 'Make intros for the new targets', null]);
+  const board = (await f.admin('/api/board')).groups;
+  const cards = board.flatMap(group => group.items);
+  assert.deepEqual(cards.map(c => [c.company, c.stage, c.intro_status]).sort(),
+    [['Popeyes', 'to_contact', 'To Introduce'], ['Slim Chickens', 'in_conversation', 'Meeting Scheduled']]);
+
+  // Edits made on the site after the sync stay put: the same file doesn't apply twice.
+  await f.admin(`/api/clients/${arc.id}`, { next_step: 'Edited on the site' }, 'PATCH');
+  assert.equal(await applySealedImport(f.store, { TRACKER_IMPORT_KEY: key }, pathToFileURL(file)), null);
+  assert.equal((await f.admin(`/api/clients/${arc.id}`)).client.next_step, 'Edited on the site');
 });

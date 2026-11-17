@@ -651,3 +651,8 @@ dialog::backdrop { background: linear-gradient(145deg, #2319486b, #17152d69); ba
 .today-ask-chips .ask-chip { background: #ffffff14; border: 1px solid #ffffff33; color: #fffffff0; }
 .today-ask-chips .ask-chip:hover { background: #ffffff26; }
 @media (max-width: 640px) { .today-ask-chips { display: none; } }
+
+/* Banner without artwork (Today only). */
+.page-hero.no-art { grid-template-columns: minmax(0, 1fr) !important; }
+a.panel.stat { color: inherit; text-decoration: none; }
+a.panel.stat:hover { border-color: var(--iris-line, var(--primary)); }

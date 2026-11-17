@@ -10,7 +10,7 @@ const identity = row => `<div class="row-main"><strong>${h(row.person || row.com
 const navArrow = () => `<span class="row-chevron">${icon('chevron')}</span>`;
 const sectionLabel = (title, glyph, tone = 'blue') => `<div class="section-label"><span class="section-icon ${h(tone)}">${icon(glyph)}</span><h2>${h(title)}</h2></div>`;
 const disclosure = (title, glyph) => `<summary class="disclosure">${icon(glyph)}<span>${h(title)}</span><span class="disclosure-arrow">${icon('down')}</span></summary>`;
-const toolbar = (tab, controls) => `<div class="workspace-toolbar">${pipelineTabs(tab)}${controls}</div>`;
+const toolbar = (tab, controls) => `<div class="workspace-toolbar">${controls}</div>`;
 const pageMore = (name, next) => next === null || next === undefined ? '' : `<div class="pagination">${btn('Load more', { action: name, endGlyph: 'down', data: `data-next="${h(next)}"` })}</div>`;
 const statusName = status => ({ pending: 'Pending review', approved: 'Approved', dismissed: 'Dismissed', awaiting_review: 'Ready for review',
   needs_review: 'Review updated context', reviewed: 'Reviewed', sent: 'Sent', cancelled: 'Cancelled' })[status] ?? status;
@@ -31,7 +31,7 @@ export function signInPage() {
 }
 
 export function setupPage(info, key) {
-  return `<div class="form-page narrow">${brand()}${heading('Set your password', `${info.name} · ${info.email}`, '', { art: 'workspace-controls', compact: true })}
+  return `<div class="form-page narrow">${brand()}${heading('Set your password', `${info.name} · ${info.email}`)}
     <div class="panel">${subjectForm('setup', key, `${field('Password', 'password', '', { type: 'password', autocomplete: 'new-password', required: true, max: 256, hint: 'Use at least 12 characters.' })}
     ${field('Confirm password', 'confirmation', '', { type: 'password', autocomplete: 'new-password', required: true, max: 256 })}
     ${btn('Activate account', { kind: 'primary', type: 'submit', glyph: 'lock' })}`)}</div></div>`;
@@ -55,28 +55,26 @@ const todayAsk = () => `<form class="today-ask" role="search" aria-label="Ask an
     .map(text => `<button type="button" class="ask-chip" data-ask-today="${h(text)}">${h(text)}</button>`).join('')}</div>`;
 
 export function todayPage(data, zone, user) {
-  const today = formatDate(new Date(), zone, { year: 'numeric' });
-  const dueLabel = row => formatDate(row.at, zone, { year: 'numeric' }) === today
-    ? badge('Due today', 'amber', 'clock') : badge(`Overdue · ${formatDate(row.at, zone)}`, 'red', 'clock');
-  const panels = [
-    { key: 'followups', title: 'Follow-ups due', glyph: 'today', tone: 'amber', empty: 'No follow-ups are due.', label: dueLabel },
-    { key: 'drafts', title: 'Drafts awaiting review', glyph: 'draft', tone: 'violet', empty: 'You have no drafts to review.', label: row => row.extra === 'claude' ? badge('Claude draft', 'violet') : '' },
-    { key: 'replies', title: 'Replies since last visit', glyph: 'reply', tone: 'green', empty: 'No new replies since your last visit.', label: row => badge(timeLabel(row.at, zone), 'green') },
-    { key: 'leads', title: 'Suggested leads', glyph: 'shortlist', tone: 'blue', empty: 'No leads are waiting for your review.', label: row => badge(row.extra, 'blue') },
-  ];
-  const title = heading(greeting(user?.name, zone), 'Here’s where Branded Solutions stands today.', todayAsk(), { art: 'signal-today', date: currentDate(zone), signature: true });
-  if (!data.more_replies && panels.every(panel => !data[panel.key].length)) {
-    return `${title}<section class="panel flush">${illustratedState('today-caught-up', 'You’re caught up',
-      'There are no follow-ups, drafts, replies, or leads waiting for you.', link('/pipeline', 'Open pipeline', 'arrow'))}</section>`;
-  }
-  return `${title}<div class="today-grid">${panels.map(panel => {
-    const rows = data[panel.key];
-    return `<section class="panel flush today-panel" aria-label="${h(panel.title)}" data-tone="${panel.tone}"><div class="panel-title"><span class="panel-icon ${panel.tone}">${icon(panel.glyph)}</span>
-      <h2>${panel.title}</h2>${rows.length ? badge(`${rows.length}${panel.key === 'replies' && data.more_replies ? '+' : ''}`, panel.tone) : ''}</div>
-      ${rows.length ? rows.map(row => `<a class="queue-row" href="${h(row.href)}"><div class="row-main"><strong>${h(row.person || row.company)}</strong>
-        <small>${h(panel.key === 'drafts' ? row.description : row.person ? row.company : row.description || row.company)}</small></div>${panel.label(row)}${navArrow()}</a>`).join('') : emptyState(panel.empty)}
-      ${panel.key === 'replies' && data.more_replies ? `<div class="pagination">${btn('Show remaining replies', { action: 'reload' })}</div>` : ''}</section>`;
-  }).join('')}</div>`;
+  // Today is the tracker's to-do list: next steps that are due, contracts to act on, quiet intros.
+  const title = heading(greeting(user?.name, zone), 'Here’s where Branded Solutions stands today.', todayAsk(), { date: currentDate(zone), hero: true });
+  const due = data.accounts.filter(row => row.bucket === 'overdue' || row.bucket === 'week');
+  const stepRow = row => `<a class="list-row" href="/clients/${pathId(row.id)}"><div class="row-main"><strong>${h(row.name)}</strong>
+    <small class="clamp" title="${h(row.next_step)}">${h(row.next_step)}</small>${row.next_owner ? `<small class="muted">Owner · ${h(row.next_owner)}</small>` : ''}</div>
+    ${badge(row.days < 0 ? `${-row.days}d overdue` : row.days === 0 ? 'Due today' : dayLabel(row.next_due, false), row.days < 0 ? 'red' : 'amber', 'clock')}${navArrow()}</a>`;
+  const contractRow = row => `<a class="list-row" href="/clients/${pathId(row.id)}"><div class="row-main"><strong>${h(row.name)}</strong>
+    <small>${h([`Ends ${dayLabel(row.contract_end)}`, row.monthly_fee && `${money(row.monthly_fee)}/mo`].filter(Boolean).join(' · '))}</small></div>
+    ${badge(daysText(row.days_left), contractTone[row.flag] ?? 'neutral', 'clock')}${navArrow()}</a>`;
+  const stats = [['Overdue next steps', data.accounts.filter(row => row.bucket === 'overdue').length, 'red', 'flag'],
+    ['Due this week', data.accounts.filter(row => row.bucket === 'week').length, 'amber', 'today'],
+    ['Quiet intros', data.intros.length, 'violet', 'reply'], ['Contracts to act on', data.contracts.length, 'blue', 'draft']];
+  return `${title}
+    <div class="stat-grid">${stats.map(([label, value, tone, glyph]) => `<a class="panel stat" href="/followups"><span class="panel-icon ${tone}">${icon(glyph)}</span><div><strong>${value}</strong><span class="stat-label">${label}</span></div></a>`).join('')}</div>
+    <div class="grid-two top-aligned"><section class="panel stack"><div class="section-head">${sectionLabel('Next steps due', 'flag', 'amber')}${badge(due.length, due.length ? 'amber' : 'neutral')}</div>
+      ${due.length ? due.slice(0, 10).map(stepRow).join('') : emptyState('Nothing is due this week.')}
+      <div class="pagination">${link('/followups', 'All follow-ups', 'arrow')}</div></section>
+    <section class="panel stack"><div class="section-head">${sectionLabel('Contracts ending', 'draft', 'blue')}${badge(data.contracts.length, data.contracts.length ? 'blue' : 'neutral')}</div>
+      ${data.contracts.length ? data.contracts.map(contractRow).join('') : emptyState('No contracts end in the next 60 days.')}
+      <div class="pagination">${link('/contracts', 'All contracts', 'arrow')}</div></section></div>`;
 }
 
 function filters(kind, query, context, expanded = Boolean(query.size)) {
@@ -131,7 +129,7 @@ function clientSwitcher(clients, query) {
 export function boardPage(groups, context, query, zone, currentStage, clients = []) {
   const addContact = btn('Add contact', { kind: 'primary', glyph: 'plus', action: 'add-card' });
   const emptyBoard = !context.clients.length || (!query.size && groups.every(group => group.total === 0));
-  const top = `${heading('Partner pipeline', 'Track outreach and introductions.', emptyBoard ? '' : addContact, { art: 'signal-pipeline', signature: true })}
+  const top = `${heading('Pipeline', '', emptyBoard ? '' : addContact)}
     ${clientSwitcher(clients, query)}${toolbar('board', filters('board', query, context))}`;
   if (emptyBoard) {
     return `${top}<section class="panel flush">${context.clients.length
@@ -306,8 +304,7 @@ export function clientRows(rows, zone) {
         <div class="row-main"><strong>${h(row.name)}</strong><small>${icon('user')}<span>${h(row.team || brandedOwner(row))}</span></small></div>
         <span class="client-open">${icon('arrow')}</span></div>
       ${row.deal_status || terms ? `<p class="muted small">${h([row.deal_status, terms].filter(Boolean).join(' · '))}</p>` : ''}
-      <div class="client-facts"><span class="client-count">${icon('board')}${row.open_cards} open ${row.open_cards === 1 ? 'intro' : 'intros'}</span>
-        ${row.latest_submission ? badge(`Intake ${formatDate(row.latest_submission, zone)}`, 'green', 'check') : badge('No intake yet', 'neutral', 'draft')}</div></a>`;
+      <div class="client-facts"><span class="client-count">${icon('board')}${row.open_cards} open ${row.open_cards === 1 ? 'intro' : 'intros'}</span></div></a>`;
   }).join('');
 }
 
@@ -320,9 +317,7 @@ export function clientsPage(data, query, user, zone, group = 'clients') {
     <div class="client-grid">${clientRows(rows, zone)}</div></section>`).join('')
     : `<div class="panel">${emptyState(prospects ? 'No matching prospects.' : 'No matching clients.')}</div>`;
   const prospects = group === 'prospects';
-  return `${heading(prospects ? 'Prospects' : 'Clients', prospects
-    ? 'Companies we are pitching Solutions to. When one signs, set its stage to Current Client and it moves to Clients.'
-    : 'The companies we make introductions for: paying clients and referral partners.',
+  return `${heading(prospects ? 'Prospects' : 'Clients', '',
     user.role === 'admin' ? btn(prospects ? 'Add prospect' : 'Add client', { action: 'add-client', glyph: 'plus', kind: 'primary', data: `data-stage="${prospects ? 'pipeline' : 'current'}"` }) : '',
     { art: 'signal-clients', signature: true })}
     <form class="client-search" data-form="filter">${field(prospects ? 'Search prospects' : 'Search clients', 'q', query.get('q'), { type: 'search', placeholder: 'Company name', max: 180, glyph: 'search' })}
@@ -424,23 +419,14 @@ function introsPanel(client, intros) {
 }
 
 export function clientPage(data, context, zone) {
-  const { client, submissions, link: active } = data;
+  const { client } = data;
   const prospect = ['pipeline', 'passed'].includes(client.stage);
   return `${link(prospect ? '/prospects' : '/clients', prospect ? 'Back to prospects' : 'Back to clients', 'back', 'back-link')}${heading(client.name, `${clientStages[client.stage]?.label ?? ''} · Branded owner · ${brandedOwner(client)}`,
-    btn('Add contact', { kind: 'primary', glyph: 'plus', action: 'add-card', data: `data-client="${h(client.id)}"` }), { art: 'signal-clients', compact: true })}
+    btn('Add contact', { kind: 'primary', glyph: 'plus', action: 'add-card', data: `data-client="${h(client.id)}"` }), )}
     <div class="grid-two top-aligned">${accountPanel(client, zone)}${nextStepPanel(client)}</div>
     <div class="grid-two top-aligned">${introsPanel(client, data.intros ?? [])}${contactsPanel(client) || '<div></div>'}</div>
     ${recordsPanel(client, data.records)}
     ${data.activity ? clientActivityPanel(client, data.activity, data.approvals, zone) : ''}
-    <div class="grid-two"><section class="panel stack"><div class="onboarding-entry"><div>${sectionLabel('Solutions Partner Onboarding', 'link')}<p class="muted section-copy">Share a form link so the client can enter their answers.</p></div>
-    <img src="/assets/artwork/signal-intake.webp" width="96" height="64" loading="lazy" decoding="async" alt=""></div>
-    <div class="actions">${btn('Copy form link', { action: 'form-link', glyph: 'link', kind: 'primary', data: `data-id="${h(client.id)}"` })}</div>
-    ${active ? `<div class="muted">Active link expires ${h(formatDate(active.expires_at, zone))}.</div><details>${disclosure('Link settings', 'settings')}
-      ${btn('Revoke active link', { action: 'revoke-form', kind: 'danger', data: `data-id="${h(client.id)}"` })}</details>` : ''}</section>
-    <section class="panel flush"><div class="panel-title"><span class="panel-icon violet">${icon('history')}</span><h2>Submission history</h2></div><div id="submission-list">
-    ${submissions.items.length ? submissionRows(submissions.items, client.id, zone)
-      : illustratedState('client-onboarding', 'No submissions yet', 'Completed forms will appear here.')}</div>
-    ${submissions.next_cursor ? `<div class="pagination">${btn('Load older submissions', { action: 'more-submissions', data: `data-id="${h(client.id)}" data-next="${submissions.next_cursor}"` })}</div>` : ''}</section></div>
     ${context.user.role === 'admin' ? `<details class="panel">${disclosure('Client settings', 'settings')}${clientForm(context, data)}
       <div class="actions">${btn('Delete client', { action: 'delete-client', kind: 'danger', glyph: 'close', data: `data-id="${h(client.id)}" data-name="${h(client.name)}"` })}</div></details>` : ''}`;
 }
@@ -482,8 +468,8 @@ export function recordsPanel(client, records) {
       <div class="record-list">${rows.length ? rows.map(row => recordRow(kind, row)).join('') : emptyState("Nothing recorded yet.")}</div>
       <div class="actions">${btn(`Add ${info.singular}`, { action: 'add-record', glyph: 'plus', kind: 'quiet', data: `data-kind="${h(kind)}" data-client="${h(client.id)}"` })}</div></details>`;
   }).join('');
-  return `<section class="panel stack"><div class="section-head">${sectionLabel('Account work', 'stack', 'violet')}
-    <span class="muted small">Issues, onboarding, KPIs, reports, billing, intel and wins</span></div>${sections}</section>`;
+  return `<section class="panel stack"><div class="section-head">${sectionLabel('Issues & billing', 'stack', 'violet')}
+    </div>${sections}</section>`;
 }
 
 export function recordForm(kind, record, clientId) {
@@ -519,7 +505,7 @@ export function followupsPage(data) {
   const contracts = data.contracts.map(row => `<a class="list-row" href="/clients/${pathId(row.id)}"><div class="row-main"><strong>${h(row.name)}</strong>
     <small>${h([`Ends ${dayLabel(row.contract_end)}`, row.auto_renew ? 'Renews automatically' : 'Renewal needs agreement', row.monthly_fee && `${money(row.monthly_fee)}/mo`].filter(Boolean).join(' · '))}</small></div>
     ${badge(daysText(row.days_left), contractTone[row.flag] ?? 'neutral', 'clock')}${navArrow()}</a>`).join('');
-  return `${heading('Follow-ups', 'Account next steps, intros gone quiet for 14+ days, and contracts ending within 60 days.', '', { art: 'signal-today' })}
+  return `${heading('Follow-ups')}
     <div class="stat-grid">${[['Overdue next steps', data.accounts.filter(row => row.bucket === 'overdue').length, 'red', 'flag'],
       ['Due this week', data.accounts.filter(row => row.bucket === 'week').length, 'amber', 'today'],
       ['Quiet intros', data.intros.length, 'violet', 'reply'], ['Contracts to act on', data.contracts.length, 'blue', 'draft']]
@@ -554,7 +540,7 @@ export function contractsPage(data) {
     <td class="term-cell">${bar(row)}</td><td>${h(dayLabel(row.contract_start))}</td><td>${h(dayLabel(row.contract_end))}</td>
     <td>${row.days_left === null ? '—' : badge(daysText(row.days_left), contractTone[row.flag] ?? 'green')}</td>
     <td>${row.monthly_fee ? `${money(row.monthly_fee)}/mo` : '—'}</td><td>${h(row.agreement_status || '—')}</td><td>${row.auto_renew ? 'Auto-renews' : '—'}</td></tr>`).join('');
-  return `${heading('Contracts', `Current clients and referral partners by term. ${money(data.monthly_retainers)}/mo in active retainers.`, '', { art: 'workspace-controls' })}
+  return `${heading('Contracts', `${money(data.monthly_retainers)}/mo in active retainers`)}
     <section class="panel flush"><div class="table-scroll"><table class="data-table contracts-table"><thead><tr><th scope="col">Client</th><th scope="col">Term (today marked)</th>
     <th scope="col">Start</th><th scope="col">End</th><th scope="col">Time left</th><th scope="col">Fee</th><th scope="col">SCA</th><th scope="col">Renewal</th></tr></thead>
     <tbody>${rows || `<tr><td colspan="8">${emptyState('No contract dates recorded yet.', 'Add start and end dates under Client settings.')}</td></tr>`}</tbody></table></div></section>
@@ -608,7 +594,7 @@ export function alertRows(data, zone) {
     <div class="row-main"><strong>${h(row.title)}</strong><small>${h(row.client_name)} · ${h(timeLabel(row.occurred_at, zone))}</small></div>${row.seen_at ? '' : badge('New', 'blue')}${navArrow()}</a>`).join('') : emptyState('You’re caught up.');
 }
 
-const adminSections = [['accounts', 'Accounts', 'team'], ['assistant', 'Assistant', 'reply'], ['audit', 'Audit log', 'history'], ['import', 'Import JSON', 'upload'], ['mcp', 'MCP access', 'lock']];
+const adminSections = [['accounts', 'Accounts', 'team'], ['assistant', 'Assistant', 'reply'], ['audit', 'Audit log', 'history']];
 
 function assistantStatusPanel(data, zone) {
   const state = data.ok ? (data.claude ? badge('Working', 'green', 'check') : badge('Working on the free allowance', 'green', 'check')) : badge('Can’t reach the AI', 'red', 'close');
@@ -679,7 +665,7 @@ export function adminPage(tab, data, context, query, zone, preview) {
   else if (tab === 'mcp') content = `<div class="stack"><section class="panel stack"><div class="section-head">${sectionLabel('Claude job credentials', 'lock')}${btn('Create credential', { action: 'new-job', kind: 'primary', glyph: 'plus' })}</div>
     <p class="muted wrap">Endpoint · <code>${h(location.origin)}/mcp</code></p></section><div class="panel flush">${tokenList(data.items, context, zone)}</div></div>`;
   else content = `<div class="stack"><div class="section-head">${sectionLabel('Team accounts', 'team')}${btn('Invite user', { action: 'invite-account', glyph: 'plus', kind: 'primary' })}</div>${accountList(data.items)}</div>`;
-  return `${heading('Admin', 'Manage accounts, activity, and workspace access.', '', { art: 'workspace-controls' })}${nav}${content}`;
+  return `${heading('Admin')}${nav}${content}`;
 }
 
 // ---- Approvals queue ----
@@ -713,7 +699,7 @@ export function approvalsPage(data, query, zone) {
   const decided = query.get('status') === 'decided';
   const tabs = `<nav class="subnav" aria-label="Approvals"><a href="/approvals"${decided ? '' : ' aria-current="page"'}>${icon('flag')}Pending</a>
     <a href="/approvals?status=decided"${decided ? ' aria-current="page"' : ''}>${icon('history')}Decided</a></nav>`;
-  return `${heading('Approvals', 'Drafts and proposed changes wait here for a person. Nothing is sent or changed until someone approves it, and the app never sends email itself.', '', { art: 'workspace-controls' })}
+  return `${heading('Approvals')}
     ${tabs}<div class="stack">${data.items.length ? data.items.map(row => approvalCard(row, zone)).join('')
       : `<section class="panel">${emptyState(decided ? 'Nothing decided yet.' : 'Nothing is waiting for approval.')}</section>`}</div>`;
 }
@@ -730,7 +716,7 @@ export function activityLogRows(items, zone) {
 
 export function activityLogPage(data, context, query, zone) {
   const review = query.get('review') === '1';
-  return `${heading('Activity log', 'Every update to an account, with where it came from.', btn('Log an update', { action: 'log-activity', glyph: 'plus', kind: 'primary' }), { art: 'signal-today' })}
+  return `${heading('Activity', '', btn('Log an update', { action: 'log-activity', glyph: 'plus', kind: 'primary' }))}
     <form class="filters panel" data-form="filter">${select('Client', 'client_id', names(context.clients), query.get('client_id') ?? '', 'All clients')}
       ${select('Show', 'review', [{ id: '1', name: 'Needs review only' }], review ? '1' : '', 'Everything')}
       <div class="actions">${btn('Apply', { type: 'submit' })}${query.size ? btn('Clear', { action: 'clear-filters', kind: 'quiet' }) : ''}</div></form>
