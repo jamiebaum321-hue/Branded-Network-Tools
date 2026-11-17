@@ -305,7 +305,7 @@ test('persistent store keeps accounts across restarts and only runs migrations o
   const reopened = await openStore(databaseUrl, { schema });
   try {
     assert.equal((await reopened.get('SELECT email FROM users')).email, adminEmail);
-    assert.deepEqual((await reopened.all('SELECT version FROM schema_migrations')).map(row => row.version), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    assert.deepEqual((await reopened.all('SELECT version FROM schema_migrations')).map(row => row.version), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
   } finally { await reopened.close(); }
 });
 
@@ -719,6 +719,11 @@ test('client portal logins: one company, portal only, refused by every internal 
   const home = await client('/api/portal');
   assert.deepEqual(home.user, { name: 'Dave Client', email: 'dave@arc.example' });
   assert.deepEqual(home.client, { name: 'ARC' });
+  // The welcome tour shows until the client finishes or skips it, then never again for that login.
+  assert.equal(home.tour_done, false);
+  await client('/api/portal/tour-done', {});
+  assert.equal((await client('/api/portal')).tour_done, true);
+  await f.admin('/api/portal/tour-done', {}, 'POST', 403);
   assert.deepEqual(home.agreement, { status: 'Signed', start: '2026-06-12', end: '2026-12-11', monthly_fee: 10000 });
   assert.deepEqual(home.intros.map(row => [row.company, row.contact, row.status]),
     [['Slim Chickens', 'Tom Gordon', 'Meeting set'], ['Cafe Rio', 'Adam Klaers', 'Introduced'], ['Won Tacos', 'Wendy Won', 'Won']]);

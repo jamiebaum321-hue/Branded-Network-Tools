@@ -123,7 +123,7 @@ export function shell(user, location) {
   // Client logins get a plain portal header: no team navigation, alerts or workspace tools.
   if (user.role === 'client') return `<header class="app-header portal-header"><div class="bar"><div class="bar-brand">${brand('/portal')}</div>
     <div class="workspace-context" aria-hidden="true"><strong>Client portal</strong></div>
-    <div class="account-actions"><button class="account-button" data-action="account" aria-label="Account menu for ${h(user.name)}" title="${h(user.name)}"><span class="avatar" aria-hidden="true">${h(initials(user.name))}</span><span class="account-name" aria-hidden="true">${h(user.name)}${icon('down')}</span></button></div></div></header>`;
+    <div class="account-actions"><button class="account-button" data-action="account" data-tour="account" aria-label="Account menu for ${h(user.name)}" title="${h(user.name)}"><span class="avatar" aria-hidden="true">${h(initials(user.name))}</span><span class="account-name" aria-hidden="true">${h(user.name)}${icon('down')}</span></button></div></div></header>`;
   const sections = [
     ['/today', 'Today', 'today', location === '/' || location === '/today'],
     ['/pipeline', 'Pipeline', 'board', location.startsWith('/pipeline')],

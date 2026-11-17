@@ -1,6 +1,7 @@
 import { sections } from './intake-fields.mjs';
 import { recordKinds } from './record-kinds.mjs';
 import { mountAssistant, unmountAssistant } from './assistant.mjs';
+import { startTour, stopTour } from './portal-tour.mjs';
 import { btn, emptyState, h, heading, icon, link, pathId, shell, stages } from './ui.mjs';
 import { activityItems, adminPage, alertRows, auditRows, boardCard, boardPage, cardPage, clientForm, clientPage,
   clientRows, clientsPage, contractsPage, followupsPage, recordForm, approvalsPage, activityLogPage, activityLogRows, logActivityForm, createCardForm, intakePage, inviteForm, jobTokenForm, metricsPage, setupPage, signInPage,
@@ -48,6 +49,7 @@ let dragged = null;
 let dropColumn = null;
 let toastTimer;
 let todayAcknowledgement = Promise.resolve();
+let portalData = null;
 
 class RequestError extends Error {
   constructor(code, payload) {
@@ -183,6 +185,7 @@ async function render({ focus = false } = {}) {
   try {
     let html;
     let todayResult;
+    portalData = null;
     if (path.startsWith('/setup/')) {
       const key = path.split('/').at(-1);
       html = setupPage(await api(`/api/setup/${pathId(key)}`), key);
@@ -198,7 +201,8 @@ async function render({ focus = false } = {}) {
     else if (user.role === 'client') {
       // Client logins only ever see their portal.
       if (path !== '/portal') history.replaceState(null, '', '/portal');
-      html = portalPage(await api('/api/portal'));
+      portalData = await api('/api/portal');
+      html = portalPage(portalData);
     }
     else if (path === '/' || path === '/signin' || path === '/today') {
       if (path !== '/today') history.replaceState(null, '', '/today');
@@ -230,7 +234,8 @@ async function render({ focus = false } = {}) {
       html = submissionPage((await api(`/api${path}`)).submission, zone);
     } else if (/^\/clients\/[\w-]+\/portal$/.test(path)) {
       if (user.role !== 'admin') throw new RequestError(403, { error: 'Ask an admin for access.' });
-      html = portalPage({ ...(await api(`/api/admin${path}-preview`)), back: path.replace(/\/portal$/, '') });
+      portalData = { ...(await api(`/api/admin${path}-preview`)), back: path.replace(/\/portal$/, '') };
+      html = portalPage(portalData);
     } else if (path.startsWith('/clients/')) {
       const portalUsers = user.role === 'admin' ? api(`/api/admin${path}/portal-users`).then(result => result.items) : null;
       const [data, ctx] = await Promise.all([api(`/api${path}`), getContext()]);
@@ -273,6 +278,11 @@ async function render({ focus = false } = {}) {
     } else throw new RequestError(404, { error: 'This page doesn’t exist.' });
     if (current !== revision) return;
     show(html, focus, hash);
+    // A client's first visit opens the welcome tour; finishing or skipping it is remembered on their account.
+    if (portalData && !portalData.preview && !portalData.tour_done) {
+      portalData.tour_done = true;
+      startTour({ clientName: portalData.client.name, onDone: () => api('/api/portal/tour-done', 'POST', {}).catch(() => {}) });
+    }
     if (todayResult) todayAcknowledgement = api('/api/today/seen', 'POST', { reply_cursor: todayResult.reply_cursor }).catch(() => {});
     if (user && !publicRoute && user.role !== 'client') { refreshAlertDot(); refreshBadges(); mountAssistant(api); }
   } catch (error) {
@@ -610,7 +620,7 @@ const actions = {
   'mark-alerts': async button => { await api('/api/alerts/seen', 'POST', { ids: button.dataset.ids.split(',') }); await showAlerts(); },
   account: () => showDialog('Account', `<div class="stack"><div><strong>${h(user.name)}</strong><p class="muted">${h(user.email)}</p></div>
     <div>${btn('Sign out', { action: 'logout', glyph: 'logout' })}</div></div>`, { glyph: 'user' }),
-  logout: async () => { await api('/api/session/logout', 'POST'); user = null; context = null; unmountAssistant(); navigate('/signin', { replace: true }); },
+  logout: async () => { stopTour(); await api('/api/session/logout', 'POST'); user = null; context = null; unmountAssistant(); navigate('/signin', { replace: true }); },
   'close-dialog': () => dialog.close(),
   'clear-filters': () => navigate(location.pathname),
   'pick-stage': button => pickStage(button.dataset.stage),
@@ -618,6 +628,10 @@ const actions = {
   'add-client': button => showDialog(button.dataset.stage === 'pipeline' ? 'Add prospect' : 'Add client',
     clientForm(context, button.dataset.stage ? { stage: button.dataset.stage } : undefined), { glyph: 'building' }),
   'invite-account': () => showDialog('Invite user', inviteForm(), { glyph: 'team' }),
+  'portal-tour': () => {
+    if (!portalData) return;
+    startTour({ clientName: portalData.client.name, onDone: portalData.preview ? undefined : () => api('/api/portal/tour-done', 'POST', {}).catch(() => {}) });
+  },
   'portal-invite': button => showDialog(`Invite to the ${button.dataset.name} portal`, portalInviteForm(button.dataset.client, button.dataset.name), { glyph: 'lock' }),
   'portal-toggle': async button => {
     const enabling = button.dataset.enabled === 'true';

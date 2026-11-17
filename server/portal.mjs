@@ -1,6 +1,6 @@
 // The client portal: what a client login can see. Every query here names its fields explicitly and is
 // limited to one company, so nothing from the internal tracker can reach a client by accident.
-import { AppError, audit, requireAdmin } from './store.mjs';
+import { AppError, audit, iso, requireAdmin } from './store.mjs';
 
 // Internal intro statuses, collapsed into wording a client sees. Anything not listed is never shown.
 const introLabel = {
@@ -45,7 +45,15 @@ export async function portalHome(store, actor) {
   if (actor?.kind !== 'user' || actor.role !== 'client' || !actor.portal_client_id) throw new AppError(403, 'The portal is for client logins.');
   const view = await portalView(store, actor.portal_client_id);
   await audit(store, actor, 'portal.viewed', 'client', actor.portal_client_id, actor.portal_client_id);
-  return { user: { name: actor.name, email: actor.email }, ...view };
+  const tour = await store.get('SELECT portal_tour_done_at FROM users WHERE id=?', actor.id);
+  return { user: { name: actor.name, email: actor.email }, tour_done: Boolean(tour?.portal_tour_done_at), ...view };
+}
+
+// The welcome tour shows once per login; finishing or skipping it is remembered on the account.
+export async function finishPortalTour(store, actor) {
+  if (actor?.kind !== 'user' || actor.role !== 'client') throw new AppError(403, 'The portal is for client logins.');
+  await store.run('UPDATE users SET portal_tour_done_at=coalesce(portal_tour_done_at,?) WHERE id=?', iso(), actor.id);
+  return { ok: true };
 }
 
 // Admins see exactly what that client's logins see, without creating a login.

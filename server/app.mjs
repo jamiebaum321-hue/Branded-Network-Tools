@@ -19,7 +19,7 @@ import { submissionPdf } from './pdf.mjs';
 import { importSeed } from './seed.mjs';
 import { boundedInt, choice, int, list, object, str, validate } from './validation.mjs';
 import { changePortalUser, cleanExpired, invitePortalUser, listPortalUsers, resetPortalUser } from './accounts.mjs';
-import { portalHome, portalPreview } from './portal.mjs';
+import { finishPortalTour, portalHome, portalPreview } from './portal.mjs';
 import { assertWebOrigin, clientIp, empty, json, protect, readJson, readSession, sessionCookie } from './http.mjs';
 
 const assets = new Map(Object.entries({
@@ -31,6 +31,7 @@ const assets = new Map(Object.entries({
   '/account-fields.mjs': ['account-fields.mjs', 'text/javascript; charset=utf-8'],
   '/record-kinds.mjs': ['record-kinds.mjs', 'text/javascript; charset=utf-8'],
   '/assistant.mjs': ['assistant.mjs', 'text/javascript; charset=utf-8'],
+  '/portal-tour.mjs': ['portal-tour.mjs', 'text/javascript; charset=utf-8'],
   '/favicon.svg': ['favicon.svg', 'image/svg+xml'],
   '/favicon.ico': ['assets/brand/favicon.ico', 'image/x-icon'],
   '/assets/brand/network-mark.svg': ['assets/brand/network-mark.svg', 'image/svg+xml'],
@@ -200,6 +201,7 @@ export function createHandler(store, config) {
   route('PATCH', `/api/admin/clients/${ident}/portal-users/${ident}`, async ({ actor, ids, data }) => ({ user: await changePortalUser(store, actor, ids[0], ids[1], data) }));
   route('POST', `/api/admin/clients/${ident}/portal-users/${ident}/setup`, async ({ actor, ids }) => ({ setup: await resetPortalUser(store, actor, ids[0], ids[1]) }));
   route('GET', '/api/portal', ({ actor }) => portalHome(store, actor), { portal: true });
+  route('POST', '/api/portal/tour-done', ({ actor }) => finishPortalTour(store, actor), { portal: true });
   route('GET', `/api/admin/clients/${ident}/portal-preview`, ({ actor, ids }) => portalPreview(store, actor, ids[0]));
   route('POST', `/api/clients/${ident}/form-link`, ({ actor, ids }) => copyFormLink(store, actor, ids[0], config.linkSecret));
   route('POST', `/api/clients/${ident}/form-link/revoke`, ({ actor, ids }) => revokeFormLinks(store, actor, ids[0]));

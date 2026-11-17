@@ -771,20 +771,20 @@ export function portalPage(data) {
     ${badge(row.status, portalTone[row.status] ?? 'neutral')}</div>`).join('');
   const preview = data.preview ? `${link(data.back ?? '/clients', 'Back to client', 'back', 'back-link')}
     <div class="notice preview-note" role="note">${icon('lock')}<span><strong>Preview.</strong> This is exactly what ${h(client.name)}’s portal logins see. Nothing here is editable by them.</span></div>` : '';
-  return `${preview}${heading(client.name, 'Branded Solutions client portal')}
-    <div class="stat-grid">${stats.map(([label, value, tone, glyph]) => `<div class="panel stat"><span class="panel-icon ${tone}">${icon(glyph)}</span><div><strong>${value}</strong><span class="stat-label">${label}</span></div></div>`).join('')}</div>
+  return `${preview}${heading(client.name, 'Branded Solutions client portal', btn('Take the tour', { action: 'portal-tour', glyph: 'today', kind: 'quiet', data: 'data-tour="replay"' }))}
+    <div class="stat-grid" data-tour="numbers">${stats.map(([label, value, tone, glyph]) => `<div class="panel stat"><span class="panel-icon ${tone}">${icon(glyph)}</span><div><strong>${value}</strong><span class="stat-label">${label}</span></div></div>`).join('')}</div>
     <div class="grid-two top-aligned portal-grid">
-      <section class="panel stack"><div class="section-head">${sectionLabel('Introductions', 'team', 'blue')}${badge(intros.length, 'blue')}</div>
+      <section class="panel stack" data-tour="intros"><div class="section-head">${sectionLabel('Introductions', 'team', 'blue')}${badge(intros.length, 'blue')}</div>
         <p class="muted small">Restaurant and hospitality groups Branded has introduced you to, and where each conversation stands.</p>
         ${introRows || emptyState('No introductions yet.')}</section>
       <div class="stack">
-        ${nextStep ? `<section class="panel stack"><div class="section-head">${sectionLabel('What’s next', 'flag', 'amber')}${nextStep.due ? badge(dayLabel(nextStep.due), 'amber', 'clock') : ''}</div>
+        ${nextStep ? `<section class="panel stack" data-tour="next"><div class="section-head">${sectionLabel('What’s next', 'flag', 'amber')}${nextStep.due ? badge(dayLabel(nextStep.due), 'amber', 'clock') : ''}</div>
           <p class="multiline">${h(nextStep.text)}</p></section>` : ''}
-        ${updates.length ? `<section class="panel stack"><div class="section-head">${sectionLabel('Updates from Branded', 'history', 'violet')}</div>
+        ${updates.length ? `<section class="panel stack" data-tour="updates"><div class="section-head">${sectionLabel('Updates from Branded', 'history', 'violet')}</div>
           ${updates.map(row => `<article class="portal-update"><span class="muted small">${h(dayLabel(row.on))}</span><p class="multiline">${h(row.text)}</p></article>`).join('')}</section>` : ''}
-        <section class="panel stack"><div class="section-head">${sectionLabel('Your agreement', 'draft', 'violet')}</div>
+        <section class="panel stack" data-tour="agreement"><div class="section-head">${sectionLabel('Your agreement', 'draft', 'violet')}</div>
           ${facts.length ? `<dl class="summary-grid">${facts.map(([key, value]) => `<div><dt>${h(key)}</dt><dd>${h(value)}</dd></div>`).join('')}</dl>` : emptyState('Agreement details will appear here.')}</section>
-        <section class="panel stack"><div class="section-head">${sectionLabel('Brands we’re working on', 'leads', 'amber')}${badge(targets.length, 'amber')}</div>
+        <section class="panel stack" data-tour="brands"><div class="section-head">${sectionLabel('Brands we’re working on', 'leads', 'amber')}${badge(targets.length, 'amber')}</div>
           <p class="muted small">Brands on your target list that Branded is lining up introductions to.</p>
           ${targetRows || emptyState('No brands in progress right now.')}</section>
       </div></div>
