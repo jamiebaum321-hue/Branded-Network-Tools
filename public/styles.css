@@ -665,3 +665,7 @@ a.panel.stat:hover { border-color: var(--iris-line, var(--primary)); }
   .portal-header .workspace-context { margin-inline-end: auto; padding-inline-start: 18px; border-inline-start: 1px solid var(--line); }
 }
 .portal-welcome p { margin: 0; max-width: 72ch; }
+.preview-note { display: flex; gap: 10px; align-items: flex-start; padding: 12px 15px; margin-bottom: 14px; border-radius: 12px; border: 1px solid var(--iris-line, #d8d2fb); background: var(--iris-wash, #f1eefe); font-size: .88rem; }
+.preview-note .icon { width: 17px; height: 17px; margin-top: 2px; flex: none; color: var(--primary); }
+.portal-foot { margin-top: 18px; }
+#portal-access .section-head .actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }

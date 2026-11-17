@@ -228,6 +228,9 @@ async function render({ focus = false } = {}) {
       html = clientsPage(data, query, user, zone, group);
     } else if (/^\/clients\/[\w-]+\/submissions\/[\w-]+$/.test(path)) {
       html = submissionPage((await api(`/api${path}`)).submission, zone);
+    } else if (/^\/clients\/[\w-]+\/portal$/.test(path)) {
+      if (user.role !== 'admin') throw new RequestError(403, { error: 'Ask an admin for access.' });
+      html = portalPage({ ...(await api(`/api/admin${path}-preview`)), back: path.replace(/\/portal$/, '') });
     } else if (path.startsWith('/clients/')) {
       const portalUsers = user.role === 'admin' ? api(`/api/admin${path}/portal-users`).then(result => result.items) : null;
       const [data, ctx] = await Promise.all([api(`/api${path}`), getContext()]);

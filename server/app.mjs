@@ -19,7 +19,7 @@ import { submissionPdf } from './pdf.mjs';
 import { importSeed } from './seed.mjs';
 import { boundedInt, choice, int, list, object, str, validate } from './validation.mjs';
 import { changePortalUser, cleanExpired, invitePortalUser, listPortalUsers, resetPortalUser } from './accounts.mjs';
-import { portalHome } from './portal.mjs';
+import { portalHome, portalPreview } from './portal.mjs';
 import { assertWebOrigin, clientIp, empty, json, protect, readJson, readSession, sessionCookie } from './http.mjs';
 
 const assets = new Map(Object.entries({
@@ -50,7 +50,7 @@ const imageAssets = [
     .map(name => [`artwork/${name}.webp`, 'image/webp']),
 ];
 for (const [path, type] of imageAssets) assets.set(`/assets/${path}`, [`assets/${path}`, type]);
-const shellPath = /^(?:\/|\/today|\/signin|\/pipeline(?:\/(?:metrics|cards\/[\w-]+|suggestions(?:\/[\w-]+)?))?|\/clients(?:\/[\w-]+(?:\/submissions\/[\w-]+)?)?|\/prospects|\/approvals|\/activity|\/followups|\/contracts|\/admin|\/portal|\/setup\/[\w-]+|\/onboard\/[\w.-]+)$/;
+const shellPath = /^(?:\/|\/today|\/signin|\/pipeline(?:\/(?:metrics|cards\/[\w-]+|suggestions(?:\/[\w-]+)?))?|\/clients(?:\/[\w-]+(?:\/submissions\/[\w-]+|\/portal)?)?|\/prospects|\/approvals|\/activity|\/followups|\/contracts|\/admin|\/portal|\/setup\/[\w-]+|\/onboard\/[\w.-]+)$/;
 const ident = '([a-zA-Z0-9_-]{1,80})';
 const options = { public: true };
 
@@ -197,6 +197,7 @@ export function createHandler(store, config) {
   route('PATCH', `/api/admin/clients/${ident}/portal-users/${ident}`, async ({ actor, ids, data }) => ({ user: await changePortalUser(store, actor, ids[0], ids[1], data) }));
   route('POST', `/api/admin/clients/${ident}/portal-users/${ident}/setup`, async ({ actor, ids }) => ({ setup: await resetPortalUser(store, actor, ids[0], ids[1]) }));
   route('GET', '/api/portal', ({ actor }) => portalHome(store, actor), { portal: true });
+  route('GET', `/api/admin/clients/${ident}/portal-preview`, ({ actor, ids }) => portalPreview(store, actor, ids[0]));
   route('POST', `/api/clients/${ident}/form-link`, ({ actor, ids }) => copyFormLink(store, actor, ids[0], config.linkSecret));
   route('POST', `/api/clients/${ident}/form-link/revoke`, ({ actor, ids }) => revokeFormLinks(store, actor, ids[0]));
   route('GET', `/api/clients/${ident}/submissions`, ({ actor, ids, url }) => listSubmissions(store, actor, ids[0],

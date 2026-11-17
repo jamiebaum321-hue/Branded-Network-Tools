@@ -743,11 +743,40 @@ export function clientActivityPanel(client, log, approvals, zone) {
 }
 
 // ---- Client portal ----
+const portalTone = { 'Meeting set': 'green', 'In discussion': 'violet', Introduced: 'blue', Won: 'green', 'Intro requested': 'amber', Planned: 'neutral' };
+
 export function portalPage(data) {
-  return `${heading(data.client.name, 'Branded Solutions client portal')}
-    <section class="panel stack portal-welcome"><div class="section-head">${sectionLabel(`Welcome, ${String(data.user.name).split(/\s+/)[0]}`, 'check', 'green')}</div>
-      <p>This is where you’ll follow the introductions Branded is making for ${h(data.client.name)}, the brands we’re working on for you, and your agreement details.</p>
-      <p class="muted">We’re setting up your view now. Your Branded team will let you know when it’s ready. Questions in the meantime? Reply to your Branded contact.</p></section>`;
+  const { client, agreement, summary, intros, targets } = data;
+  const term = agreement.start && agreement.end ? `${dayLabel(agreement.start)} – ${dayLabel(agreement.end)}` : agreement.end ? `Through ${dayLabel(agreement.end)}` : '';
+  const facts = [
+    agreement.status && ['Agreement', agreement.status],
+    term && ['Term', term],
+    agreement.end && ['Renewal date', dayLabel(agreement.end)],
+    agreement.monthly_fee ? ['Monthly fee', `${money(agreement.monthly_fee)}/mo`] : null,
+  ].filter(Boolean);
+  const stats = [['Introductions', summary.intros, 'blue', 'team'], ['In discussion', summary.in_discussion, 'violet', 'reply'],
+    ['Meetings set', summary.meetings, 'green', 'today'], ['Brands in progress', summary.targets, 'amber', 'leads']];
+  const introRows = intros.map(row => `<div class="list-row"><div class="row-main"><strong>${h(row.company)}</strong>
+    <small>${h([row.contact, `Introduced ${dayLabel(row.introduced_on)}`].filter(Boolean).join(' · '))}</small></div>
+    ${badge(row.status, portalTone[row.status] ?? 'neutral')}</div>`).join('');
+  const targetRows = targets.map(row => `<div class="list-row"><div class="row-main"><strong>${h(row.company)}</strong></div>
+    ${badge(row.status, portalTone[row.status] ?? 'neutral')}</div>`).join('');
+  const preview = data.preview ? `${link(data.back ?? '/clients', 'Back to client', 'back', 'back-link')}
+    <div class="notice preview-note" role="note">${icon('lock')}<span><strong>Preview.</strong> This is exactly what ${h(client.name)}’s portal logins see. Nothing here is editable by them.</span></div>` : '';
+  return `${preview}${heading(client.name, 'Branded Solutions client portal')}
+    <div class="stat-grid">${stats.map(([label, value, tone, glyph]) => `<div class="panel stat"><span class="panel-icon ${tone}">${icon(glyph)}</span><div><strong>${value}</strong><span class="stat-label">${label}</span></div></div>`).join('')}</div>
+    <div class="grid-two top-aligned portal-grid">
+      <section class="panel stack"><div class="section-head">${sectionLabel('Introductions', 'team', 'blue')}${badge(intros.length, 'blue')}</div>
+        <p class="muted small">Restaurant and hospitality groups Branded has introduced you to, and where each conversation stands.</p>
+        ${introRows || emptyState('No introductions yet.')}</section>
+      <div class="stack">
+        <section class="panel stack"><div class="section-head">${sectionLabel('Your agreement', 'draft', 'violet')}</div>
+          ${facts.length ? `<dl class="summary-grid">${facts.map(([key, value]) => `<div><dt>${h(key)}</dt><dd>${h(value)}</dd></div>`).join('')}</dl>` : emptyState('Agreement details will appear here.')}</section>
+        <section class="panel stack"><div class="section-head">${sectionLabel('Brands we’re working on', 'leads', 'amber')}${badge(targets.length, 'amber')}</div>
+          <p class="muted small">Brands on your target list that Branded is lining up introductions to.</p>
+          ${targetRows || emptyState('No brands in progress right now.')}</section>
+      </div></div>
+    <p class="muted small portal-foot">Questions about anything here? Reach out to your Branded team.</p>`;
 }
 
 export function portalAccessPanel(client, users, zone) {
@@ -757,7 +786,8 @@ export function portalAccessPanel(client, users, zone) {
       <span class="actions">${row.enabled ? btn('New setup link', { action: 'portal-link', kind: 'quiet', data: `data-client="${h(client.id)}" data-id="${h(row.id)}"` }) : ''}
       ${btn(row.enabled ? 'Turn off' : 'Turn on', { action: 'portal-toggle', kind: row.enabled ? 'danger' : 'quiet', data: `data-client="${h(client.id)}" data-id="${h(row.id)}" data-enabled="${row.enabled ? 'false' : 'true'}" data-name="${h(row.name)}"` })}</span></div>`).join('');
   return `<section class="panel stack" id="portal-access"><div class="section-head">${sectionLabel('Portal access', 'lock', 'blue')}
-      ${btn('Invite to portal', { action: 'portal-invite', glyph: 'plus', kind: 'primary', data: `data-client="${h(client.id)}" data-name="${h(client.name)}"` })}</div>
+      <span class="actions">${link(`/clients/${pathId(client.id)}/portal`, 'Preview portal', 'arrow')}
+      ${btn('Invite to portal', { action: 'portal-invite', glyph: 'plus', kind: 'primary', data: `data-client="${h(client.id)}" data-name="${h(client.name)}"` })}</span></div>
     <p class="muted small">People at ${h(client.name)} who can sign in to the read-only client portal. They only ever see ${h(client.name)}.</p>
     ${rows || emptyState('No one from this client has portal access yet.')}</section>`;
 }

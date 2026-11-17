@@ -697,7 +697,15 @@ test('client portal logins: one company, portal only, refused by every internal 
   const f = await fixture(t);
   const arc = await f.addClient('ARC', { stage: 'current', next_step: 'Internal: chase invoice', latest: 'Internal note' });
   const other = await f.addClient('Other Co', { stage: 'current' });
-  const card = await f.addCard(arc, { company: 'Slim Chickens' });
+  const card = await f.addCard(arc, { company: 'Slim Chickens', person: 'Tom Gordon', stage: 'in_conversation', intro_status: 'Meeting Scheduled',
+    next_step: 'Internal: Liz to chase', introduced_by: 'Schatzy' });
+  await f.addCard(arc, { company: 'Cafe Rio', person: 'Adam Klaers', stage: 'reached_out', intro_status: 'Awaiting Response' });
+  await f.addCard(arc, { company: 'Lost Burger', person: 'Pat Lost', stage: 'closed', intro_status: 'Not Interested', outcome: 'Not Interested' });
+  await f.addCard(arc, { company: 'Won Tacos', person: 'Wendy Won', stage: 'closed', intro_status: 'Won', outcome: 'Won' });
+  await f.addCard(arc, { company: 'Popeyes', person: 'Secret Research Contact', stage: 'to_contact', intro_status: 'Intro Requested' });
+  await f.addCard(other, { company: 'Other Client Intro', stage: 'in_conversation' });
+  await f.admin(`/api/clients/${arc.id}`, { agreement_status: 'Signed', contract_start: '2026-06-12', contract_end: '2026-12-11', monthly_fee: 10000,
+    renewal_terms: 'Internal renewal note' }, 'PATCH');
 
   // Only admins manage portal logins; the login is tied to one client.
   const invited = await f.admin(`/api/admin/clients/${arc.id}/portal-users`, { name: 'Dave Client', email: 'Dave@ARC.example' });
@@ -709,8 +717,20 @@ test('client portal logins: one company, portal only, refused by every internal 
 
   // The portal shows their company and nothing internal.
   const home = await client('/api/portal');
-  assert.deepEqual(home, { user: { name: 'Dave Client', email: 'dave@arc.example' }, client: { name: 'ARC' } });
-  assert.doesNotMatch(JSON.stringify(home), /Internal|invoice|Slim/);
+  assert.deepEqual(home.user, { name: 'Dave Client', email: 'dave@arc.example' });
+  assert.deepEqual(home.client, { name: 'ARC' });
+  assert.deepEqual(home.agreement, { status: 'Signed', start: '2026-06-12', end: '2026-12-11', monthly_fee: 10000 });
+  assert.deepEqual(home.intros.map(row => [row.company, row.contact, row.status]),
+    [['Slim Chickens', 'Tom Gordon', 'Meeting set'], ['Cafe Rio', 'Adam Klaers', 'Introduced'], ['Won Tacos', 'Wendy Won', 'Won']]);
+  assert.deepEqual(home.targets, [{ company: 'Popeyes', status: 'Intro requested' }]);
+  assert.deepEqual(home.summary, { intros: 3, in_discussion: 0, meetings: 1, won: 1, targets: 1 });
+  // Nothing internal: notes, next steps, owners, lost intros, target contacts, other clients, renewal notes.
+  assert.doesNotMatch(JSON.stringify(home), /Internal|invoice|Liz|Schatzy|Lost Burger|Pat Lost|Secret Research|Other Client|renewal note|Not Interested/);
+  for (const row of home.intros) assert.deepEqual(Object.keys(row).sort(), ['company', 'contact', 'introduced_on', 'status']);
+  // The admin preview shows exactly the same view, without a login; clients can't use it.
+  const preview = await f.admin(`/api/admin/clients/${arc.id}/portal-preview`);
+  for (const key of ['client', 'agreement', 'summary', 'intros', 'targets']) assert.deepEqual(preview[key], home[key]);
+  await client(`/api/admin/clients/${arc.id}/portal-preview`, undefined, 'GET', 403);
   assert.equal((await client('/api/session')).user.role, 'client');
 
   // Deny by default: every internal route refuses the client login.
