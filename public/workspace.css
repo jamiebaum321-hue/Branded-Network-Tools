@@ -133,6 +133,7 @@
   flex: 2;
 }
 .deal-board {
+  position: relative;
   display: grid;
   grid-auto-flow: column;
   grid-auto-columns: minmax(12rem, 1fr);
@@ -321,8 +322,23 @@ details.panel[open] > summary {
 [data-form='ws-report-edit'] textarea {
   min-height: 18rem;
 }
-.mobile-stages {
-  display: none;
+.board-stage-picker {
+  width: min(18rem, 100%);
+  margin: 0.75rem 0;
+}
+.board-filters summary {
+  cursor: pointer;
+  width: fit-content;
+  padding: 0.5rem 0;
+  font-weight: 650;
+}
+.deal-card time {
+  white-space: nowrap;
+}
+@media (min-width: 761px) {
+  .board-filters[open] > summary {
+    display: none;
+  }
 }
 @media (max-width: 760px) {
   .ws-head {
@@ -340,24 +356,6 @@ details.panel[open] > summary {
   }
   .deal-column {
     min-height: 8rem;
-  }
-  .mobile-stages {
-    display: block;
-  }
-  .mobile-stages .ws-tabs {
-    margin: 0.5rem 0;
-    border: 0;
-    gap: 0.3rem;
-  }
-  .mobile-stages .ws-tabs a {
-    padding: 0.35rem 0.5rem;
-    font-size: 0.78rem;
-    border: 1px solid #dddde7;
-    border-radius: 0.4rem;
-  }
-  .mobile-stages .ws-tabs a[aria-current] {
-    background: #ebe8f7;
-    border-color: #9a8fc0;
   }
   .ws-tabs a {
     padding: 0.58rem 0.57rem;

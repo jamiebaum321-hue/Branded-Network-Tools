@@ -10,6 +10,18 @@ For a migrated client with an executed contract, use **Record existing agreement
 
 ## Working an engagement
 
+All three sales boards offer Outreach, Discovery, First engagement, Second engagement, First meeting scheduled and In discussion. Staff can use the checkpoints in the order a conversation unfolds, skip a step or return to it. Record the first meeting date independently of the next follow-up. **Jump to stage** shows how many matching deals each column contains and opens that column on desktop or mobile.
+
+| Workspace | From discussion to agreement | After signing |
+| --- | --- | --- |
+| Solutions | Agreement sent | Signed → Onboarding → Active advisory → Completed |
+| Media | Pitch requested → Agreement sent | Signed → In production → Completed |
+| Capital | Mandate sent | Signed → Raising capital → Completed |
+
+Signed records the win. Staff can move an unsigned opportunity to **Cold / nurture** with a revisit date, resume outreach, or record **Closed lost** with an outcome. For a signed Media project, **Delivery → Project billing** shows its invoice status, reference and promised deliverables alongside the production stage.
+
+In **Media → Conversations**, a logged outgoing message with no later reply or completed meeting gets a suggested follow-up date. It appears on Today when due. The default is three calendar days in the workspace time zone. Set `MEDIA_FOLLOWUP_DAYS` to change the interval. A staff-set follow-up date, an open dated contact task or a scheduled first meeting with a current or future date takes precedence. Moving a deal to nurture uses its revisit date. Staff decide whether to send another message.
+
 | Starting point | Staff workflow |
 | --- | --- |
 | Solutions → Sales pipeline | Create the prospect, enter contact and next action, and record conversations. Enter the negotiated retainer, term and referral terms. Upload the executed SCA or record its HTTPS location. Move to Signed. |
@@ -21,7 +33,7 @@ For a migrated client with an executed contract, use **Record existing agreement
 | Capital | Record the raise target, fee percentage and terms, retainer and term. Move from mandate to Signed and then Raising capital. Enter actual capital raised and track milestones in Activity. The indicative success fee uses the recorded amount raised and percentage. Accounting determines recognition from the signed agreement. |
 | Workspace operations → Inbound inquiry links | Create a public link for the chosen business line, source and owner. Distribute it through the approved site or campaign. A submission creates an assigned sales opportunity and stores the inquiry. The form can be retired independently. |
 
-Each client's weekly update captures completed work in the chosen period and open work at its cutoff. Owners choose which engagement activity can appear in a client draft. Introduction-card emails contribute the existence of a send or reply. Review the saved draft before sending. Money is recorded in USD.
+Each client's weekly update captures completed work in the chosen period and open work at its cutoff. Owners choose which engagement activity can appear in a client draft. Introduction-card emails contribute the existence of a send or reply. Save edits before downloading the reviewed update as a PDF or Excel workbook. Exports use the saved revision and can also be downloaded after delivery. Use **Send by email** for the reviewed message or **Record sent separately** after delivering the files yourself. Money is recorded in USD.
 
 ## Microsoft 365 delivery
 

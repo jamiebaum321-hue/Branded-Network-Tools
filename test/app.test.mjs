@@ -12,6 +12,7 @@ import { accountingFileUrl } from '../server/files.mjs';
 import { todayKey } from '../server/engagements.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 
 const adminEmail = 'admin@example.test';
 const password = 'Example-Test-Password-24';
@@ -20,7 +21,7 @@ const future = () => new Date(Date.now() + 86400000).toISOString();
 
 async function fixture(t) {
   const store = openStore(':memory:');
-  const config = { production: false, demo: false, origin: new URL('http://127.0.0.1:1'), timeZone: 'America/New_York',
+  const config = { production: false, demo: false, origin: new URL('http://127.0.0.1:1'), timeZone: 'America/New_York', mediaFollowupDays: 3,
     linkSecret: 'disposable-test-link-secret-0123456789', oauth: null, mcpOrigins: new Set(),
     pdfPython: process.env.PDF_PYTHON || (process.platform === 'win32' ? 'python' : 'python3'), pdfFont: process.env.PDF_FONT_PATH };
   const server = createApp(store, config);
@@ -164,6 +165,11 @@ test('OAuth MCP identities are read-only and require audience, scope and client 
   const lead=await f.admin('/api/workspaces/solutions/engagements',{company:'Prospect',owner_id:reader.user.id});
   assert.equal((await f.call('writer-token','move_sales_stage',{engagement_id:lead.id,version:1,stage:'cold',due:'2027-01-01'})).version,2);
   assert.equal((await f.call('writer-token','move_sales_stage',{engagement_id:lead.id,version:2,stage:'signed'})).status,400);
+  const moved = await f.call('writer-token', 'move_sales_stage', {
+    engagement_id: lead.id, version: 2, stage: 'first_meeting_scheduled', first_meeting_day: '2027-01-04',
+  });
+  assert.equal(moved.version, 3);
+  assert.equal((await f.admin('/api/engagements/'+lead.id)).deal.details.first_meeting_day, '2027-01-04');
   assert.equal((await f.call('writer-token','get_engagement',{engagement_id:denied.client_id})).status,404);
   await f.admin(`/api/admin/accounts/${reader.user.id}`, { enabled: false }, 'PATCH');
   await f.rpc('reader-token', 'tools/list', {}, 403);
@@ -360,6 +366,48 @@ test('one company can have private sales in three lines, with scoped sharing, nu
   await personal(path,undefined,'GET',404);
 });
 
+test('spoken sales checkpoints, line-specific delivery and inquiry counts stay consistent in each workspace', async t => {
+  const f = await fixture(t);
+  const shared = ['discovery', 'first_engagement', 'second_engagement', 'first_meeting_scheduled', 'discussion'];
+  const workflows = {
+    solutions: { sales: ['agreement_sent'], delivery: ['onboarding', 'active', 'complete'] },
+    media: { sales: ['pitch', 'agreement_sent'], delivery: ['production', 'complete'] },
+    capital: { sales: ['mandate_sent'], delivery: ['raising', 'complete'] },
+  };
+  for (const [line, workflow] of Object.entries(workflows)) {
+    const source = await f.admin('/api/admin/inquiry-sources', { line, label: line, owner_id: f.owner.user.id });
+    await f.check('/api'+source.path, { method: 'POST', body: {
+      request_id: 'request', company: 'North Harbor', name: 'Morgan', email: 'morgan@example.test', message: 'Please follow up.',
+    } });
+    const [deal] = (await f.admin('/api/workspaces/'+line)).deals;
+    const path = '/api/engagements/'+deal.id;
+    const sourceTotals = async () => (await f.admin('/api/admin/operations')).sources.find(row => row.id === source.id);
+    let version = deal.version;
+    assert.equal(deal.stage, 'outreach');
+    assert.equal((await sourceTotals()).in_discussion, 0);
+    for (const stage of [...shared, ...workflow.sales]) {
+      const details = stage === 'first_meeting_scheduled' ? {first_meeting_day: '2027-02-09'} : {};
+      await f.admin(path, {version: version++, stage, details}, 'PATCH');
+      assert.equal((await f.admin(path)).deal.stage, stage);
+      assert.equal((await sourceTotals()).in_discussion, 1);
+    }
+    assert.equal((await f.admin(path)).dispatches.length, 0);
+    await f.admin(path, {version, stage: workflow.delivery[0]}, 'PATCH', 400);
+    await f.admin(path, {version, stage: line === 'capital' ? 'agreement_sent' : 'mandate_sent'}, 'PATCH', 400);
+    await f.admin(path, {version: version++, stage: 'signed', details: {agreement_url:'https://example.test/executed'}}, 'PATCH');
+    for (const stage of workflow.delivery) {
+      await f.admin(path, {version: version++, stage}, 'PATCH');
+      assert.equal((await f.admin(path)).deal.stage, stage);
+    }
+    const closed = await f.admin(path);
+    assert.equal((await sourceTotals()).signed, 1);
+    assert.equal((await sourceTotals()).in_discussion, 0);
+    assert.equal(closed.deal.details.first_meeting_day, '2027-02-09');
+    assert.equal(closed.dispatches.filter(row => row.kind === 'agreement_signed').length, 1);
+    assert.equal(Boolean(closed.deal.client_id), line === 'solutions');
+  }
+});
+
 test('signed agreement starts two onboarding tracks, attaches real files and issues one accounting packet and one billing supplement',async t=>{
   const f=await fixture(t);f.config.accountingEmail='ap@example.test';f.config.mail={sender:'staff@example.test'};
   const deal=await f.admin('/api/workspaces/solutions/engagements',{company:'Cedar Labs',details:{monthly:250000,term:'Six months',fee_percent:5,fee_terms:'Three years of referred sales'}});
@@ -417,6 +465,31 @@ test('client research, file reads, explicit weekly activity and a reviewed repor
   await f.admin(path+'/reports/'+r.id,{version:r.version,body:r.body+'\nReviewed.'},'PATCH');
   await f.admin(path+'/reports/'+r.id,{version:r.version,body:'stale'},'PATCH',409);
   r=(await f.admin(path)).reports[0];
+  const exportPath = path+'/reports/'+r.id;
+  assert.equal((await f.request(exportPath+'/xlsx')).status, 401);
+  const otherStaff = await f.activate((await f.admin('/api/admin/accounts', {
+    name: 'Other advisor', email: 'other@example.test', role: 'member',
+  })).setup.path);
+  assert.equal((await f.request(exportPath+'/pdf', {cookie: otherStaff.cookie})).status, 404);
+  await f.admin('/api/engagements/'+outside.id+'/reports/'+r.id+'/xlsx', undefined, 'GET', 404);
+  await f.admin(exportPath+'/xlsx?version=1', undefined, 'GET', 409);
+  const pdf = await f.request(exportPath+'/pdf?version='+r.version,{cookie:f.owner.cookie});
+  assert.equal(pdf.status, 200);
+  assert.equal(pdf.headers.get('content-type'), 'application/pdf');
+  assert.match(pdf.headers.get('content-disposition'), /Evergreen-weekly-update-.+-v2\.pdf/);
+  assert.equal(Buffer.from(await pdf.arrayBuffer()).subarray(0,5).toString(), '%PDF-');
+  const book = await f.request(exportPath+'/xlsx?version='+r.version,{cookie:f.owner.cookie});
+  assert.equal(book.status, 200);
+  assert.match(book.headers.get('content-type'), /spreadsheetml.sheet/);
+  const xml = execFileSync(f.config.pdfPython, ['-c', [
+    'import io,sys,zipfile',
+    'z=zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read()))',
+    'assert z.testzip() is None',
+    'sys.stdout.buffer.write(z.read("xl/sharedStrings.xml"))',
+  ].join('\n')], {input: Buffer.from(await book.arrayBuffer()), windowsHide:true, encoding:'utf8'});
+  assert.match(xml, /Reviewed\./);
+  assert.match(xml, /Newsletter placement/);
+  assert.doesNotMatch(xml, /Internal budget/);
   await f.admin(path+'/reports/'+r.id,{version:r.version,body:r.body,send_to:'owner@example.test'},'PATCH');
   f.config.mail={sender:'team@example.test'};await drainMail(f.store,f.config,'test',async()=>{throw new Error('Unknown transport result');});
   const event=(await f.admin(path)).dispatches[0];assert.equal(event.status,'check_delivery');
@@ -439,6 +512,62 @@ test('client research, file reads, explicit weekly activity and a reviewed repor
   const zip=Buffer.from(await(await f.request(zipUrl,{cookie:f.owner.cookie})).arrayBuffer());
   assert.equal(zip.readUInt32LE(0),0x04034b50);
   assert.match(zip.toString('utf8'),/branded-introductions\/SKILL.md/);
+});
+
+test('unanswered Media outreach gets one dated reminder until a reply, hand-set follow-up, meeting or disposition', async t => {
+  const f = await fixture(t);
+  const deal = await f.admin('/api/workspaces/media/engagements', {company:'Agency', details:{contact_email:'buyer@example.test'}});
+  const path = '/api/engagements/' + deal.id;
+  const board = async () => (await f.admin('/api/workspaces/media')).deals[0];
+  const due = async () => (await f.admin('/api/work-due')).items;
+  const send = {
+    id:'sent-1', conversationId:'agency-pitch', subject:'Campaign pitch', sentDateTime:'2024-03-09T04:30:00Z',
+    from:{emailAddress:{address:'media@example.test'}}, toRecipients:[{emailAddress:{address:'buyer@example.test'}}],
+  };
+  const folder = {stream:'media', box:'media@example.test', folder:'sentitems'};
+  await f.admin(path+'/work', {kind:'sent', title:'Draft follow-up', status:'planned'});
+  assert.equal((await board()).last_sent, null);
+  for (let i=0; i<2; i++) classifyMessage(f.store, f.config, folder, send);
+  const first = (await board()).reply_followup;
+  assert.equal(first.due, '2024-03-11');
+  assert.deepEqual(await due(), [first]);
+  const outsider = await f.activate((await f.admin('/api/admin/accounts', {
+    name:'Another owner', email:'peer@example.test', role:'member',
+  })).setup.path);
+  await f.admin('/api/admin/accounts/'+outsider.user.id+'/workspaces',{workspaces:['media']},'PUT');
+  assert.deepEqual((await f.as(outsider.cookie)('/api/work-due')).items, []);
+  const sent = (await f.admin(path)).work.find(row => row.title === 'Campaign pitch');
+  await f.admin(path+'/work/'+sent.id, {status:'done', notes:'Corrected the internal note.'}, 'PATCH');
+  assert.equal((await board()).last_sent, send.sentDateTime);
+  f.config.mediaFollowupDays = 7;
+  assert.equal((await board()).reply_followup.due, '2024-03-15');
+  await f.admin(path, {version:1, details:{due:'2024-04-01', next_action:'Call buyer'}}, 'PATCH');
+  assert.equal((await board()).reply_followup, null);
+  assert.equal((await due())[0].title, 'Call buyer');
+  await f.admin(path, {version:2, details:{due:''}}, 'PATCH');
+  const reply = {id:'reply-1', conversationId:'agency-pitch', subject:'Please send a deck',
+    from:{emailAddress:{address:'buyer@example.test'}}, receivedDateTime:'2024-03-12T15:00:00Z'};
+  classifyMessage(f.store, f.config, {...folder,folder:'inbox'}, reply);
+  assert.deepEqual(await due(), []);
+  classifyMessage(f.store, f.config, folder, {...send,id:'sent-older',sentDateTime:'2024-03-09T14:00:00Z'});
+  assert.equal((await board()).reply_followup, null);
+  classifyMessage(f.store, f.config, folder, {...send,id:'sent-deck',sentDateTime:'2024-03-13T14:00:00Z'});
+  assert.equal((await due())[0].due, '2024-03-20');
+  await f.admin(path+'/work', {kind:'meeting', title:'Discussed the deck', status:'done', occurred_day:'2024-03-15'});
+  assert.deepEqual(await due(), []);
+  classifyMessage(f.store, f.config, folder, {...send,id:'sent-revised',sentDateTime:'2024-03-18T14:00:00Z'});
+  const task = await f.admin(path+'/work', {kind:'task', title:'Review package', status:'planned', due:'2024-03-25'});
+  assert.equal((await board()).reply_followup, null);
+  assert.deepEqual((await due()).map(row=>row.title), ['Review package']);
+  await f.admin(path+'/work/'+task.id, {status:'done'}, 'PATCH');
+  await f.admin(path, {version:3, stage:'first_meeting_scheduled', details:{first_meeting_day:'2090-01-02'}}, 'PATCH');
+  assert.deepEqual(await due(), []);
+  await f.admin(path, {version:4, stage:'discussion'}, 'PATCH');
+  assert.equal((await board()).reply_followup.due, '2024-03-25');
+  await f.admin(path, {version:5, stage:'cold', details:{due:'2090-06-01'}}, 'PATCH');
+  assert.deepEqual(await due(), []);
+  await f.admin(path, {version:6, stage:'dead', details:{outcome:'Campaign cancelled', due:''}}, 'PATCH');
+  assert.equal((await board()).reply_followup, null);
 });
 
 test('campaign imports, public inquiries and podcast mailbox routing keep independent, deduplicated records',async t=>{

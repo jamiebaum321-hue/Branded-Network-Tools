@@ -21,7 +21,7 @@ const relativePdf = (clientId, submissionId) => `/api/clients/${clientId}/submis
 const catalog = {
   list_workspaces: tool('List the business lines assigned to your staff identity.',object({}),(s,a)=>({lines:workspaceLines(s,a)})),
   list_engagements: tool('Find authorized sales and delivery engagements in one business line.',object({line:lineSchema,q:str(180),...paging},['line']),
-    (s,a,d)=>{const rows=deals(s,a,d.line).filter(x=>!d.q||[x.company,x.title,x.details.campaign].join(' ').toLowerCase().includes(d.q.toLowerCase()));
+    (s,a,d,c)=>{const rows=deals(s,a,d.line,c).filter(x=>!d.q||[x.company,x.title,x.details.campaign].join(' ').toLowerCase().includes(d.q.toLowerCase()));
       const start=d.offset||0,end=start+(d.limit||50);return {items:rows.slice(start,end),next_offset:rows.length>end?end:null};}),
   get_engagement: tool('Read terms, latest intake, file identifiers, research, work and weekly reports for an authorized engagement.',object({engagement_id:str(80)}),
     (s,a,d)=>dealDetail(s,a,d.engagement_id)),

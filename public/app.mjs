@@ -105,6 +105,8 @@ function navigate(path, { replace = false } = {}) {
 
 function show(html, focus, hash) {
   main.innerHTML = html;
+  const selectedStage = main.querySelector('.deal-board > .chosen');
+  if (selectedStage) selectedStage.parentElement.scrollLeft = selectedStage.offsetLeft;
   main.setAttribute('aria-busy', 'false');
   if (hash) {
     let target;
@@ -572,13 +574,15 @@ const actions = {
   'more-audit': button => moreRows(button, 'audit'),
 };
 
-async function exportPdf(anchor) {
+async function downloadFile(anchor) {
   const response = await fetch(anchor.href, { credentials: 'same-origin' });
   if (!response.ok) throw new RequestError(response.status, await response.json().catch(() => ({})));
   const objectUrl = URL.createObjectURL(await response.blob());
   const download = document.createElement('a');
   download.href = objectUrl;
-  download.download = response.headers.get('content-disposition')?.match(/filename="([a-zA-Z0-9.-]+)"/)?.[1] || 'onboarding.pdf';
+  const disposition = response.headers.get('content-disposition') || '';
+  const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  download.download = encoded ? decodeURIComponent(encoded) : disposition.match(/filename="([^"]+)"/)?.[1] || anchor.download || 'onboarding.pdf';
   document.body.append(download);
   download.click();
   download.remove();
@@ -600,7 +604,7 @@ document.addEventListener('click', async event => {
   if (!anchor || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey || anchor.target) return;
   if (anchor.hasAttribute('download') && anchor.origin === location.origin && anchor.pathname.startsWith('/api/')) {
     event.preventDefault();
-    try { await exportPdf(anchor); } catch (error) { notify(error.message); }
+    try { await downloadFile(anchor); } catch (error) { notify(error.message); }
     return;
   }
   if (!['http:', 'https:'].includes(anchor.protocol) || anchor.origin !== location.origin || anchor.getAttribute('href').startsWith('#')) return;

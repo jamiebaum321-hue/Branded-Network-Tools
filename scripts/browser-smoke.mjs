@@ -16,7 +16,7 @@ try {
   ({ chromium } = createRequire(process.execPath)('playwright'));
 }
 const store = openStore(':memory:'),
-  config = configuration({}, { demo: true });
+  config = configuration({ PDF_PYTHON: process.env.PDF_PYTHON }, { demo: true });
 await loadDemo(store, config);
 const server = createApp(store, config);
 server.listen(0, '127.0.0.1');
@@ -58,6 +58,14 @@ try {
   await page.getByText('Cinder Hospitality', { exact: true }).first().waitFor();
   await capture(page, 'solutions-desktop');
   await checkWidth(page);
+  await page.getByLabel('Jump to stage').selectOption('agreement_sent');
+  await page.reload();
+  await page.getByLabel('Jump to stage').waitFor();
+  assert.equal(await page.getByLabel('Jump to stage').inputValue(), 'agreement_sent');
+  assert(await page.locator('[data-ws-stage="agreement_sent"]').evaluate((column) => {
+    const rect = column.getBoundingClientRect(), board = column.parentElement.getBoundingClientRect();
+    return rect.left >= board.left - 1 && rect.right <= board.right + 1;
+  }));
   await button(page, 'New engagement').click();
   let dialog = page.getByRole('dialog');
   await dialog.locator('input[name=company]').fill('Browser Pilot');
@@ -66,6 +74,17 @@ try {
   await button(dialog, 'Create engagement').click();
   await heading(page, 'Browser Pilot');
   const path = new URL(page.url()).pathname;
+  for (const [stage, label] of [
+    ['discovery', 'Discovery'], ['first_engagement', 'First engagement'], ['second_engagement', 'Second engagement'],
+    ['first_meeting_scheduled', 'First meeting scheduled'],
+  ]) {
+    await button(page, 'Move stage').click();
+    await dialog.getByLabel('Stage', {exact:true}).selectOption(stage);
+    if (stage === 'first_meeting_scheduled') await dialog.getByLabel('First meeting date').fill('2027-01-12');
+    await button(dialog, 'Save stage').click();
+    await page.getByText('Advisory engagements · '+label, {exact:true}).waitFor();
+  }
+  await page.getByText('2027-01-12', {exact:true}).waitFor();
   const upload = page.locator('form[data-form="ws-file"]');
   await upload
     .locator('input[type=file]')
@@ -140,6 +159,13 @@ try {
   const report = page.getByLabel('Client update');
   await report.waitFor();
   assert.match(await report.inputValue(), /Published the pilot newsletter/);
+  for (const [label, extension] of [['Download saved PDF', '.pdf'], ['Download saved workbook', '.xlsx']]) {
+    const [download] = await Promise.all([
+      page.waitForEvent('download'), page.getByRole('link', {name:label}).click(),
+    ]);
+    assert(download.suggestedFilename().endsWith('-v1'+extension));
+    assert.equal(await download.failure(), null);
+  }
   await page
     .getByRole('link', { name: 'Introductions', exact: true })
     .filter({ hasNot: page.locator('svg') })
@@ -163,7 +189,24 @@ try {
   await page.goto(new URL('/work/media?view=conversations', config.origin).href);
   await page.getByRole('link', { name: 'Meridian Creative', exact: true }).waitFor();
   await page.getByText('Sponsor requested the deck', { exact: true }).waitFor();
+  await page.getByRole('link', {name:'Marrow Market', exact:true}).click();
+  await page.getByRole('link', {name:'Activity', exact:true}).click();
+  await log.getByLabel('Activity', {exact:true}).selectOption('sent');
+  await log.getByLabel('Status', {exact:true}).selectOption('done');
+  await log.getByLabel('Action, introduction or outcome').fill('Sent event sponsorship details');
+  await log.getByLabel('Activity date').fill('2024-03-08');
+  await button(log, 'Record activity').click();
+  await page.getByRole('heading', {name:'Sent event sponsorship details'}).waitFor();
+  await page.goto(new URL('/today', config.origin).href);
+  await page.getByRole('link').filter({hasText:'Follow up on unanswered outreach'}).filter({hasText:'Marrow Market'}).waitFor();
+  await page.goto(new URL('/work/media?view=conversations', config.origin).href);
+  await page.getByRole('row').filter({hasText:'Marrow Market'}).getByText('Follow up on unanswered outreach · 2024-03-11').waitFor();
   await capture(page, 'media-desktop');
+  await page.getByRole('link', {name:'Delivery',exact:true}).click();
+  await page.getByRole('heading', {name:'Project billing'}).waitFor();
+  const billing = page.getByRole('row').filter({hasText:'Four-episode sponsorship'});
+  await billing.getByRole('cell', {name:'Pending',exact:true}).waitFor();
+  await billing.getByRole('cell', {name:'Four podcast episodes and two newsletter placements'}).waitFor();
   await page.getByRole('link', { name: 'Guest pitches' }).click();
   await page.getByText('Guest idea for Hospitality Hangout', { exact: true }).waitFor();
   await page.getByRole('link', { name: 'Capital', exact: true }).click();
@@ -189,10 +232,9 @@ try {
   await capture(page, 'media-mobile');
   const visible = page.locator('.deal-column:visible');
   assert.equal(await visible.count(), 1);
-  await page
-    .getByRole('navigation', { name: 'Visible stage' })
-    .getByRole('link', { name: 'Pitch requested' })
-    .click();
+  await page.getByLabel('Jump to stage').selectOption('first_meeting_scheduled');
+  await visible.getByRole('heading', {name:'First meeting scheduled'}).waitFor();
+  await page.getByLabel('Jump to stage').selectOption('pitch');
   await visible.getByRole('link').filter({ hasText: 'Meridian Creative' }).click();
   await heading(page, 'Meridian Creative');
   await checkWidth(page);
@@ -203,7 +245,7 @@ try {
   assert.equal((await pilot.json()).deal.stage, 'signed');
   assert.deepEqual(failures, []);
   console.log(
-    'Desktop and mobile workflows passed, including signing, public intake and uploads, weekly reporting, introductions, inbound routing and all three workspaces.'
+    'Desktop and mobile workflows passed, including sales stages, signing, intake and uploads, weekly PDF and workbook downloads, introductions, project billing and inbound routing.'
   );
 } catch (error) {
   if (activePage) console.error((await activePage.locator('body').innerText()).slice(-2700), failures);

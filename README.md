@@ -18,7 +18,7 @@ The in-app bell covers introduction follow-ups, replies, stage changes and submi
 
 ## Try the local demo
 
-Install Node.js 24.15 or later in the Node 24 series and Python 3.11 or later. Install the PDF dependency and start the demo.
+Install Node.js 24.15 or later in the Node 24 series and Python 3.11 or later. Install the PDF and Excel export dependencies and start the demo.
 
 ```sh
 python -m pip install -r requirements.txt
@@ -30,7 +30,7 @@ Open the loopback address shown in the terminal. The sign-in form is prefilled f
 ## Configure production
 
 1. Choose a host for one Node process and provision a private, persistent filesystem volume. The app initializes its SQLite database at `DATABASE_PATH`. The database and its WAL files must share the volume. Use a service account with access to that directory.
-2. Install Node and Python as above. Install the Python dependency into the runtime that `PDF_PYTHON` points to. Set `PDF_FONT_PATH` to a TrueType font covering the languages used in intake responses if your host lacks a suitable default font.
+2. Install Node and Python as above. Install the Python requirements into the runtime that `PDF_PYTHON` points to. Set `PDF_FONT_PATH` to a TrueType font covering the languages used in intake responses and weekly updates if your host lacks a suitable default font.
 3. Use [.env.example](.env.example) as the configuration template. Set `NODE_ENV=production`, the real HTTPS `APP_ORIGIN`, the absolute `DATABASE_PATH`, and a persistent, random `LINK_SECRET`. A command to generate the secret is shown below. Keep these settings in the service environment or an untracked `.env` with restricted access.
 4. Terminate TLS at a reverse proxy, preserve the public `Host` header and route to the configured `HOST` and `PORT`. Allow 7 MiB request bodies for base64 file uploads. Exclude authorization headers, cookies, signed file URLs and token-bearing onboarding and setup URLs from proxy logs. Start the service with `npm start` and check `/api/health`.
 5. Run the bootstrap command below once. Open the one-time setup link to set the first admin’s password. From **Admin → Accounts**, invite another admin and the partner managers as members. Share each one-time link privately. Admins can also issue a password reset link. From **Clients**, set the client owner and grant access to the teammates who manage that account.

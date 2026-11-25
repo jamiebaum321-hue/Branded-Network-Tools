@@ -25,6 +25,9 @@ export function configuration(env, { demo = false } = {}) {
   if (!linkSecret || linkSecret.length < 32) throw new Error('Set LINK_SECRET to a securely generated secret of at least 32 characters.');
   const timeZone = env.WORKSPACE_TIME_ZONE || 'America/New_York';
   new Intl.DateTimeFormat('en', { timeZone });
+  const mediaFollowupDays = Number(env.MEDIA_FOLLOWUP_DAYS || 3);
+  if (!Number.isInteger(mediaFollowupDays) || mediaFollowupDays < 1 || mediaFollowupDays > 365)
+    throw new Error('Set MEDIA_FOLLOWUP_DAYS to a whole number from 1 to 365.');
   let oauth = null;
   const oauthValues = [env.MCP_ISSUER, env.MCP_INTROSPECTION_URL, env.MCP_INTROSPECTION_CLIENT_ID, env.MCP_INTROSPECTION_CLIENT_SECRET];
   if (!demo && oauthValues.some(Boolean)) {
@@ -40,7 +43,7 @@ export function configuration(env, { demo = false } = {}) {
     if (url.pathname !== '/' || url.search) throw new Error('MCP_ALLOWED_ORIGINS must contain only origins.');
     mcpOrigins.add(url.origin);
   }
-  return { production, demo, port, host, origin, database, linkSecret, timeZone, oauth, mcpOrigins,
+  return { production, demo, port, host, origin, database, linkSecret, timeZone, mediaFollowupDays, oauth, mcpOrigins,
     mail:mailSettings(env,demo),accountingEmail:demo?'accounting@example.test':email(env.ACCOUNTING_EMAIL,true),
     podcastOwner:demo?'demo@branded.example':email(env.PODCAST_OWNER_EMAIL,true),
     pdfPython: env.PDF_PYTHON || (process.platform === 'win32' ? 'python' : 'python3'), pdfFont: env.PDF_FONT_PATH };

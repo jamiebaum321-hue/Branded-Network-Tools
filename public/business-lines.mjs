@@ -1,25 +1,39 @@
+const prospectStages = [
+  'outreach',
+  'discovery',
+  'first_engagement',
+  'second_engagement',
+  'first_meeting_scheduled',
+  'discussion',
+];
+
 export const lines = {
   solutions: {
     name: 'Solutions',
     noun: 'Advisory engagements',
-    live: ['outreach', 'discussion', 'agreement_sent'],
+    live: [...prospectStages, 'agreement_sent'],
     delivery: ['signed', 'onboarding', 'active', 'complete'],
   },
   media: {
     name: 'Media',
     noun: 'Campaigns and sponsorships',
-    live: ['outreach', 'discussion', 'pitch', 'agreement_sent'],
+    live: [...prospectStages, 'pitch', 'agreement_sent'],
     delivery: ['signed', 'production', 'complete'],
   },
   capital: {
     name: 'Capital',
     noun: 'Fundraising engagements',
-    live: ['outreach', 'discussion', 'mandate_sent'],
+    live: [...prospectStages, 'mandate_sent'],
     delivery: ['signed', 'raising', 'complete'],
   },
 };
+export const salesStages = [...new Set(Object.values(lines).flatMap((line) => line.live))];
 export const stages = {
   outreach: 'Outreach',
+  discovery: 'Discovery',
+  first_engagement: 'First engagement',
+  second_engagement: 'Second engagement',
+  first_meeting_scheduled: 'First meeting scheduled',
   discussion: 'In discussion',
   pitch: 'Pitch requested',
   agreement_sent: 'Agreement sent',
@@ -50,6 +64,7 @@ export const kinds = {
   task: 'Task',
 };
 export const statuses = { planned: 'Planned', waiting: 'Awaiting reply', done: 'Done' };
+export const billingStates = { pending: 'Pending', set_up: 'Set up in accounting', invoiced: 'Invoiced', paid: 'Paid' };
 export const money = (cents) =>
   new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(
     (cents || 0) / 100
@@ -65,6 +80,7 @@ export const labels = {
   source_url: 'Source link',
   next_action: 'Next action',
   due: 'Follow-up date',
+  first_meeting_day: 'First meeting date',
   term: 'Engagement term',
   fee_terms: 'Referral or success-fee terms',
   billing_name: 'Invoice recipient',

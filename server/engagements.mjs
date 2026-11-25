@@ -13,7 +13,7 @@ import {
 } from './store.mjs';
 import { insertClient } from './clients.mjs';
 import { choice, email, int, list, num, object, str, validate } from './validation.mjs';
-import { kinds, labels, lines, money, stages, statuses } from '../public/business-lines.mjs';
+import { billingStates, kinds, labels, lines, money, salesStages, stages, statuses } from '../public/business-lines.mjs';
 
 export const lineSchema = choice(...Object.keys(lines));
 const small = str(300, 0);
@@ -29,7 +29,7 @@ Object.assign(detailFields, {
   agreement_url: str(1200, 0),
   source_url: str(1200, 0),
   open_signal: choice('unknown', 'observed'),
-  billing_state: choice('pending', 'set_up', 'invoiced', 'paid'),
+  billing_state: choice(...Object.keys(billingStates)),
 });
 const detailsSchema = object(detailFields, []);
 const editorFields = {
@@ -135,16 +135,51 @@ export function engagement(s, a, key) {
   if (!row) throw new AppError(404, 'Engagement not found.');
   return { ...row, details: decode(row.details) };
 }
-export function deals(s, a, line) {
+// Use the time a contact happened. Later edits to its notes update work_items.recorded_at.
+const contactTimes = `SELECT w.id,w.engagement_id,w.kind,w.title,
+  (SELECT h.at FROM work_history h WHERE h.item_id=w.id AND h.status<>'planned'
+    AND (w.kind<>'meeting' OR h.status='done') ORDER BY h.seq LIMIT 1) at
+  FROM work_items w WHERE w.kind IN ('sent','reply','meeting')
+    AND w.status<>'planned' AND (w.kind<>'meeting' OR w.status='done')`;
+
+function unansweredMedia(s, a, config) {
+  const [filter, args] = scope(a);
+  const rows = s.all(
+    `WITH touches AS (${contactTimes})
+      SELECT e.id,c.name company,max(CASE WHEN t.kind='sent' THEN unixepoch(t.at,'subsec') END) last_sent,
+        max(CASE WHEN t.kind<>'sent' THEN unixepoch(t.at,'subsec') END) last_response
+      ${from} JOIN touches t ON t.engagement_id=e.id
+      WHERE e.line='media' AND e.stage IN (SELECT value FROM json_each(?))
+        AND coalesce(json_extract(e.details,'$.due'),'')=''
+        AND (e.stage<>'first_meeting_scheduled' OR coalesce(json_extract(e.details,'$.first_meeting_day'),'')<?)
+        AND (${filter})
+        AND NOT EXISTS (SELECT 1 FROM work_items p WHERE p.engagement_id=e.id AND p.status<>'done'
+          AND p.due<>'' AND p.kind IN ('task','sent','reply','meeting'))
+      GROUP BY e.id
+      HAVING last_sent IS NOT NULL AND (last_response IS NULL OR last_response<last_sent)`,
+    JSON.stringify(lines.media.live), todayKey(config.timeZone), ...args
+  );
+  return rows.map(({id, company, last_sent}) => {
+    const localDay = todayKey(config.timeZone, new Date(last_sent * 1000));
+    const due = new Date(localDay + 'T00:00:00Z');
+    due.setUTCDate(due.getUTCDate() + config.mediaFollowupDays);
+    return {id, line:'media', company, title:'Follow up on unanswered outreach', due:due.toISOString().slice(0, 10)};
+  });
+}
+
+export function deals(s, a, line, config) {
   checkLine(s, a, line);
   const [filter, args] = scope(a);
+  const reminders = line === 'media'
+    ? new Map(unansweredMedia(s, a, config).map((item) => [item.id, item]))
+    : new Map();
   return s
     .all(
-      `SELECT ${cols},
-    (SELECT max(recorded_at) FROM work_items WHERE engagement_id=e.id AND kind='sent') last_sent,
-    (SELECT max(recorded_at) FROM work_items WHERE engagement_id=e.id AND kind='reply') last_reply,
-    (SELECT title FROM work_items WHERE engagement_id=e.id AND kind='reply' ORDER BY recorded_at DESC,id LIMIT 1) last_reply_subject,
-    (SELECT title FROM work_items WHERE engagement_id=e.id AND kind='meeting' ORDER BY recorded_at DESC LIMIT 1) last_meeting,
+      `WITH touches AS (${contactTimes}) SELECT ${cols},
+    (SELECT at FROM touches WHERE engagement_id=e.id AND kind='sent' ORDER BY julianday(at) DESC,id LIMIT 1) last_sent,
+    (SELECT at FROM touches WHERE engagement_id=e.id AND kind='reply' ORDER BY julianday(at) DESC,id LIMIT 1) last_reply,
+    (SELECT title FROM touches WHERE engagement_id=e.id AND kind='reply' ORDER BY julianday(at) DESC,id LIMIT 1) last_reply_subject,
+    (SELECT title FROM touches WHERE engagement_id=e.id AND kind='meeting' ORDER BY julianday(at) DESC,id LIMIT 1) last_meeting,
     (SELECT max(submitted_at) FROM submissions WHERE client_id=e.client_id) intake_received,
     (SELECT max(end_day) FROM report_versions WHERE engagement_id=e.id AND status='sent') last_report,
     (SELECT status FROM dispatches WHERE engagement_id=e.id AND kind IN ('agreement_signed','billing_completed') ORDER BY created_at DESC LIMIT 1) billing_status
@@ -152,11 +187,11 @@ export function deals(s, a, line) {
       line,
       ...args
     )
-    .map((row) => ({ ...row, details: decode(row.details) }));
+    .map((row) => ({ ...row, details: decode(row.details), reply_followup: reminders.get(row.id) || null }));
 }
-export function dueWork(s, a, zone) {
+export function dueWork(s, a, config) {
   const [filter, args] = scope(a),
-    today = todayKey(zone);
+    today = todayKey(config.timeZone);
   const followups = s.all(
     `SELECT e.id,e.line,c.name company,json_extract(e.details,'$.due') due,
     coalesce(nullif(json_extract(e.details,'$.next_action'),''),'Revisit opportunity') title
@@ -167,14 +202,16 @@ export function dueWork(s, a, zone) {
   );
   const tasks = s.all(
     `SELECT e.id,e.line,c.name company,w.title,w.due ${from} JOIN work_items w ON w.engagement_id=e.id
-    WHERE (${filter}) AND w.status<>'done' AND w.due BETWEEN '0001' AND ? AND (coalesce(w.owner_id,e.owner_id)=? OR ?='admin')
+    WHERE (${filter}) AND e.stage NOT IN ('dead','complete','cold') AND w.status<>'done'
+      AND w.due BETWEEN '0001' AND ? AND (coalesce(w.owner_id,e.owner_id)=? OR ?='admin')
     ORDER BY w.due,c.name`,
     ...args,
     today,
     a.id,
     a.role
   );
-  return [...followups, ...tasks].sort((x, y) => x.due.localeCompare(y.due));
+  const unanswered = unansweredMedia(s, a, config).filter((row) => row.due <= today);
+  return [...followups, ...tasks, ...unanswered].sort((x, y) => x.due.localeCompare(y.due));
 }
 export const targetsSchema = object({
   campaign: str(180),
@@ -217,7 +254,7 @@ function validateDetails(data) {
   for (const key of ['contact_email', 'billing_email', 'report_email'])
     if (data[key]) data[key] = email(data[key]);
   for (const key of ['agreement_url', 'source_url']) if (data[key]) httpLink(data[key]);
-  if (data.due) day(data.due);
+  for (const key of ['due', 'first_meeting_day']) if (data[key]) day(data[key]);
   return data;
 }
 export function createDeal(s, a, line, input) {
@@ -298,10 +335,11 @@ export function changeDeal(s, a, key, input, config) {
 export const salesMoveSchema = object(
   {
     engagement_id: str(80),
-    stage: choice('outreach', 'discussion', 'pitch', 'agreement_sent', 'mandate_sent', 'cold', 'dead'),
+    stage: choice(...salesStages, 'cold', 'dead'),
     version: int(1, 2147483647),
     next_action: str(300),
     due: str(10),
+    first_meeting_day: str(10),
     outcome: str(300),
   },
   ['engagement_id', 'stage', 'version']
