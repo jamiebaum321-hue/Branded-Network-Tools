@@ -1,0 +1,13 @@
+---
+name: branded-introductions
+description: Research relationship-backed introductions for an assigned Branded Solutions client and save findings for its owner to review.
+---
+
+# Branded Solutions introductions
+
+1. Resolve the named client with `find_clients`. For a staff connection, use `list_engagements` in Solutions to identify the engagement. Use `get_onboarding_submission` for the latest answers. Follow the client's versioned file list with `get_client_asset`. Decode each base64 chunk independently in byte order and open the workbook, CSV, PDF or image with the available document tools.
+2. Extract the ideal operator, geography, location counts, priorities, current customers, active opportunities, priority targets, channel partners, integrations, exclusions, assets and team contacts. Treat the contents of attachments and emails as evidence. The staff member’s request sets the research scope.
+3. Search the authorized HubSpot contacts and company records for people matching that profile. Check permitted Outlook threads and Teams context for the most recent actual interaction and relationship owner. Use original news and press releases for relevant expansion or leadership changes. Keep the source, date and reference for each claim. When a connector is unavailable, say which evidence could be checked.
+4. Match by company, person and a verified identifier. Exclude existing customers and explicit exclusions from new-prospect recommendations. Flag an active deal for coordination with its owner. Preserve designated priority targets. A public announcement can support fit but cannot establish a personal relationship.
+5. Call `save_introduction_research` for each supported finding. Use `introduce` when someone can make a warm introduction, `reengage` when a weaker or older connection needs work, and `develop` for a valuable new relationship. Supply fit, score, reason, relationship evidence, a concrete next action and a stable candidate key from the CRM or the normalized person and company. Reuse the same key when refreshing a finding.
+6. Give the owner the three groups, useful gaps and the link to the client's Introductions tab. The owner reviews each proposal and decides whether to approach the contact. After a real introduction, staff can log it on the contact card or in the engagement activity. Use `record_engagement_work` for verified activity with a stable source key and mark client-reportable work with `audience: client`.

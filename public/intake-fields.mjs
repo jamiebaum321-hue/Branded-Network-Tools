@@ -43,6 +43,11 @@ export const sections = [
     { key: 'linkedin', label: 'LinkedIn', type: 'url', max: 600 }, { key: 'x', label: 'X', type: 'url', max: 600 },
   ] },
   { title: 'Team & review', fields: [
+    { key: 'priorities', label: 'Engagement priorities', type: 'textarea', max: 4000 },
+    { key: 'kpis', label: 'How will you measure success?', type: 'textarea', max: 2500 },
+    { key: 'billing_name', label: 'Accounts payable contact', max: 150 },
+    { key: 'billing_email', label: 'Invoice recipient email', type: 'email', max: 254 },
+    { key: 'billing_instructions', label: 'Invoice instructions or purchase order requirements', type: 'textarea', max: 1500 },
     { key: 'team', label: 'Key team members', add: 'Add team member', rows: [
       { key: 'first_name', label: 'First name', max: 100 }, { key: 'last_name', label: 'Last name', max: 100 },
       { key: 'email', label: 'Email', type: 'email', max: 254 }, { key: 'title', label: 'Job title', max: 150 },

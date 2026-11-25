@@ -80,8 +80,8 @@ export function localInput(value) {
 
 export function field(label, key, value = '', { type = 'text', required = false, max = 300, placeholder = '', min, hint, autocomplete, glyph } = {}) {
   const input = type === 'textarea'
-    ? `<textarea name="${h(key)}" rows="4" maxlength="${max}" ${required ? 'required' : ''} placeholder="${h(placeholder)}">${h(value)}</textarea>`
-    : `<input name="${h(key)}" type="${h(type)}" value="${h(value)}" maxlength="${max}" ${required ? 'required' : ''}
+    ? `<textarea aria-label="${h(label)}" name="${h(key)}" rows="4" maxlength="${max}" ${required ? 'required' : ''} placeholder="${h(placeholder)}">${h(value)}</textarea>`
+    : `<input aria-label="${h(label)}" name="${h(key)}" type="${h(type)}" value="${h(value)}" maxlength="${max}" ${required ? 'required' : ''}
       ${min !== undefined ? `min="${min}"` : ''} ${autocomplete ? `autocomplete="${h(autocomplete)}"` : ''} placeholder="${h(placeholder)}">`;
   return `<label class="field"><span>${h(label)}${required ? '<span class="required" aria-hidden="true"> *</span>' : ''}</span>
     ${glyph ? `<span class="field-control">${icon(glyph)}${input}</span>` : input}${hint ? `<small>${h(hint)}</small>` : ''}</label>`;
@@ -89,7 +89,7 @@ export function field(label, key, value = '', { type = 'text', required = false,
 
 export function select(label, key, rows, selected = '', emptyLabel) {
   const choices = [...(emptyLabel ? [{ id: '', name: emptyLabel }] : []), ...rows];
-  return `<label class="field"><span>${h(label)}</span><select name="${h(key)}">${choices.map(row =>
+  return `<label class="field"><span>${h(label)}</span><select aria-label="${h(label)}" name="${h(key)}">${choices.map(row =>
     `<option value="${h(row.id)}"${String(row.id) === String(selected ?? '') ? ' selected' : ''}>${h(row.name)}</option>`).join('')}</select></label>`;
 }
 
@@ -106,7 +106,7 @@ export function heading(title, detail = '', action = '', { art, date, compact = 
     <div class="hero-copy">${copy}${action ? `<div class="hero-actions">${action}</div>` : ''}</div>
     <div class="hero-visual" aria-hidden="true"><img src="/assets/artwork/${h(art)}.webp" width="240" height="136" alt="" decoding="async"></div></div>`;
 }
-export const brand = () => '<a class="brand" href="/today"><img width="39" height="39" src="/assets/brand/network-mark.svg" alt=""><span>Branded Network<small>Solutions Pipeline</small></span></a>';
+export const brand = () => '<a class="brand" href="/work"><img width="39" height="39" src="/assets/brand/network-mark.svg" alt=""><span>Branded Network<small>Business workspace</small></span></a>';
 
 export function outboundLink(value) {
   try {
@@ -119,11 +119,13 @@ export function outboundLink(value) {
 export function shell(user, location) {
   if (!user) return '';
   const sections = [
-    ['/today', 'Today', 'today', location === '/' || location === '/today'],
-    ['/pipeline', 'Pipeline', 'board', location.startsWith('/pipeline')],
-    ['/clients', 'Clients', 'clients', location.startsWith('/clients')],
+    ['/work', 'Workspaces', 'network', location === '/' || location.startsWith('/work')],
+    ['/today', 'Today', 'today', location === '/today'],
+    ...(user.workspaces?.includes('solutions')||user.role==='admin'?[
+      ['/pipeline', 'Introductions', 'board', location.startsWith('/pipeline')],
+      ['/clients', 'Clients', 'clients', location.startsWith('/clients')]]:[]),
   ];
-  if (user.role === 'admin') sections.push(['/admin', 'Admin', 'shield', location === '/admin']);
+  if (user.role === 'admin') sections.push(['/admin', 'Admin', 'shield', location === '/admin'||location==='/operations']);
   const current = sections.find(section => section[3]);
   const nav = sections.map(([url, label, glyph, active]) => `<a href="${url}"${active ? ' aria-current="page"' : ''}><span class="nav-icon">${icon(glyph)}</span><span>${label}</span></a>`).join('');
   return `<header class="app-header"><div class="bar"><div class="bar-brand">${brand()}</div>

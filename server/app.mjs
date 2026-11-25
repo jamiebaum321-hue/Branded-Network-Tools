@@ -1,4 +1,6 @@
 import { createServer } from 'node:http';
+import { registerWorkspaceRoutes } from './workspace-routes.mjs';
+import { workspaceLines } from './engagements.mjs';
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { AppError, audit, clientScope } from './store.mjs';
@@ -19,6 +21,9 @@ import { assertWebOrigin, empty, json, protect, readJson, readSession, sessionCo
 const assets = new Map(Object.entries({
   '/styles.css': ['styles.css', 'text/css; charset=utf-8'],
   '/app.mjs': ['app.mjs', 'text/javascript; charset=utf-8'],
+  '/workspace.mjs': ['workspace.mjs', 'text/javascript; charset=utf-8'],
+  '/business-lines.mjs': ['business-lines.mjs', 'text/javascript; charset=utf-8'],
+  '/workspace.css': ['workspace.css', 'text/css; charset=utf-8'],
   '/ui.mjs': ['ui.mjs', 'text/javascript; charset=utf-8'],
   '/views.mjs': ['views.mjs', 'text/javascript; charset=utf-8'],
   '/intake-fields.mjs': ['intake-fields.mjs', 'text/javascript; charset=utf-8'],
@@ -41,7 +46,7 @@ const imageAssets = [
     .map(name => [`artwork/${name}.webp`, 'image/webp']),
 ];
 for (const [path, type] of imageAssets) assets.set(`/assets/${path}`, [`assets/${path}`, type]);
-const shellPath = /^(?:\/|\/today|\/signin|\/pipeline(?:\/(?:metrics|cards\/[\w-]+|suggestions(?:\/[\w-]+)?))?|\/clients(?:\/[\w-]+(?:\/submissions\/[\w-]+)?)?|\/admin|\/setup\/[\w-]+|\/onboard\/[\w.-]+)$/;
+const shellPath = /^(?:\/|\/work(?:\/(?:solutions|media|capital)(?:\/[\w-]+)?)?|\/inquire\/[\w-]+|\/operations|\/today|\/signin|\/pipeline(?:\/(?:metrics|cards\/[\w-]+|suggestions(?:\/[\w-]+)?))?|\/clients(?:\/[\w-]+(?:\/submissions\/[\w-]+)?)?|\/admin|\/setup\/[\w-]+|\/onboard\/[\w.-]+)$/;
 const ident = '([a-zA-Z0-9_-]{1,80})';
 const options = { public: true };
 
@@ -73,6 +78,7 @@ function visibleOwners(store, actor) {
 export function createApp(store, config) {
   const routes = [];
   const route = (method, path, handle, policy = {}) => routes.push({ method, regex: new RegExp(`^${path}$`), handle, policy });
+  registerWorkspaceRoutes(route,store,config);
   const staticFiles = new Map([...assets].map(([path, [name, type]]) => [path, {
     bytes: readFileSync(new URL(`../public/${name}`, import.meta.url)), type,
   }]));
@@ -81,11 +87,12 @@ export function createApp(store, config) {
   const shell = { bytes: Buffer.from(shellTemplate.replace('{{SHARE_IMAGE_URL}}', shareImage)), type: 'text/html; charset=utf-8' };
 
   route('GET', '/api/health', () => ({ ok: store.get('SELECT 1 AS ok').ok === 1 }), options);
-  route('GET', '/api/session', ({ actor }) => ({ user: actor, demo: config.demo, time_zone: config.timeZone }), options);
+  const sessionInfo=actor=>actor?{...actor,workspaces:workspaceLines(store,actor)}:null;
+  route('GET', '/api/session', ({ actor }) => ({ user: sessionInfo(actor), demo: config.demo, time_zone: config.timeZone }), options);
   route('POST', '/api/session', async ({ res, data, ip, session }) => {
     const auth = await signIn(store, data, ip, session);
     res.setHeader('Set-Cookie', sessionCookie(config, auth.value, auth.maxAge));
-    return { user: auth.user };
+    return { user: sessionInfo(auth.user) };
   }, options);
   route('POST', '/api/session/logout', ({ res, actor, session }) => {
     signOut(store, actor, session);
@@ -99,7 +106,7 @@ export function createApp(store, config) {
   route('POST', '/api/setup/([\\w-]{43})', async ({ ids, data, ip, res }) => {
     const auth = await finishSetup(store, ids[0], data?.password, ip);
     res.setHeader('Set-Cookie', sessionCookie(config, auth.value, auth.maxAge));
-    return { user: auth.user };
+    return { user: sessionInfo(auth.user) };
   }, options);
 
   route('GET', '/api/context', ({ actor }) => ({ clients: listClients(store, actor, { limit: 500 }).items, owners: visibleOwners(store, actor) }));
@@ -173,7 +180,7 @@ export function createApp(store, config) {
   }, options);
   route('POST', '/api/onboard/([\\w.-]{80})/submit', ({ ids, data, ip }) => {
     rateLimit(store, `form-submit:${ip}`, 40, 900000);
-    return { submission: submitIntake(store, ids[0], data, config.linkSecret) };
+    return { submission: submitIntake(store, ids[0], data, config.linkSecret,config) };
   }, options);
 
   route('GET', '/api/admin/accounts', ({ actor }) => ({ items: listAccounts(store, actor) }));

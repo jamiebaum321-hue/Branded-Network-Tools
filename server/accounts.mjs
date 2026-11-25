@@ -251,5 +251,6 @@ export function cleanExpired(store) {
     store.run('DELETE FROM setup_tokens WHERE expires_at<=?', now);
     store.run('DELETE FROM rate_limits WHERE expires_at<=?', now);
     store.run("UPDATE form_links SET draft='{}' WHERE expires_at<=? AND draft<>'{}'", now);
+    store.run('DELETE FROM attachments WHERE submission_id IS NULL AND form_key IN (SELECT token_hash FROM form_links WHERE expires_at<=? OR revoked=1)',now);
   });
 }

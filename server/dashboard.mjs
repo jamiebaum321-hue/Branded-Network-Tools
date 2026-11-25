@@ -71,7 +71,7 @@ function localDate(date, zone) {
   return `${p.year}-${p.month}-${p.day}`;
 }
 
-function midnight(date, zone, addDays = 0) {
+export function midnight(date, zone, addDays = 0) {
   if (!/^\d{4}-\d\d-\d\d$/.test(date)) throw new AppError(400, 'Use a valid date.');
   const utc = new Date(`${date}T00:00:00.000Z`);
   if (!Number.isFinite(+utc) || utc.toISOString().slice(0, 10) !== date) throw new AppError(400, 'Use a valid date.');

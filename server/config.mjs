@@ -1,4 +1,6 @@
 import { randomBytes } from 'node:crypto';
+import { mailSettings } from './mail.mjs';
+import { email } from './validation.mjs';
 
 function webUrl(value, label, https = false) {
   let url;
@@ -39,5 +41,7 @@ export function configuration(env, { demo = false } = {}) {
     mcpOrigins.add(url.origin);
   }
   return { production, demo, port, host, origin, database, linkSecret, timeZone, oauth, mcpOrigins,
+    mail:mailSettings(env,demo),accountingEmail:demo?'accounting@example.test':email(env.ACCOUNTING_EMAIL,true),
+    podcastOwner:demo?'demo@branded.example':email(env.PODCAST_OWNER_EMAIL,true),
     pdfPython: env.PDF_PYTHON || (process.platform === 'win32' ? 'python' : 'python3'), pdfFont: env.PDF_FONT_PATH };
 }

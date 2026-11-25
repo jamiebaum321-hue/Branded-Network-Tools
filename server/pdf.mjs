@@ -14,6 +14,7 @@ export function submissionPdf(submission, config) {
     return { label: field.label, value: field.rows && Array.isArray(value)
       ? value.map(row => field.rows.flatMap(child => row[child.key] ? [[child.label, row[child.key]]] : [])) : value };
   }) }));
+  if(submission.files?.length)pages.push({title:'Submitted files',fields:submission.files.map(f=>({label:f.purpose,value:f.name}))});
   return new Promise((resolve, reject) => {
     const runtimeEnv = Object.fromEntries(['PATH', 'SystemRoot', 'TEMP', 'TMP', 'TMPDIR']
       .filter(key => process.env[key]).map(key => [key, process.env[key]]));

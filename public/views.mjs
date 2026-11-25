@@ -171,7 +171,7 @@ export function activityItems(rows, zone) {
 }
 
 function logForm(card, drafts) {
-  return `<details>${disclosure('Log activity', 'plus')}${subjectForm('activity', card.id, `${select('Activity', 'kind', [{ id: 'note', name: 'Note' }, { id: 'sent', name: 'Sent email' }, { id: 'reply', name: 'Reply' }], 'note')}
+  return `<details>${disclosure('Log activity', 'plus')}${subjectForm('activity', card.id, `${select('Activity', 'kind', [{ id: 'note', name: 'Note' }, {id:'introduction',name:'Introduction made'}, { id: 'sent', name: 'Sent email' }, { id: 'reply', name: 'Reply' }], 'note')}
     <div class="stack" data-mail-fields hidden>${field('Occurred (your local time)', 'occurred_at', localInput(new Date()), { type: 'datetime-local' })}
     ${field('Subject', 'subject', '')}<div data-sent-field hidden>${select('Matching draft', 'draft_id', drafts.filter(row => !['sent', 'cancelled'].includes(row.status)).map(row => ({ id: row.id, name: row.subject })), '', 'None selected')}</div>
     <details><summary class="small">Outlook message ID (optional)</summary>${fieldset(`${field('Mailbox scope', 'mailbox_scope', '', { max: 160 })}${field('Message ID', 'outlook_message_id', '', { max: 1000 })}`)}</details></div>
@@ -309,6 +309,7 @@ export function submissionPage(row, zone) {
   return `${link(clientPath, 'Back to client', 'back', 'back-link')}${heading(`${row.client_name} onboarding`,
     `Submission ${row.version} · ${timeLabel(row.submitted_at, zone)}`, `<a class="button" href="/api${clientPath}/submissions/${pathId(row.id)}/pdf" download>${icon('download')}Export PDF</a>`,
     { art: 'signal-intake', compact: true })}
+    ${row.files?.length?`<section class="panel"><h2>Submitted files</h2><ul>${row.files.map(f=>`<li><a href="/api/files/${pathId(f.id)}" target="_blank" rel="noopener">${h(f.name)}</a> · ${h(f.purpose)}</li>`).join('')}</ul></section>`:''}
     <div class="grid-two">${sections.map(section => `<section class="panel submission-section"><h2>${h(section.title)}</h2><dl>${section.fields.map(field => {
       const answer = row.answers[field.key];
       const value = field.rows && Array.isArray(answer) && answer.length ? answer.map(item => `<div class="evidence">${field.rows.filter(child => item[child.key]).map(child =>
@@ -353,7 +354,7 @@ function accountList(rows) {
   return `<div class="panel flush admin-list">${rows.map(user => `<details><summary><strong>${h(user.name)}</strong><small>${h(user.role === 'admin' ? 'Admin' : 'Member')} · ${user.enabled ? user.has_password ? 'Active' : 'Invited' : 'Disabled'}</small></summary>
     <p class="muted wrap">${h(user.email)}</p>${subjectForm('edit-account', user.id, `${fieldset(`${field('Name', 'name', user.name, { max: 100, required: true })}
     ${select('Role', 'role', roleOptions, user.role)}${select('Status', 'enabled', [{ id: 'true', name: 'Enabled' }, { id: 'false', name: 'Disabled' }], user.enabled ? 'true' : 'false')}
-    ${field('Read-only MCP subject', 'oauth_subject', user.oauth_subject, { max: 300 })}`)}
+    ${field('Claude identity subject', 'oauth_subject', user.oauth_subject, { max: 300 })}`)}
     <label class="check"><input type="checkbox" name="onboarding_alerts" ${user.onboarding_alerts ? 'checked' : ''}>Receive onboarding alerts</label>
     <div class="actions">${btn('Save account', { type: 'submit', kind: 'primary' })}${user.enabled ? btn('Copy setup link', { action: 'setup-link', data: `data-id="${h(user.id)}"` }) : ''}</div>`)}</details>`).join('')}</div>`;
 }

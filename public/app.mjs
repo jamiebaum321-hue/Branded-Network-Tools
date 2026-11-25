@@ -1,4 +1,5 @@
 import { sections } from './intake-fields.mjs';
+import { workspaceController, intakeAssets, dueSection } from './workspace.mjs';
 import { btn, emptyState, h, heading, icon, link, pathId, shell, stages } from './ui.mjs';
 import { activityItems, adminPage, alertRows, auditRows, boardCard, boardPage, cardPage, clientForm, clientPage,
   clientRows, clientsPage, createCardForm, intakePage, inviteForm, jobTokenForm, metricsPage, setupPage, signInPage,
@@ -94,8 +95,11 @@ function navigate(path, { replace = false } = {}) {
   if (!target.pathname.startsWith('/onboard/')) wizard = null;
   if (target.pathname !== '/admin' || target.searchParams.get('tab') !== 'import') { seed = null; imported = null; }
   const url = `${target.pathname}${target.search}${target.hash}`;
-  if (replace) history.replaceState(null, '', url);
-  else if (url !== `${location.pathname}${location.search}${location.hash}`) history.pushState(null, '', url);
+  const isDeal=/^\/work\/(?:solutions|media|capital)\/[\w-]+$/.test(target.pathname);
+  const boardPath=target.pathname.substring(0,target.pathname.lastIndexOf('/'));
+  const state=isDeal?{workBoard:location.pathname===boardPath?location.pathname+location.search:history.state?.workBoard}:null;
+  if (replace) history.replaceState(state, '', url);
+  else if (url !== `${location.pathname}${location.search}${location.hash}`) history.pushState(state, '', url);
   void render({ focus: true });
 }
 
@@ -144,7 +148,7 @@ async function render({ focus = false } = {}) {
   const path = location.pathname;
   const query = queryHere();
   const hash = location.hash;
-  const publicRoute = path.startsWith('/setup/') || path.startsWith('/onboard/');
+  const publicRoute = path.startsWith('/setup/') || path.startsWith('/onboard/') || path.startsWith('/inquire/');
   chrome.innerHTML = publicRoute ? '' : shell(user, path);
   main.setAttribute('aria-busy', 'true');
   if (focus) main.innerHTML = '<p class="loading" role="status">Loading…</p>';
@@ -161,12 +165,17 @@ async function render({ focus = false } = {}) {
         if (current !== revision) return;
         wizard = { key, info, answers: info.draft, step: 0 };
       }
-      html = intakePage(wizard.info, key, wizard.step, wizard.answers);
+      html = intakePage(wizard.info, key, wizard.step, wizard.answers)+intakeAssets(wizard.info,key);
+    } else if (path.startsWith('/inquire/')) {
+      html=await workspace.page(path,query);
     } else if (!user) html = signInPage(demo);
-    else if (path === '/' || path === '/signin' || path === '/today') {
-      if (path !== '/today') history.replaceState(null, '', '/today');
-      todayResult = await api('/api/today');
-      html = todayPage(todayResult, zone);
+    else if (path==='/' || path==='/signin') {navigate('/work',{replace:true});return;}
+    else if (path==='/work'||path.startsWith('/work/')||path==='/operations') {
+      html=await workspace.page(path,query);
+    } else if (path==='/today') {
+      const [items,due]=await Promise.all([api('/api/today'),api('/api/work-due')]);
+      todayResult=items;
+      html=todayPage(todayResult,zone)+dueSection(due.items);
     } else if (path === '/pipeline') {
       const [data, ctx] = await Promise.all([api(queryPath('/api/board', query)), getContext()]);
       if (current !== revision) return;
@@ -197,7 +206,7 @@ async function render({ focus = false } = {}) {
       const [data, ctx] = await Promise.all([api(`/api${path}`), getContext()]);
       if (current !== revision) return;
       context = ctx;
-      html = clientPage(data, ctx, zone);
+      html = (data.engagement_id?link('/work/solutions/'+data.engagement_id,'Open advisory engagement','board','back-link'):'')+clientPage(data, ctx, zone);
     } else if (path === '/admin') {
       if (user.role !== 'admin') throw new RequestError(403, { error: 'Ask an admin for access.' });
       const tab = ['audit','import','mcp'].includes(query.get('tab')) ? query.get('tab') : 'accounts';
@@ -210,7 +219,7 @@ async function render({ focus = false } = {}) {
       const ctx = await ctxPromise;
       if (current !== revision) return;
       context = ctx;
-      html = adminPage(tab, data, ctx, query, zone, imported);
+      html = link('/operations','Workspace access, inquiry links and email delivery','settings')+adminPage(tab, data, ctx, query, zone, imported);
     } else throw new RequestError(404, { error: 'This page doesn’t exist.' });
     if (current !== revision) return;
     show(html, focus, hash);
@@ -250,6 +259,7 @@ function readWizard(form) {
 }
 
 async function advanceWizard(form, how) {
+  if(document.querySelector('form[data-form="ws-intake-file"][data-busy]')) throw new Error('Wait for the file upload to finish.');
   readWizard(form);
   const path = `/api/onboard/${pathId(wizard.key)}`;
   if (how === 'next' && wizard.step === sections.length - 1) {
@@ -272,13 +282,13 @@ const forms = {
   },
   async signin(form, data) {
     user = (await api('/api/session', 'POST', Object.fromEntries(data))).user;
-    if (['/', '/signin'].includes(location.pathname)) navigate('/today', { replace: true });
+    if (['/', '/signin'].includes(location.pathname)) navigate('/work', { replace: true });
     else await render({ focus: true });
   },
   async setup(form, data) {
     if (data.get('password') !== data.get('confirmation')) throw new Error('The passwords do not match.');
     user = (await api(`/api/setup/${pathId(form.dataset.id)}`, 'POST', { password: data.get('password') })).user;
-    navigate('/today', { replace: true });
+    navigate('/work', { replace: true });
   },
   async 'add-card'(form, data) {
     const value = Object.fromEntries(data);
@@ -663,6 +673,10 @@ document.addEventListener('drop', async event => {
   } catch (error) { notify(error.message); }
 });
 
+const workspace=workspaceController({api,navigate,render,showDialog,notify,clipboard,getUser:()=>user,getZone:()=>zone,
+  onIntakeUpload:(key,file)=>{if(wizard?.key!==key)return;wizard.info.files.push(file);return wizard.info.files;}});
+Object.assign(forms,workspace.forms);
+Object.assign(actions,workspace.actions);
 window.addEventListener('popstate', () => { if (dialog.open) dialog.close(); void render({ focus: true }); });
 document.addEventListener('visibilitychange', refreshAlertDot);
 setInterval(refreshAlertDot, 60000);
