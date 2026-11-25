@@ -120,7 +120,10 @@ export function registerWorkspaceRoutes(route, s, config) {
       workspaces: workspaceLines(s, { kind: 'user', id: u.id, role: u.role }),
     })),
     sources: s.all(
-      'SELECT s.id,s.label,s.line,s.active,u.name owner FROM inquiry_sources s JOIN users u ON u.id=s.owner_id ORDER BY s.created_at DESC'
+      `SELECT s.id,s.label,s.line,s.active,u.name owner,count(i.engagement_id) inquiries,
+        sum(CASE WHEN e.stage IN ('discussion','pitch','agreement_sent','mandate_sent') THEN 1 ELSE 0 END) in_discussion,
+        count(e.signed_at) signed FROM inquiry_sources s JOIN users u ON u.id=s.owner_id
+        LEFT JOIN inquiry_entries i ON i.source_id=s.id LEFT JOIN engagements e ON e.id=i.engagement_id GROUP BY s.id ORDER BY s.created_at DESC`
     ),
     mail: s.all(
       'SELECT id,subject,recipient,kind,status,detail,created_at FROM dispatches ORDER BY created_at DESC LIMIT 150'

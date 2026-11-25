@@ -70,6 +70,10 @@ export function httpLink(value) {
 }
 export function workspaceLines(s, a) {
   if (a.role === 'admin' && a.kind === 'user') return Object.keys(lines);
+  if (a.kind === 'claude')
+    return a.all_clients || s.get('SELECT 1 FROM mcp_clients WHERE token_id=? LIMIT 1', a.id)
+      ? ['solutions']
+      : [];
   if (a.kind !== 'user') return [];
   return s.all('SELECT line FROM workspace_members WHERE user_id=? ORDER BY line', a.id).map((r) => r.line);
 }
@@ -80,7 +84,7 @@ export function checkLine(s, a, line) {
 export function workspaceAccounts(s, a, line) {
   checkLine(s, a, line);
   return s.all(
-    "SELECT id,name FROM users WHERE enabled=1 AND (role='admin' OR id IN(SELECT user_id FROM workspace_members WHERE line=?)) ORDER BY name",
+    "SELECT id,name,role='admin' admin FROM users WHERE enabled=1 AND (role='admin' OR id IN(SELECT user_id FROM workspace_members WHERE line=?)) ORDER BY name",
     line
   );
 }
@@ -541,23 +545,26 @@ export const itemSchema = object(
   },
   ['kind', 'title', 'status']
 );
-export function addItem(s, a, key, input, at = iso()) {
-  const data = validate(itemSchema, input);
-  if (data.due) day(data.due);
-  if (data.external_ref) httpLink(data.external_ref);
-  if (data.occurred_day) at = day(data.occurred_day) + 'T17:00:00.000Z';
+function validateWorkOwner(s, key, owner) {
   if (
-    data.owner_id &&
+    owner &&
     !s.get(
       `SELECT 1 FROM users u JOIN engagements e ON e.id=? WHERE u.id=? AND u.enabled=1 AND
     (u.role='admin' OR (EXISTS(SELECT 1 FROM workspace_members w WHERE w.user_id=u.id AND w.line=e.line) AND
     (e.owner_id=u.id OR EXISTS(SELECT 1 FROM engagement_members em WHERE em.engagement_id=e.id AND em.user_id=u.id)
     OR EXISTS(SELECT 1 FROM client_members cm WHERE cm.client_id=e.client_id AND cm.user_id=u.id))))`,
       key,
-      data.owner_id
+      owner
     )
   )
     throw new AppError(400, 'Choose someone with access to this engagement.');
+}
+export function addItem(s, a, key, input, at = iso()) {
+  const data = validate(itemSchema, input);
+  if (data.due) day(data.due);
+  if (data.external_ref) httpLink(data.external_ref);
+  if (data.occurred_day) at = day(data.occurred_day) + 'T17:00:00.000Z';
+  validateWorkOwner(s, key, data.owner_id);
   const itemId = id();
   s.run(
     'INSERT INTO work_items(id,engagement_id,kind,title,notes,status,due,recorded_at,actor,source_key,external_ref,owner_id,audience) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(engagement_id,source_key) DO NOTHING',
@@ -589,18 +596,40 @@ export function recordItem(s, a, key, input) {
 export function finishItem(s, a, key, item, input) {
   engagement(s, a, key);
   requireHuman(a);
-  const { status, notes } = validate(
-    object({ status: choice(...Object.keys(statuses)), notes: str(5000, 0) }, ['status']),
+  const { status, notes, due, owner_id, previous_at } = validate(
+    object(
+      {
+        status: choice(...Object.keys(statuses)),
+        notes: str(5000, 0),
+        due: str(10, 0),
+        owner_id: str(80),
+        previous_at: str(40),
+      },
+      ['status']
+    ),
     input
   );
   return s.tx(() => {
     const previous = s.get('SELECT * FROM work_items WHERE engagement_id=? AND id=?', key, item);
     if (!previous) throw new AppError(404, 'Activity not found.');
-    if (previous.status !== status || (notes !== undefined && notes !== previous.notes)) {
+    if (previous_at && previous_at !== previous.recorded_at)
+      throw new AppError(409, 'Refresh before updating this action.');
+    if (due) day(due);
+    if (owner_id && owner_id !== previous.owner_id) validateWorkOwner(s, key, owner_id);
+    const nextDue = due ?? previous.due,
+      nextOwner = owner_id ?? previous.owner_id;
+    if (
+      previous.status !== status ||
+      (notes !== undefined && notes !== previous.notes) ||
+      nextDue !== previous.due ||
+      nextOwner !== previous.owner_id
+    ) {
       s.run(
-        'UPDATE work_items SET status=?,notes=?,recorded_at=? WHERE id=?',
+        'UPDATE work_items SET status=?,notes=?,due=?,owner_id=?,recorded_at=? WHERE id=?',
         status,
         notes ?? previous.notes,
+        nextDue,
+        nextOwner,
         iso(),
         item
       );

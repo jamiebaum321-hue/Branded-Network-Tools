@@ -11,6 +11,7 @@ const submissionFields = 's.id,s.client_id,s.version,s.form_version,s.submitted_
 export function listClients(store, actor, { q, limit = 50, offset = 0 } = {}) {
   const [scope, params] = clientScope(actor, 'c.id');
   const rows = store.all(`SELECT c.*,u.name AS owner_name,
+    (SELECT e.id FROM engagements e WHERE e.client_id=c.id) AS engagement_id,
     (SELECT count(*) FROM cards p WHERE p.client_id=c.id AND p.stage<>'closed') AS open_cards,
     (SELECT max(s.submitted_at) FROM submissions s WHERE s.client_id=c.id) AS latest_submission
     FROM clients c JOIN users u ON u.id=c.owner_id WHERE (${scope}) AND (? IS NULL OR instr(lower(c.name),lower(?))>0)

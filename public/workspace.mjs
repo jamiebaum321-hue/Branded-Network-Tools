@@ -556,7 +556,7 @@ function operations(data) {
   const sources = data.sources
     .map(
       (s) =>
-        `<article class="ws-entry"><strong>${h(s.label)}</strong><small>${h(lines[s.line].name)} · ${h(s.owner)} · ${s.active ? 'Active' : 'Disabled'}</small>${s.active ? `<div class="actions">${action('Copy inquiry link', 'ws-source-link', s.id, 'link')}${action('Disable link', 'ws-source-disable', s.id)}</div>` : ''}</article>`
+        `<article class="ws-entry"><strong>${h(s.label)}</strong><small>${h(lines[s.line].name)} · ${h(s.owner)} · ${s.active ? 'Active' : 'Disabled'}</small><small>${s.inquiries} inquiries · ${s.in_discussion} in discussion · ${s.signed} signed</small>${s.active ? `<div class="actions">${action('Copy inquiry link', 'ws-source-link', s.id, 'link')}${action('Disable link', 'ws-source-disable', s.id)}</div>` : ''}</article>`
     )
     .join('');
   const dispatches = data.mail
@@ -768,13 +768,24 @@ export function workspaceController({
     'ws-stage': async () => showDialog('Move stage', stageForm((await currentDeal()).deal)),
     'ws-targets': () => showDialog('Add campaign targets', targetForm()),
     'ws-item': async (b) => {
-      const w = (await currentDeal()).work.find((x) => x.id === b.dataset.id);
+      const record = await currentDeal(),
+        w = record.work.find((x) => x.id === b.dataset.id);
       if (!w) throw new Error('Refresh to see the latest activity.');
       showDialog(
         'Update outcome',
         form(
           'ws-outcome',
-          select('Status', 'status', choices(statuses), w.status) +
+          hidden('previous_at', w.recorded_at) +
+            select('Status', 'status', choices(statuses), w.status) +
+            select(
+              'Responsible owner',
+              'owner_id',
+              (await eligible(record.deal.line)).filter(
+                (u) => u.admin || u.id === record.deal.owner_id || record.team.includes(u.id)
+              ),
+              w.owner_id || record.deal.owner_id
+            ) +
+            field('Due date', 'due', w.due, { type: 'date' }) +
             field('Details or outcome', 'notes', w.notes, { type: 'textarea', max: 5000 }) +
             submit('Save outcome'),
           w.id

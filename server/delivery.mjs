@@ -104,9 +104,14 @@ export function reportEvidence(s, a, key, input, zone = 'America/New_York') {
   };
   const through = new Date(midnight(end, zone, 1)).toISOString();
   const work = s.all(
-    `SELECT w.kind,w.title,w.due,h.at recorded_at,h.notes,h.status FROM work_items w JOIN work_history h ON h.seq=(
+    `SELECT w.kind,w.title,CASE WHEN w.recorded_at<? THEN w.due ELSE '' END due,w.external_ref,
+      CASE WHEN w.recorded_at<? THEN (SELECT name FROM users WHERE id=coalesce(w.owner_id,?)) ELSE '' END owner,
+      h.at recorded_at,h.notes,h.status FROM work_items w JOIN work_history h ON h.seq=(
     SELECT seq FROM work_history WHERE item_id=w.id AND at<? ORDER BY at DESC,seq DESC LIMIT 1)
     WHERE w.engagement_id=? AND w.audience='client' ORDER BY h.at,w.id`,
+    through,
+    through,
+    e.owner_id,
     through,
     key
   );
@@ -121,16 +126,27 @@ export function reportEvidence(s, a, key, input, zone = 'America/New_York') {
     .filter((x) => inWindow(x.occurred_at));
   const done = work
     .filter((x) => x.status === 'done' && inWindow(x.recorded_at))
-    .map((x) => `${kinds[x.kind]} · ${x.title}${x.notes ? ' — ' + x.notes : ''}`);
+    .map(
+      (x) =>
+        `${kinds[x.kind]} · ${x.title}${x.notes ? ' — ' + x.notes : ''}${x.external_ref ? ' · ' + x.external_ref : ''}`
+    );
   for (const t of touches) {
-    const outcome = t.kind === 'stage' ? decode(t.detail).outcome : t.kind === 'introduction' ? t.body : '';
+    const outcome =
+      t.kind === 'stage'
+        ? decode(t.detail).outcome
+        : t.kind === 'introduction'
+          ? [t.body, decode(t.detail).outcome].filter(Boolean).join(' · ')
+          : '';
     done.push(
       `${t.kind === 'stage' ? 'Outcome' : kinds[t.kind]} · ${[t.person, t.company].filter(Boolean).join(', ')}${outcome ? ' — ' + outcome : ''}`
     );
   }
   const next = work
     .filter((x) => x.status !== 'done')
-    .map((x) => `${x.title}${x.due ? ' · ' + x.due : ''}${x.notes ? ' — ' + x.notes : ''}`);
+    .map(
+      (x) =>
+        `${x.title}${x.owner ? ' · ' + x.owner : ''}${x.due ? ' · ' + x.due : ''}${x.notes ? ' — ' + x.notes : ''}`
+    );
   const intros = s
     .all(
       `SELECT p.company,p.person,CASE WHEN p.updated_at<? THEN p.next_step ELSE '' END next_step

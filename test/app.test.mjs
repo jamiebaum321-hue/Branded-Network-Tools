@@ -370,6 +370,10 @@ test('signed agreement starts two onboarding tracks, attaches real files and iss
   await f.admin(path,{version:1,stage:'signed'},'PATCH');await f.admin(path,{version:1,stage:'signed'},'PATCH',409);
   let detail=await f.admin(path);assert(detail.deal.signed_at);assert.equal(detail.dispatches.length,1);assert.equal(detail.work.filter(x=>x.status==='planned').length,2);
   const cid=detail.deal.client_id;
+  const grant=await f.tokenFor({id:cid});
+  assert.equal((await f.call(grant,'find_clients',{})).items[0].engagement_id,deal.id);
+  assert.deepEqual((await f.call(grant,'list_engagements',{line:'solutions'})).items.map(r=>r.id),[deal.id]);
+  assert.equal((await f.call(grant,'list_engagements',{line:'capital'})).status,403);
   const onboard='/api'+(await f.admin('/api/clients/'+cid+'/form-link',{})).path;
   const blob=Buffer.from('company,segment\nHarbor,restaurants');
   const uploaded=(await f.check(onboard+'/files',{method:'POST',body:{name:'targets.csv',purpose:'asset',data:blob.toString('base64')}})).result;
@@ -457,6 +461,7 @@ test('campaign imports, public inquiries and podcast mailbox routing keep indepe
   const ambiguous={...m,id:'immutable-2',internetMessageId:'both-campaigns'};
   classifyMessage(f.store,f.config,{stream:'media',box:'media@example.test',folder:'inbox'},ambiguous);
   const missed=(await f.admin('/api/admin/operations')).unmatched;
+  assert.equal((await f.admin('/api/admin/operations')).sources[0].inquiries,1);
   assert.equal(missed.length,1);assert.equal(missed[0].choices.length,2);
   await f.admin('/api/admin/media-matches/'+missed[0].id,{engagement_id:second.id});
   classifyMessage(f.store,f.config,{stream:'media',box:'media@example.test',folder:'inbox'},ambiguous);
