@@ -1,5 +1,5 @@
 import { sections } from './intake-fields.mjs';
-import { badge, brand, btn, currentDate, emptyState, field, formatDate, h, heading, hidden, icon, initials, link,
+import { badge, brand, btn, emptyState, field, formatDate, h, heading, hidden, icon, initials, link,
   localInput, outboundLink, pathId, pipelineTabs, select, stageBadge, stageDuration, stageOptions, stages, timeLabel } from './ui.mjs';
 
 const names = rows => rows.map(row => ({ id: row.id, name: row.name }));
@@ -34,31 +34,6 @@ export function setupPage(info, key) {
     <div class="panel">${subjectForm('setup', key, `${field('Password', 'password', '', { type: 'password', autocomplete: 'new-password', required: true, max: 256, hint: 'Use at least 12 characters.' })}
     ${field('Confirm password', 'confirmation', '', { type: 'password', autocomplete: 'new-password', required: true, max: 256 })}
     ${btn('Activate account', { kind: 'primary', type: 'submit', glyph: 'lock' })}`)}</div></div>`;
-}
-
-export function todayPage(data, zone) {
-  const today = formatDate(new Date(), zone, { year: 'numeric' });
-  const dueLabel = row => formatDate(row.at, zone, { year: 'numeric' }) === today
-    ? badge('Due today', 'amber', 'clock') : badge(`Overdue · ${formatDate(row.at, zone)}`, 'red', 'clock');
-  const panels = [
-    { key: 'followups', title: 'Follow-ups due', glyph: 'today', tone: 'amber', empty: 'No follow-ups are due.', label: dueLabel },
-    { key: 'drafts', title: 'Drafts awaiting review', glyph: 'draft', tone: 'violet', empty: 'You have no drafts to review.', label: row => row.extra === 'claude' ? badge('Claude draft', 'violet') : '' },
-    { key: 'replies', title: 'Replies since last visit', glyph: 'reply', tone: 'green', empty: 'No new replies since your last visit.', label: row => badge(timeLabel(row.at, zone), 'green') },
-    { key: 'leads', title: 'Suggested leads', glyph: 'shortlist', tone: 'blue', empty: 'No leads are waiting for your review.', label: row => badge(row.extra, 'blue') },
-  ];
-  const title = heading('Today', 'Follow-ups, drafts, and replies in one place.', '', { art: 'signal-today', date: currentDate(zone), signature: true });
-  if (!data.more_replies && panels.every(panel => !data[panel.key].length)) {
-    return `${title}<section class="panel flush">${illustratedState('today-caught-up', 'You’re caught up',
-      'There are no follow-ups, drafts, replies, or leads waiting for you.', link('/pipeline', 'Open pipeline', 'arrow'))}</section>`;
-  }
-  return `${title}<div class="today-grid">${panels.map(panel => {
-    const rows = data[panel.key];
-    return `<section class="panel flush today-panel" aria-label="${h(panel.title)}" data-tone="${panel.tone}"><div class="panel-title"><span class="panel-icon ${panel.tone}">${icon(panel.glyph)}</span>
-      <h2>${panel.title}</h2>${rows.length ? badge(`${rows.length}${panel.key === 'replies' && data.more_replies ? '+' : ''}`, panel.tone) : ''}</div>
-      ${rows.length ? rows.map(row => `<a class="queue-row" href="${h(row.href)}"><div class="row-main"><strong>${h(row.person || row.company)}</strong>
-        <small>${h(panel.key === 'drafts' ? row.description : row.person ? row.company : row.description || row.company)}</small></div>${panel.label(row)}${navArrow()}</a>`).join('') : emptyState(panel.empty)}
-      ${panel.key === 'replies' && data.more_replies ? `<div class="pagination">${btn('Show remaining replies', { action: 'reload' })}</div>` : ''}</section>`;
-  }).join('')}</div>`;
 }
 
 function filters(kind, query, context, expanded = Boolean(query.size)) {
@@ -182,7 +157,7 @@ export function cardPage(data, zone, toStage, hash) {
   const { card, drafts, history } = data;
   const fields = [['Client', card.client_name], ['Owner', card.owner_name], ['Next step', card.next_step || '—'], ['Time in stage', stageDuration(card.entered_at)],
     ['Last touch', timeLabel(card.last_touch, zone)], ['Follow-up', timeLabel(card.due_at, zone)], ['Closure outcome', card.outcome || '—']];
-  return `${link('/pipeline', 'Back to pipeline', 'back', 'back-link')}${heading(card.person || card.company, card.person ? card.company : '',
+  return `${link('/clients/'+pathId(card.client_id)+'?tab=map', 'Client introduction map', 'back', 'back-link')}${heading(card.person || card.company, card.person ? card.company : '',
     stageBadge(card.stage), { art: 'contact-profile', compact: true })}
     <div class="detail-grid"><div class="stack"><section class="panel stack"><dl class="summary-grid">${fields.filter(([key]) => key !== 'Closure outcome' || card.stage === 'closed').map(([label, value]) =>
       `<div><dt>${h(label)}</dt><dd>${h(value)}</dd></div>`).join('')}</dl>
@@ -228,13 +203,13 @@ export function suggestionRows(rows) {
 export function suggestionsPage(data, context, query) {
   const empty = query.size ? emptyState('No matching suggestions.')
     : illustratedState('suggested-connections', 'No suggestions to review', 'New leads will appear here when they’re ready for review.');
-  return `${heading('Suggested leads', 'Review the fit and source before adding a contact to the pipeline.', '',
-    { art: 'signal-leads' })}${toolbar('suggestions', filters('suggestions', query, context))}
+  return `${heading('Suggested leads', 'Review a proposed introduction and its sources.', '',
+    { art: 'signal-leads' })}${filters('suggestions', query, context)}
     <section class="panel flush"><div id="suggestion-list">${data.items.length ? suggestionRows(data.items) : empty}</div>${pageMore('more-suggestions', data.next_offset)}</section>`;
 }
 
 export function suggestionPage(row) {
-  return `${link('/pipeline/suggestions', 'Back to suggested leads', 'back', 'back-link')}
+  return `${link('/clients/'+pathId(row.client_id)+'?tab=map', 'Client introduction map', 'back', 'back-link')}
     ${heading(row.person || row.company, row.person ? [row.title, row.company].filter(Boolean).join(' · ') : row.client_name,
       badge(statusName(row.status), row.status === 'approved' ? 'green' : 'blue'), { art: 'contact-profile', compact: true })}
     <div class="detail-grid"><section class="panel stack"><div>${sectionLabel('Why it fits', 'target', 'violet')}<p class="multiline section-copy">${h(row.reason)}</p></div>
@@ -255,13 +230,13 @@ export function clientRows(rows, zone) {
       <div class="client-card-top"><span class="client-mark" aria-hidden="true">${h(initials(row.name))}</span>
         <div class="row-main"><strong>${h(row.name)}</strong><small>${icon('user')}<span>${h(row.owner_name)}</span></small></div>
         <span class="client-open">${icon('arrow')}</span></div>
-      <div class="client-facts"><span class="client-count">${icon('board')}${row.open_cards} open ${row.open_cards === 1 ? 'card' : 'cards'}</span>
+      <div class="client-facts"><span class="client-count">${icon('board')}${row.open_cards} active ${row.open_cards === 1 ? 'introduction' : 'introductions'}</span>
         ${row.latest_submission ? badge(`Intake ${formatDate(row.latest_submission, zone)}`, 'green', 'check') : badge('No intake yet', 'neutral', 'draft')}</div></a>`;
   }).join('');
 }
 
 export function clientsPage(data, query, user, zone) {
-  return `${heading('Clients', 'Manage onboarding and see each client’s open contacts.', user.role === 'admin' ? btn('Add client', { action: 'add-client', glyph: 'plus', kind: 'primary' }) : '',
+  return `${heading('Clients', 'Client profiles, introduction maps and team contacts.', user.role === 'admin' ? btn('Add client', { action: 'add-client', glyph: 'plus', kind: 'primary' }) : '',
     { art: 'signal-clients', signature: true })}
     <form class="client-search" data-form="filter">${field('Search clients', 'q', query.get('q'), { type: 'search', placeholder: 'Client name', max: 180, glyph: 'search' })}
     <div class="actions">${btn('Search', { type: 'submit' })}${query.size ? btn('Clear', { action: 'clear-filters', kind: 'quiet' }) : ''}</div></form>
@@ -320,7 +295,7 @@ export function submissionPage(row, zone) {
 
 function repeatField(definition, rows) {
   return `<fieldset class="repeater"><legend>${h(definition.label)}</legend>${rows.map((item, index) => `<div class="repeat-row stack">
-    ${fieldset(definition.rows.map(child => field(child.label, `rows|${definition.key}|${index}|${child.key}`, item[child.key], child)).join(''))}
+    ${fieldset(definition.rows.map(child => child.options ? select(child.label, `rows|${definition.key}|${index}|${child.key}`, child.options.map((name)=>({id:name,name})), item[child.key], 'Choose a function') : field(child.label, `rows|${definition.key}|${index}|${child.key}`, item[child.key], child)).join(''))}
     <div>${btn('Remove', { action: 'remove-row', kind: 'quiet', glyph: 'close', data: `data-key="${h(definition.key)}" data-index="${index}" aria-label="Remove ${h(definition.label)} entry ${index + 1}"` })}</div></div>`).join('')}
     ${btn(definition.add, { action: 'add-row', glyph: 'plus', data: `data-key="${h(definition.key)}"` })}</fieldset>`;
 }
@@ -329,14 +304,14 @@ export function intakePage(info, key, step, answers) {
   if (info.submitted) return `<div class="form-page">${brand()}${heading('Response submitted', info.client_name)}
     <section class="panel flush">${illustratedState('client-onboarding', 'Thank you', 'Your responses have been saved and shared with the Solutions team.')}</section></div>`;
   const section = sections[step];
-  const stepGlyph = ['building', 'target', 'leads', 'board', 'stack', 'team'][step];
-  return `<div class="form-page">${brand()}${heading('Solutions Partner Onboarding', info.client_name, '', { art: 'signal-intake', compact: true })}<div class="step-bar"><span class="step-label"><span class="step-icon">${icon('intake')}</span>Step ${step + 1} of ${sections.length}</span>
+  const stepGlyph = ['target','building','leads','board','network','stack','upload','metrics','team'][step];
+  return `<div class="form-page">${brand()}${heading('Welcome to Branded Hospitality Solutions!', info.client_name, '', { art: 'signal-intake', compact: true })}${step === 0 ? '<p>To hit the ground running, we’d like to understand your business, growth priorities and existing relationships. This information will help us identify opportunities, make strategic introductions and accelerate results.</p><p><strong>No need to create anything new.</strong> Existing documents, CRM exports, spreadsheets, decks and shared links are perfect.</p>' : ''}<div class="step-bar"><span class="step-label"><span class="step-icon">${icon('intake')}</span>Step ${step + 1} of ${sections.length}</span>
     <progress class="visually-hidden" value="${step + 1}" max="${sections.length}" aria-label="Onboarding progress"></progress>
     <div class="step-segments" aria-hidden="true">${sections.map((_, i) => `<span${i <= step ? ` class="${i === step ? 'current' : 'complete'}"` : ''}></span>`).join('')}</div></div>
-    <section class="panel"><div class="section-head">${sectionLabel(section.title, stepGlyph)}</div>${subjectForm('intake', key, `${fieldset(section.fields.map(definition =>
+    <section class="panel"><div class="section-head">${sectionLabel(section.title, stepGlyph)}</div><p class="intake-description">${h(section.description)}</p>${subjectForm('intake', key, `${fieldset(section.fields.map(definition =>
       definition.rows ? `<div class="wide">${repeatField(definition, answers[definition.key] ?? [])}</div>` :
         `<div class="${definition.type === 'textarea' ? 'wide' : ''}">${field(definition.label, definition.key, answers[definition.key], { ...definition, min: definition.type === 'number' ? 0 : undefined })}</div>`).join(''))}
-      ${step === sections.length - 1 ? '<p class="muted">Review earlier sections with Back, then submit your answers.</p>' : ''}
+      ${step === sections.length - 1 ? '<p class="muted">The more we understand your business and priorities, the more effectively we can put the Branded Hospitality ecosystem to work.</p>' : ''}
       <div class="wizard-footer"><div class="actions">${step ? btn('Back', { action: 'intake-back', glyph: 'back' }) : ''}${btn('Save draft', { action: 'intake-save', kind: 'quiet', glyph: 'draft' })}</div>
       ${btn(step < sections.length - 1 ? 'Save and continue' : 'Submit answers', { type: 'submit', kind: 'primary', endGlyph: step < sections.length - 1 ? 'arrow' : 'check' })}</div>`)}</section></div>`;
 }
@@ -347,8 +322,8 @@ export function alertRows(data, zone) {
     <div class="row-main"><strong>${h(row.title)}</strong><small>${h(row.client_name)} · ${h(timeLabel(row.occurred_at, zone))}</small></div>${row.seen_at ? '' : badge('New', 'blue')}${navArrow()}</a>`).join('') : emptyState('You’re caught up.');
 }
 
-const adminSections = [['accounts', 'Accounts', 'team'], ['audit', 'Audit log', 'history'], ['import', 'Import JSON', 'upload'], ['mcp', 'MCP access', 'lock']];
-const roleOptions = [{ id: 'member', name: 'Member' }, { id: 'admin', name: 'Admin' }];
+const adminSections = [['accounts', 'Team', 'team'], ['operations','Workspace settings','settings'], ['audit', 'Audit log', 'history'], ['import', 'Import JSON', 'upload'], ['mcp', 'MCP access', 'lock']];
+const roleOptions = [{ id: 'member', name: 'Team member' }, { id: 'admin', name: 'Admin' }];
 
 function accountList(rows) {
   return `<div class="panel flush admin-list">${rows.map(user => `<details><summary><strong>${h(user.name)}</strong><small>${h(user.role === 'admin' ? 'Admin' : 'Member')} · ${user.enabled ? user.has_password ? 'Active' : 'Invited' : 'Disabled'}</small></summary>
@@ -361,7 +336,7 @@ function accountList(rows) {
 
 export function inviteForm() {
   return subjectForm('invite-account', '', `${field('Name', 'name', '', { required: true, max: 100 })}${field('Email', 'email', '', { type: 'email', required: true, max: 254 })}
-    ${select('Role', 'role', roleOptions, 'member')}<div>${btn('Create setup link', { type: 'submit', kind: 'primary' })}</div>`);
+    ${select('Role', 'role', roleOptions, 'member')}${checkboxes('Workspace access','workspaces',[{id:'solutions',name:'Solutions'},{id:'media',name:'Media'},{id:'capital',name:'Capital'}],['solutions'])}${select('Invitation delivery','delivery',[{id:'link',name:'Create shareable link'},{id:'email',name:'Send invitation by email'}],'link')}<div>${btn('Invite person', { type: 'submit', kind: 'primary' })}</div>`);
 }
 
 export function auditRows(rows, zone) {
@@ -395,17 +370,18 @@ export function jobTokenForm(context) {
     ${checkboxes('Or choose specific clients', 'client_ids', context.clients)}<div>${btn('Create credential', { kind: 'primary', type: 'submit' })}</div>`);
 }
 
-export function adminPage(tab, data, context, query, zone, preview) {
+export function adminPage(tab, data, context, query, zone, preview, workspaceSettings) {
   const nav = `<nav class="subnav admin-tabs" aria-label="Admin sections">${adminSections.map(([key, label, glyph]) => `<a href="/admin?tab=${key}"${key === tab ? ' aria-current="page"' : ''}>${icon(glyph)}${label}</a>`).join('')}</nav>`;
   let content;
   if (tab === 'audit') content = `<form class="filters" data-form="filter">${hidden('tab', 'audit')}
     ${select('User', 'user_id', names(data.users), query.get('user_id'), 'All actors')}${field('Action', 'action', query.get('action'), { placeholder: 'e.g. card.stage_changed', max: 100 })}
     <div class="actions">${btn('Apply filters', { type: 'submit' })}</div></form>
     <section class="panel flush"><div id="audit-list">${data.items.length ? auditRows(data.items, zone) : emptyState('No matching audit events.')}</div>${pageMore('more-audit', data.next)}</section>`;
+  else if (tab === 'operations') content = workspaceSettings;
   else if (tab === 'import') content = `<div class="stack"><section class="panel stack"><div><h2>Seed existing records</h2><p class="muted">Preview a version 1 JSON export, review its counts, then apply it.</p></div>
     ${subjectForm('preview-import', '', `<label class="field"><span>JSON export</span><input type="file" name="file" accept=".json,application/json" required></label><div>${btn('Preview import', { kind: 'primary', type: 'submit', glyph: 'upload' })}</div>`)}</section>${importPreview(preview)}</div>`;
   else if (tab === 'mcp') content = `<div class="stack"><section class="panel stack"><div class="section-head">${sectionLabel('Claude job credentials', 'lock')}${btn('Create credential', { action: 'new-job', kind: 'primary', glyph: 'plus' })}</div>
     <p class="muted wrap">Endpoint · <code>${h(location.origin)}/mcp</code></p></section><div class="panel flush">${tokenList(data.items, context, zone)}</div></div>`;
-  else content = `<div class="stack"><div class="section-head">${sectionLabel('Team accounts', 'team')}${btn('Invite user', { action: 'invite-account', glyph: 'plus', kind: 'primary' })}</div>${accountList(data.items)}</div>`;
-  return `${heading('Admin', 'Manage accounts, activity, and workspace access.', '', { art: 'workspace-controls' })}${nav}${content}`;
+  else content = `<div class="stack"><div class="section-head">${sectionLabel('Team accounts', 'team')}${btn('Invite people', { action: 'invite-account', glyph: 'plus', kind: 'primary' })}</div>${accountList(data.items)}</div>`;
+  return `${heading('Settings', 'Manage your team, workspace access and email delivery.', '', { art: 'workspace-controls' })}${nav}${content}`;
 }

@@ -74,8 +74,8 @@ export function clientDetail(store, actor, clientId) {
   return {
     client, link, engagement_id:store.get('SELECT id FROM engagements WHERE client_id=?',clientId)?.id, submissions: listSubmissions(store, actor, clientId, {}),
     member_ids: store.all('SELECT user_id FROM client_members WHERE client_id=? ORDER BY user_id', clientId).map(row => row.user_id),
-    owners: store.all(`SELECT id,name FROM users WHERE enabled=1 AND (role='admin' OR id=? OR id IN (
-      SELECT user_id FROM client_members WHERE client_id=?)) ORDER BY name`, client.owner_id, clientId),
+    owners: store.all(`SELECT id,name FROM users WHERE enabled=1 AND (role='admin' OR (id IN (SELECT user_id FROM workspace_members WHERE line='solutions') AND
+      (id=? OR id IN (SELECT user_id FROM client_members WHERE client_id=?)))) ORDER BY name`, client.owner_id, clientId),
   };
 }
 
@@ -160,7 +160,7 @@ export function intakeAnswers(input, { complete = false } = {}) {
 export function publicForm(store, value, secret) {
   const row = getFormLink(store, value, secret);
   return { client_name: row.client_name, submitted: Boolean(row.submission_id),
-    files:store.all('SELECT id,name,purpose FROM attachments WHERE form_key=? ORDER BY created_at',row.token_hash),
+    files:store.all('SELECT id,name,purpose,(SELECT note FROM attachment_lists WHERE file_id=attachments.id) list_note FROM attachments WHERE form_key=? ORDER BY created_at',row.token_hash),
     draft: row.submission_id ? {} : { company: row.client_name, ...decode(row.draft) } };
 }
 

@@ -4,34 +4,25 @@
 
 Use one persistent SQLite volume and a single writable Node process. Back up an existing installation before upgrading. Version 2 maps every existing Solutions client to an active advisory engagement, retains client and contact IDs, and preserves dates, permissions, introduction records and form links. Pre-existing client records have no inferred signature date or recognized monthly revenue. New opportunities can share a company across lines. Terms and ownership belong to each engagement.
 
-Invite each staff member in Admin, then assign their lines under Workspace operations. Administrators have access to all three. A member sees the deals they own or have been assigned. The engagement owner and additional team on a signed Solutions engagement also have access to its advisory client record. Set the named administrators, accounting recipient, podcast owner and public inquiry owners using Branded's confirmed roster.
+Invite staff in **Settings → Team** and choose workspace access and invitation delivery. The email option requires a configured Microsoft 365 sender. Copy-link invitations also work locally. Use **Settings → Workspace settings** for subsequent access changes. Administrators have access to all three. A member sees the deals they own or have been assigned. The engagement owner and additional team on a signed Solutions engagement also have access to its advisory client record. Set the named administrators, accounting recipient, podcast owner and public inquiry owners using Branded's confirmed roster.
 
 For a migrated client with an executed contract, use **Record existing agreement** to confirm its original signature date and attach or link the document. The record keeps its delivery stage and client history. Staff choose whether accounting needs a notice for that historical agreement.
 
 ## Working an engagement
 
-All three sales boards offer Outreach, Discovery, First engagement, Second engagement, First meeting scheduled and In discussion. Staff can use the checkpoints in the order a conversation unfolds, skip a step or return to it. Record the first meeting date independently of the next follow-up. **Jump to stage** shows how many matching deals each column contains and opens that column on desktop or mobile.
-
-| Workspace | From discussion to agreement | After signing |
-| --- | --- | --- |
-| Solutions | Agreement sent | Signed → Onboarding → Active advisory → Completed |
-| Media | Pitch requested → Agreement sent | Signed → In production → Completed |
-| Capital | Mandate sent | Signed → Raising capital → Completed |
-
-Signed records the win. Staff can move an unsigned opportunity to **Cold / nurture** with a revisit date, resume outreach, or record **Closed lost** with an outcome. For a signed Media project, **Delivery → Project billing** shows its invoice status, reference and promised deliverables alongside the production stage.
-
-In **Media → Conversations**, a logged outgoing message with no later reply or completed meeting gets a suggested follow-up date. It appears on Today when due. The default is three calendar days in the workspace time zone. Set `MEDIA_FOLLOWUP_DAYS` to change the interval. A staff-set follow-up date, an open dated contact task or a scheduled first meeting with a current or future date takes precedence. Moving a deal to nurture uses its revisit date. Staff decide whether to send another message.
+The workspace switcher sits beneath Branded Network. Solutions opens Pipelines. Media and Capital display **Under construction**.
 
 | Starting point | Staff workflow |
 | --- | --- |
-| Solutions → Sales pipeline | Create the prospect, enter contact and next action, and record conversations. Enter the negotiated retainer, term and referral terms. Upload the executed SCA or record its HTTPS location. Move to Signed. |
-| Signed Solutions → Overview | Confirm accounting contact and invoice terms. The signing event queues one notice. A later first billing address queues one supplement. Accounting enters the customer in QuickBooks and staff record invoice setup, invoice reference and payment status. |
-| Advisory intake | Share the expiring form link. Clients can save answers, add repeatable entries and upload logos, Excel, CSV, PDF or images up to 5 MiB each. The app stores files with the submitted version. The current nine-area summary, logo and assets are visible on the engagement. |
-| Introductions → Weekly updates | Run research from the client's profile or add evidence manually. Review proposals, log the actual introduction and record replies and outcomes. Record newsletter or social coverage as client-reportable activity. Generate or open the weekly draft, edit it, choose its recipient and send or record separate delivery. |
-| Media → Conversations | Add a sourced list or create individual opportunities. Filter by campaign and assignee. Track advertiser, agency, parent, last contact, replies, requests and next action. Add a dated deliverable for each promised placement or event. A cold lead requires a return date. A definitive loss requires an outcome. |
-| Media → Guest pitches | The podcast mailbox feeds the guest queue. Recognized first pitches queue one acknowledgement. Ambiguous incoming messages go to staff for classification. Members see their own pitches. Admins can route unassigned work. |
-| Capital | Record the raise target, fee percentage and terms, retainer and term. Move from mandate to Signed and then Raising capital. Enter actual capital raised and track milestones in Activity. The indicative success fee uses the recorded amount raised and percentage. Accounting determines recognition from the signed agreement. |
-| Workspace operations → Inbound inquiry links | Create a public link for the chosen business line, source and owner. Distribute it through the approved site or campaign. A submission creates an assigned sales opportunity and stores the inquiry. The form can be retired independently. |
+| Pipelines | Move opportunities through Outreach, Discovery, First engagement, Second engagement, Agreement sent and Signed. Record a meeting date, next action, commercial terms and the executed agreement. Signing creates one client and project and queues the accounting handoff. |
+| Project management | Read the client-by-milestone grid. Select a client for its goals and deliverables, or select a cell to set a status, owner, due date and notes. Track intake, goals, deliverables, kickoff email, initial ICP contact and first report, followed by five follow-ups. Each calendar month has its own monthly follow-up. Submitted intake and recorded report delivery mark their milestones complete. |
+| Paused and closed opportunities | In Project management, pause an unsigned opportunity with a revisit date, record a loss with its reason, or return it to Outreach. |
+| Client → Advisory intake | Share the private intake link. The nine sections collect the ICP, customers, priority targets, sales pipeline, partnerships, integrations, assets, growth priorities and key team contacts. Clients can share existing files in any format up to 25 MiB each, including logos. Choose the target, strategic partner or team list purpose to populate the map or client group from a CSV or XLSX with named columns. The reader supports 6 MiB lists and indexes up to 250 rows per file. The submitted version retains its attachments. |
+| Client → Introduction map | Submitted priority targets and channel partners, approved contact activity, research and working notes feed a client-rooted map. Each node shows its sources, introduction status, relationship owner, next action and optional follow-up date. Staff can mark relationship health green, yellow or red. New connections start unrated. |
+| Client → Notes and Client group | Add notes for staff and Claude. Existing names link to their cards. The target fields or labeled target and partner lines create new map nodes. Client group collects first and last names, functions, job titles, emails, phone numbers and notes. |
+| Client → Engagement and Weekly updates | Confirm invoice terms and access agreement files. Accounting receives one signing notice and a supplement when the billing address is later supplied. Record outreach and delivery activity, prepare a weekly client report, review it and record its delivery. |
+
+The version 3 upgrade preserves old Solutions discussion and first-meeting entries in activity history and places those prospects in First engagement. Existing clients stay available in Project management.
 
 Each client's weekly update captures completed work in the chosen period and open work at its cutoff. Owners choose which engagement activity can appear in a client draft. Introduction-card emails contribute the existence of a send or reply. Save edits before downloading the reviewed update as a PDF or Excel workbook. Exports use the saved revision and can also be downloaded after delivery. Use **Send by email** for the reviewed message or **Record sent separately** after delivering the files yourself. Money is recorded in USD.
 
@@ -43,7 +34,7 @@ Branded's Microsoft 365 administrator must grant mailbox read access for the sel
 
 Mailbox tracking begins at activation. Cursors survive restarts. Duplicate messages or repeated guest threads reuse their existing records. When a tracked correspondent belongs to multiple campaigns, an administrator chooses the correct engagement under **Media messages to match**. The open indicator defaults to Unknown. Staff can enter an observed open when the sending platform supplies evidence.
 
-Signed agreements small enough for the mail packet accompany the accounting message as attachments. Larger agreements receive a 14-day, single-file download URL. An entered external agreement link retains its original access settings. A weekly update is immutable after it is queued or recorded as sent. Delivery states distinguish queued, sending, accepted, failed and uncertain. For uncertain deliveries, check the sender's Sent Items before confirming or retrying in Workspace operations. Microsoft acceptance is a handoff to the mail service. [Graph sendMail](https://learn.microsoft.com/en-us/graph/api/user-sendmail?view=graph-rest-1.0)
+Signed agreements small enough for the mail packet accompany the accounting message as attachments. Larger agreements receive a 14-day, single-file download URL. An entered external agreement link retains its original access settings. A weekly update is immutable after it is queued or recorded as sent. Delivery states distinguish queued, sending, accepted, failed and uncertain. For uncertain deliveries, check the sender's Sent Items before confirming or retrying in Workspace settings. Microsoft acceptance is a handoff to the mail service. [Graph sendMail](https://learn.microsoft.com/en-us/graph/api/user-sendmail?view=graph-rest-1.0)
 
 ## Release and operations
 

@@ -18,14 +18,24 @@ const cardFilters = { client_id: str(80), owner_id: str(80), stage: choice(...st
 const tool = (description, schema, run, write = false) => ({ description, schema, run, write });
 const relativePdf = (clientId, submissionId) => `/api/clients/${clientId}/submissions/${submissionId}/pdf`;
 
+import { clientWorkspace, noteSchema, saveClientNote, connectionSchema, saveConnection, contactSchema, savePerson } from './solution-clients.mjs';
+import { stepNames } from '../public/solution-model.mjs';
+import { projectGrid, stepSchema, saveStep } from './solution-projects.mjs';
+
 const catalog = {
+  get_client_workspace: tool('Read this client’s relationship map, sources, client group and working notes.',object({client_id:str(80)}),(s,a,d)=>clientWorkspace(s,a,d.client_id)),
+  get_client_project: tool('Read a client project for the requested YYYY-MM, including current milestone versions. Missing milestones start at version zero.',object({client_id:str(80),month:str(7)}),(s,a,d)=>({project:projectGrid(s,a,d.month,d.client_id)[0],milestones:stepNames})),
+  save_client_note: tool('Add a sourced note. Supply company or person to create or link an introduction target. Reuse source_key when retrying.',noteSchema,saveClientNote,'scoped'),
+  update_client_connection: tool('Create or edit a client map node. Use the current version and only record an evidenced or owner-specified relationship assessment.',connectionSchema,saveConnection,'scoped'),
+  save_client_contact: tool('Add or update a client group member. Use the key and version for edits.',contactSchema,savePerson,'scoped'),
+  update_project_milestone: tool('Record the status, date, owner and notes of an authorized client project milestone. Monthly follow-ups require a YYYY-MM period.',stepSchema,saveStep,'scoped'),
   list_workspaces: tool('List the business lines assigned to your staff identity.',object({}),(s,a)=>({lines:workspaceLines(s,a)})),
   list_engagements: tool('Find authorized sales and delivery engagements in one business line.',object({line:lineSchema,q:str(180),...paging},['line']),
     (s,a,d,c)=>{const rows=deals(s,a,d.line,c).filter(x=>!d.q||[x.company,x.title,x.details.campaign].join(' ').toLowerCase().includes(d.q.toLowerCase()));
       const start=d.offset||0,end=start+(d.limit||50);return {items:rows.slice(start,end),next_offset:rows.length>end?end:null};}),
   get_engagement: tool('Read terms, latest intake, file identifiers, research, work and weekly reports for an authorized engagement.',object({engagement_id:str(80)}),
     (s,a,d)=>dealDetail(s,a,d.engagement_id)),
-  get_client_asset: tool('Read a permitted file in base64 chunks. Use next_offset until null.',object({file_id:str(80),offset:int(0,5242880)},['file_id']),
+  get_client_asset: tool('Read a permitted file in base64 chunks. Use next_offset until null.',object({file_id:str(80),offset:int(0,26214400)},['file_id']),
     (s,a,d)=>{const f=authorizedFile(s,a,d.file_id),offset=d.offset||0,end=Math.min(offset+32768,f.size);
       return {name:f.name,mime:f.mime,size:f.size,data:f.bytes.subarray(offset,end).toString('base64'),next_offset:end<f.size?end:null};}),
   get_weekly_evidence: tool('Gather client activity, outstanding work and planned introductions for an inclusive date range.',

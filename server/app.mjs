@@ -1,4 +1,6 @@
 import { createServer } from 'node:http';
+import { profile, saveProfile, changePassword } from './accounts.mjs';
+import { registerSolutionRoutes } from './solution-routes.mjs';
 import { registerWorkspaceRoutes } from './workspace-routes.mjs';
 import { workspaceLines } from './engagements.mjs';
 import { readFileSync } from 'node:fs';
@@ -23,6 +25,9 @@ const assets = new Map(Object.entries({
   '/app.mjs': ['app.mjs', 'text/javascript; charset=utf-8'],
   '/workspace.mjs': ['workspace.mjs', 'text/javascript; charset=utf-8'],
   '/business-lines.mjs': ['business-lines.mjs', 'text/javascript; charset=utf-8'],
+  '/solution-ui.mjs': ['solution-ui.mjs', 'text/javascript; charset=utf-8'],
+  '/solution-model.mjs': ['solution-model.mjs', 'text/javascript; charset=utf-8'],
+  '/solutions.css': ['solutions.css', 'text/css; charset=utf-8'],
   '/workspace.css': ['workspace.css', 'text/css; charset=utf-8'],
   '/ui.mjs': ['ui.mjs', 'text/javascript; charset=utf-8'],
   '/views.mjs': ['views.mjs', 'text/javascript; charset=utf-8'],
@@ -46,7 +51,7 @@ const imageAssets = [
     .map(name => [`artwork/${name}.webp`, 'image/webp']),
 ];
 for (const [path, type] of imageAssets) assets.set(`/assets/${path}`, [`assets/${path}`, type]);
-const shellPath = /^(?:\/|\/work(?:\/(?:solutions|media|capital)(?:\/[\w-]+)?)?|\/inquire\/[\w-]+|\/operations|\/today|\/signin|\/pipeline(?:\/(?:metrics|cards\/[\w-]+|suggestions(?:\/[\w-]+)?))?|\/clients(?:\/[\w-]+(?:\/submissions\/[\w-]+)?)?|\/admin|\/setup\/[\w-]+|\/onboard\/[\w.-]+)$/;
+const shellPath = /^(?:\/|\/work(?:\/(?:solutions|media|capital)(?:\/[\w-]+)?)?|\/inquire\/[\w-]+|\/projects|\/profile|\/operations|\/today|\/signin|\/pipeline(?:\/(?:metrics|cards\/[\w-]+|suggestions(?:\/[\w-]+)?))?|\/clients(?:\/[\w-]+(?:\/submissions\/[\w-]+)?)?|\/admin|\/setup\/[\w-]+|\/onboard\/[\w.-]+)$/;
 const ident = '([a-zA-Z0-9_-]{1,80})';
 const options = { public: true };
 
@@ -67,10 +72,10 @@ function boardQuery(url) {
 }
 
 function visibleOwners(store, actor) {
-  if (actor.role === 'admin') return store.all('SELECT id,name,enabled FROM users ORDER BY name');
+  if (actor.role === 'admin') return store.all('SELECT id,name,enabled,role FROM users ORDER BY name');
   const [where, args] = clientScope(actor, 'c.id');
   return store.all(`WITH accessible AS (SELECT c.id,c.owner_id FROM clients c WHERE ${where})
-    SELECT DISTINCT u.id,u.name,u.enabled FROM users u WHERE u.id=? OR u.id IN (
+    SELECT DISTINCT u.id,u.name,u.enabled,u.role FROM users u WHERE u.id=? OR u.id IN (
       SELECT owner_id FROM accessible UNION SELECT m.user_id FROM client_members m JOIN accessible a ON a.id=m.client_id
       UNION SELECT p.owner_id FROM cards p JOIN accessible a ON a.id=p.client_id) ORDER BY u.name`, ...args, actor.id);
 }
@@ -79,6 +84,7 @@ export function createApp(store, config) {
   const routes = [];
   const route = (method, path, handle, policy = {}) => routes.push({ method, regex: new RegExp(`^${path}$`), handle, policy });
   registerWorkspaceRoutes(route,store,config);
+  registerSolutionRoutes(route,store,config);
   const staticFiles = new Map([...assets].map(([path, [name, type]]) => [path, {
     bytes: readFileSync(new URL(`../public/${name}`, import.meta.url)), type,
   }]));
@@ -86,6 +92,9 @@ export function createApp(store, config) {
   const shareImage = new URL('/assets/brand/social-share.png', config.origin).href;
   const shell = { bytes: Buffer.from(shellTemplate.replace('{{SHARE_IMAGE_URL}}', shareImage)), type: 'text/html; charset=utf-8' };
 
+  route('GET','/api/profile',({actor})=>profile(store,actor));
+  route('PATCH','/api/profile',({actor,data})=>saveProfile(store,actor,data));
+  route('POST','/api/profile/password',({actor,session,data,ip})=>changePassword(store,actor,session,data,ip));
   route('GET', '/api/health', () => ({ ok: store.get('SELECT 1 AS ok').ok === 1 }), options);
   const sessionInfo=actor=>actor?{...actor,workspaces:workspaceLines(store,actor)}:null;
   route('GET', '/api/session', ({ actor }) => ({ user: sessionInfo(actor), demo: config.demo, time_zone: config.timeZone }), options);
@@ -184,7 +193,7 @@ export function createApp(store, config) {
   }, options);
 
   route('GET', '/api/admin/accounts', ({ actor }) => ({ items: listAccounts(store, actor) }));
-  route('POST', '/api/admin/accounts', ({ actor, data }) => inviteAccount(store, actor, data));
+  route('POST', '/api/admin/accounts', ({ actor, data }) => inviteAccount(store, actor, data, config));
   route('PATCH', `/api/admin/accounts/${ident}`, ({ actor, ids, data }) => ({ user: changeAccount(store, actor, ids[0], data) }));
   route('POST', `/api/admin/accounts/${ident}/setup`, ({ actor, ids }) => ({ setup: resetAccount(store, actor, ids[0]) }));
   route('GET', '/api/admin/job-tokens', ({ actor }) => ({ items: listJobTokens(store, actor) }));

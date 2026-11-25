@@ -4,6 +4,8 @@ import { appendActivity, insertCard, insertSuggestion, mcpSaveDraft } from './pi
 import { addItem, changeDeal, createDeal, setMembership } from './engagements.mjs';
 import { createSource, ingestPitch } from './inquiries.mjs';
 import { research } from './delivery.mjs';
+import { saveClientNote, saveConnection } from './solution-clients.mjs';
+import { saveStep, saveBrief } from './solution-projects.mjs';
 
 export const demoEmail = 'demo@branded.example';
 export const demoPassword = 'Local-Demo-Pipeline-24';
@@ -51,7 +53,11 @@ export async function loadDemo(store,config={origin:new URL('http://127.0.0.1:30
       evidence: [{ source, detail: 'Example records describe an expanding restaurant group.' }] }, days(-1));
     insertSubmission(store, user, northline.id, { company: northline.name, contact_name: 'Jamie Example',
       contact_email: 'intake@example.test', icp: 'Multiunit quick service and fast casual brands with growing drive-thru footprints.',
-      minimum_locations: 30, ideal_locations: 100, priority_targets: [{ company: 'Windward Tacos' }],
+      minimum_locations: 30, ideal_locations: 100, priority_targets: [{company:'Windward Tacos',contact:'Ari Cruz'},{company:'BrightFork Burgers',contact:'Morgan Ellis'}],
+      partnerships:[{company:'Harbor Distribution',contact:'Drew Hayes',relationship:'Distribution partner in the Northeast'}],
+      priorities:'Reach multiunit operators in the Northeast and find two distribution partners.',
+      team:[{first_name:'Jamie',last_name:'Example',department:'Leadership',title:'Founder',email:'intake@example.test'},
+        {first_name:'Lee',last_name:'Wells',department:'Partnerships',title:'Head of partnerships',email:'lee@northline.example',phone:'212-555-0141',notes:'Coordinates operator introductions.'}],
       current_integrations: 'Major restaurant POS systems' }, { submittedAt: days(-2) });
     return { user, cards };
   });
@@ -60,7 +66,7 @@ export async function loadDemo(store,config={origin:new URL('http://127.0.0.1:30
   setMembership(store,user,member.id,{workspaces:['solutions','media']});
   const future=days(3).slice(0,10),due=days(-1).slice(0,10);
   for(const [line,company,title,stage,details] of [
-    ['solutions','Cinder Hospitality','Operator introductions','discussion',{contact:'Ellis Reed',next_action:'Meet the operating team',due:future,monthly:550000}],
+    ['solutions','Cinder Hospitality','Operator introductions','first_engagement',{contact:'Ellis Reed',next_action:'Meet the operating team',due:future,monthly:550000}],
     ['solutions','Kite Kitchen','Market entry advisory','outreach',{contact:'Casey Park',next_action:'Confirm priority markets',due}],
     ['solutions','Marrow Market','Strategic collaboration','agreement_sent',{monthly:350000,term:'Six months',next_action:'Review returned SCA'}],
     ['solutions','Harbor Table','Advisory retainer','signed',{monthly:450000,term:'Six months',billing_email:'ap@example.test',report_email:'team@example.test',agreement_url:'https://example.test/executed-sca'}],
@@ -81,6 +87,15 @@ export async function loadDemo(store,config={origin:new URL('http://127.0.0.1:30
     if(line==='media'&&stage==='signed')addItem(store,user,d.id,{kind:'deliverable',title:'Produce first sponsored episode',status:'planned',due:future});
   }
   const client=data.cards[0].client_id;
+saveBrief(store,user,client,{version:0,goals:'Reach multiunit operators in the Northeast and find two distribution partners.',deliverables:'A prioritized introduction list, partner outreach and a weekly activity report.'});
+  for(const [step,status] of [['goals','done'],['deliverables','done'],['kickoff','done'],['icp','working'],['follow_1','waiting']])
+    saveStep(store,user,{client_id:client,step,status,version:0,owner_id:user.id,due:step==='follow_1'?future:''});
+  for(const [company,person,category,health,stage,next_action] of [
+    ['Windward Tacos','Ari Cruz','priority','green','planning','Confirm the right operator introduction.'],
+    ['BrightFork Burgers','Morgan Ellis','priority','yellow','contacted','Follow up on the proposed meeting.'],
+    ['Harbor Distribution','Drew Hayes','strategic','red','followup','Reconfirm the regional partnership owner.'],
+  ]) saveConnection(store,user,{client_id:client,company,person,category,health,stage,next_action,version:0,owner_id:user.id});
+  saveClientNote(store,user,{client_id:client,source_key:'demo-kickoff',body:'Northline confirmed Windward Tacos as its first priority. Harbor Distribution is reviewing a change in ownership.'});
   research(store,user,{client_id:client,person:'Avery Lane',company:'Summit Bun Co.',candidate_key:'demo:1',source:'HubSpot',score:91,
     fit:'Strong',reason:'Growing multi-location operator in the client’s target segment.',branded_relationship:'Prior conversation with the operator.',
     evidence:[{source:'HubSpot',detail:'Illustrative relationship note from the team.'}],tier:'introduce',next_action:'Ask the relationship owner for a warm introduction.'});

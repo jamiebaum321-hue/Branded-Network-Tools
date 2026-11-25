@@ -4,6 +4,8 @@ import { accountingFileUrl } from './files.mjs';
 import { ingestPitch } from './inquiries.mjs';
 import { email } from './validation.mjs';
 
+import { invitationToken } from './invite-link.mjs';
+
 const graphRoot = 'https://graph.microsoft.com/v1.0';
 export function mailSettings(env, demo) {
   if (demo) return {};
@@ -197,6 +199,15 @@ export async function drainMail(s, config, token, request = fetch) {
       d.recipient || (['agreement_signed', 'billing_completed'].includes(d.kind) ? config.accountingEmail : '');
     if (!to) continue;
     let body = d.body;
+    if (d.kind==='team_invite') {
+      const value=invitationToken(config.linkSecret,d.id);
+      const valid=s.get('SELECT 1 FROM setup_tokens t JOIN users u ON u.id=t.user_id WHERE t.token_hash=? AND t.expires_at>? AND u.enabled=1 AND u.email=?',digest(value),Date.now(),to);
+      if (!valid) {
+        s.run("UPDATE dispatches SET status='cancelled',detail='Invitation expired or replaced.' WHERE id=? AND status='queued'",d.id);
+        continue;
+      }
+      body+='\n\n'+new URL('/setup/'+value,config.origin).href;
+    }
     const attachments = [];
     let remaining = 2 * 1024 * 1024;
     if (['agreement_signed', 'billing_completed'].includes(d.kind))
@@ -284,7 +295,7 @@ export async function drainMail(s, config, token, request = fetch) {
         d.id
       );
       if (d.report_id && status === 'accepted')
-        s.run("UPDATE report_versions SET status='sent' WHERE id=?", d.report_id);
+        s.run("UPDATE report_versions SET status='sent',sent_at=coalesce(sent_at,?) WHERE id=?", iso(),d.report_id);
     });
     if (status === 'queued') break;
   }
@@ -302,7 +313,7 @@ export function resolveMail(s, key, decision) {
       key
     );
     if (d.report_id && decision === 'confirmed_sent')
-      s.run("UPDATE report_versions SET status='sent' WHERE id=?", d.report_id);
+      s.run("UPDATE report_versions SET status='sent',sent_at=coalesce(sent_at,?) WHERE id=?", iso(),d.report_id);
     return { ok: true };
   });
 }

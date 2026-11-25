@@ -25,7 +25,7 @@ export function openStore(path) {
   const db = new DatabaseSync(file, { timeout: 5000, enableForeignKeyConstraints: true });
   db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA trusted_schema=OFF;');
   const version = db.prepare('PRAGMA user_version').get().user_version;
-  if (version > 2) {
+  if (version > 3) {
     db.close();
     throw new Error('The database requires a newer app version.');
   }
@@ -57,6 +57,12 @@ export function openStore(path) {
     if (store.get('PRAGMA user_version').user_version < 2) {
       db.exec(readFileSync(new URL('./workspaces.sql', import.meta.url), 'utf8'));
       db.exec('PRAGMA user_version=2');
+    }
+  });
+  if (version < 3) store.tx(() => {
+    if (store.get('PRAGMA user_version').user_version < 3) {
+      db.exec(readFileSync(new URL('./solutions.sql', import.meta.url), 'utf8'));
+      db.exec('PRAGMA user_version=3');
     }
   });
   return store;

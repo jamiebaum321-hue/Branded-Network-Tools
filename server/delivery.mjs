@@ -266,7 +266,7 @@ export function updateReport(s, a, key, rid, input) {
       });
       status = 'queued';
     } else if (d.manual_sent) status = 'sent';
-    s.run('UPDATE report_versions SET body=?,version=version+1,status=? WHERE id=?', d.body, status, rid);
+    s.run("UPDATE report_versions SET body=?,version=version+1,status=?,sent_at=CASE WHEN ?='sent' THEN ? ELSE sent_at END WHERE id=?", d.body, status, status, iso(), rid);
     audit(s, a, 'report.' + status, 'report', rid, e.client_id);
     return { id: rid, status };
   });

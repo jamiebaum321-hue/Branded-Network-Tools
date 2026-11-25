@@ -1,9 +1,10 @@
 import { sections } from './intake-fields.mjs';
-import { workspaceController, intakeAssets, dueSection } from './workspace.mjs';
+import { solutionController } from './solution-ui.mjs';
+import { workspaceController, intakeAssets, operations } from './workspace.mjs';
 import { btn, emptyState, h, heading, icon, link, pathId, shell, stages } from './ui.mjs';
-import { activityItems, adminPage, alertRows, auditRows, boardCard, boardPage, cardPage, clientForm, clientPage,
-  clientRows, clientsPage, createCardForm, intakePage, inviteForm, jobTokenForm, metricsPage, setupPage, signInPage,
-  submissionPage, submissionRows, suggestionPage, suggestionRows, suggestionsPage, todayPage } from './views.mjs';
+import { activityItems, adminPage, alertRows, auditRows, boardCard, cardPage, clientForm,
+  clientRows, clientsPage, createCardForm, intakePage, inviteForm, jobTokenForm, setupPage, signInPage,
+  submissionPage, submissionRows, suggestionPage, suggestionRows, suggestionsPage } from './views.mjs';
 
 const main = document.querySelector('#main');
 const chrome = document.querySelector('#shell');
@@ -21,7 +22,6 @@ let seed = null;
 let dragged = null;
 let dropColumn = null;
 let toastTimer;
-let todayAcknowledgement = Promise.resolve();
 
 class RequestError extends Error {
   constructor(code, payload) {
@@ -142,7 +142,7 @@ function showError(error, focus = false) {
     return;
   }
   const title = error.code === 404 ? 'Page not found' : error.code === 403 ? 'Access required' : 'Couldn’t open this page';
-  show(`<div class="form-page">${heading(title, error.message || 'Please try again.')}<div class="actions">${user ? link('/today', 'Back to Today', 'back') : btn('Try again', { action: 'reload' })}</div></div>`, focus);
+  show(`<div class="form-page">${heading(title, error.message || 'Please try again.')}<div class="actions">${user ? link('/work', 'Back to pipelines', 'back') : btn('Try again', { action: 'reload' })}</div></div>`, focus);
 }
 
 async function render({ focus = false } = {}) {
@@ -156,7 +156,6 @@ async function render({ focus = false } = {}) {
   if (focus) main.innerHTML = '<p class="loading" role="status">Loading…</p>';
   try {
     let html;
-    let todayResult;
     if (path.startsWith('/setup/')) {
       const key = path.split('/').at(-1);
       html = setupPage(await api(`/api/setup/${pathId(key)}`), key);
@@ -172,20 +171,15 @@ async function render({ focus = false } = {}) {
       html=await workspace.page(path,query);
     } else if (!user) html = signInPage(demo);
     else if (path==='/' || path==='/signin') {navigate('/work',{replace:true});return;}
-    else if (path==='/work'||path.startsWith('/work/')||path==='/operations') {
+    else if (path==='/operations') {navigate('/admin?tab=operations',{replace:true});return;}
+    else if (path==='/work'||path.startsWith('/work/')) {
       html=await workspace.page(path,query);
-    } else if (path==='/today') {
-      const [items,due]=await Promise.all([api('/api/today'),api('/api/work-due')]);
-      todayResult=items;
-      html=todayPage(todayResult,zone)+dueSection(due.items);
-    } else if (path === '/pipeline') {
-      const [data, ctx] = await Promise.all([api(queryPath('/api/board', query)), getContext()]);
-      if (current !== revision) return;
-      context = ctx;
-      html = boardPage(data.groups, ctx, query, zone, stage);
-    } else if (path === '/pipeline/metrics') {
-      const [data, ctx] = await Promise.all([api(queryPath('/api/metrics', query)), getContext()]);
-      html = metricsPage(data, ctx, query, zone);
+    } else if (path==='/today') {navigate('/work',{replace:true});return;}
+    else if (path==='/profile' || path==='/projects') {
+      html=await solutions.page(path,query);
+    } else if (path==='/pipeline' || path==='/pipeline/metrics') {
+      const client=query.get('client_id');
+      navigate(client?'/clients/'+pathId(client)+'?tab=map':'/clients',{replace:true});return;
     } else if (path === '/pipeline/suggestions') {
       const [data, ctx] = await Promise.all([api(queryPath('/api/suggestions', suggestionQuery(query))), getContext()]);
       html = suggestionsPage(data, ctx, query);
@@ -208,24 +202,23 @@ async function render({ focus = false } = {}) {
       const [data, ctx] = await Promise.all([api(`/api${path}`), getContext()]);
       if (current !== revision) return;
       context = ctx;
-      html = (data.engagement_id?link('/work/solutions/'+data.engagement_id,'Open advisory engagement','board','back-link'):'')+clientPage(data, ctx, zone);
+      html = await solutions.client(data,ctx,query,zone);
     } else if (path === '/admin') {
       if (user.role !== 'admin') throw new RequestError(403, { error: 'Ask an admin for access.' });
-      const tab = ['audit','import','mcp'].includes(query.get('tab')) ? query.get('tab') : 'accounts';
+      const tab = ['audit','import','mcp','operations'].includes(query.get('tab')) ? query.get('tab') : 'accounts';
       const ctxPromise = getContext();
       let data;
       if (tab === 'audit') {
         const [page, accounts] = await Promise.all([api(queryPath('/api/admin/audit', query)), api('/api/admin/accounts')]);
         data = { ...page, users: accounts.items };
-      } else data = tab === 'import' ? {} : await api(tab === 'mcp' ? '/api/admin/job-tokens' : '/api/admin/accounts');
+      } else data = tab === 'import' ? {} : await api(tab === 'mcp' ? '/api/admin/job-tokens' : tab==='operations' ? '/api/admin/operations' : '/api/admin/accounts');
       const ctx = await ctxPromise;
       if (current !== revision) return;
       context = ctx;
-      html = link('/operations','Workspace access, inquiry links and email delivery','settings')+adminPage(tab, data, ctx, query, zone, imported);
+      html = adminPage(tab, data, ctx, query, zone, imported, tab==='operations'?operations(data):'');
     } else throw new RequestError(404, { error: 'This page doesn’t exist.' });
     if (current !== revision) return;
     show(html, focus, hash);
-    if (todayResult) todayAcknowledgement = api('/api/today/seen', 'POST', { reply_cursor: todayResult.reply_cursor }).catch(() => {});
     if (user && !publicRoute) refreshAlertDot();
   } catch (error) {
     if (current === revision) showError(error, focus);
@@ -348,9 +341,9 @@ const forms = {
   },
   async intake(form) { await advanceWizard(form, 'next'); },
   async 'invite-account'(form, data) {
-    const result = await api('/api/admin/accounts', 'POST', Object.fromEntries(data));
+    const result = await api('/api/admin/accounts', 'POST', {...Object.fromEntries(data),workspaces:data.getAll('workspaces')});
     await render();
-    revealValue('One-time setup link', new URL(result.setup.path, location.origin).href, 'Share this link with the invited user. It expires in 24 hours.');
+    revealValue('One-time setup link', new URL(result.setup.path, location.origin).href, result.delivery==='queued' ? 'The invitation is queued for email. This link expires in 24 hours.' : 'Share this link with the invited person. It expires in 24 hours.');
   },
   async 'edit-account'(form, data) {
     const value = Object.fromEntries(data);
@@ -494,17 +487,17 @@ function changeRepeater(button, remove) {
     if (rows.length >= 40) throw new Error('Use a list link for more than 40 entries.');
     rows.push({});
   }
-  show(intakePage(wizard.info, wizard.key, wizard.step, wizard.answers));
+  show(intakePage(wizard.info, wizard.key, wizard.step, wizard.answers)+intakeAssets(wizard.info,wizard.key));
   const entry = remove ? null : main.querySelector(`[name^="rows|${button.dataset.key}|${rows.length - 1}|"]`);
   (entry ?? main.querySelector(`[data-action="add-row"][data-key="${button.dataset.key}"]`))?.focus();
 }
 
 const actions = {
-  reload: async () => { await todayAcknowledgement; await render({ focus: true }); },
+  reload: () => render({ focus:true }),
   alerts: showAlerts,
   'mark-alerts': async button => { await api('/api/alerts/seen', 'POST', { ids: button.dataset.ids.split(',') }); await showAlerts(); },
   account: () => showDialog('Account', `<div class="stack"><div><strong>${h(user.name)}</strong><p class="muted">${h(user.email)}</p></div>
-    <div>${btn('Sign out', { action: 'logout', glyph: 'logout' })}</div></div>`, { glyph: 'user' }),
+    <div class="actions">${link('/profile','My profile','user')}${user.role==='admin'?link('/admin','Team settings','settings'):''}${btn('Sign out', { action: 'logout', glyph: 'logout' })}</div></div>`, { glyph: 'user' }),
   logout: async () => { await api('/api/session/logout', 'POST'); user = null; context = null; navigate('/signin', { replace: true }); },
   'close-dialog': () => dialog.close(),
   'clear-filters': () => navigate(location.pathname),
@@ -534,7 +527,7 @@ const actions = {
     const data = await api(`/api/suggestions/${pathId(button.dataset.id)}/decision`, 'POST', { decision: button.dataset.decision });
     notify(data.suggestion.card_id ? 'Added to To Contact.' : 'Suggestion dismissed.');
     if (data.suggestion.card_id) navigate(`/pipeline/cards/${pathId(data.suggestion.card_id)}`);
-    else navigate('/pipeline/suggestions');
+    else navigate('/clients/'+pathId(data.suggestion.client_id)+'?tab=map');
   },
   'form-link': async button => {
     const value = await api(`/api/clients/${pathId(button.dataset.id)}/form-link`, 'POST');
@@ -678,9 +671,10 @@ document.addEventListener('drop', async event => {
 });
 
 const workspace=workspaceController({api,navigate,render,showDialog,notify,clipboard,getUser:()=>user,getZone:()=>zone,
-  onIntakeUpload:(key,file)=>{if(wizard?.key!==key)return;wizard.info.files.push(file);return wizard.info.files;}});
-Object.assign(forms,workspace.forms);
-Object.assign(actions,workspace.actions);
+  onIntakeUpload:(key,file)=>{if(wizard?.key!==key)return;if(!wizard.info.files.some((f)=>f.id===file.id))wizard.info.files.push(file);return wizard.info.files;}});
+const solutions=solutionController({api,navigate,render,showDialog,notify,getUser:()=>user,getZone:()=>zone,setUser:(value)=>{user=value;}});
+Object.assign(forms,workspace.forms,solutions.forms);
+Object.assign(actions,workspace.actions,solutions.actions);
 window.addEventListener('popstate', () => { if (dialog.open) dialog.close(); void render({ focus: true }); });
 document.addEventListener('visibilitychange', refreshAlertDot);
 setInterval(refreshAlertDot, 60000);

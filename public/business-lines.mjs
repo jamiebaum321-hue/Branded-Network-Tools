@@ -11,7 +11,7 @@ export const lines = {
   solutions: {
     name: 'Solutions',
     noun: 'Advisory engagements',
-    live: [...prospectStages, 'agreement_sent'],
+    live: ['outreach', 'discovery', 'first_engagement', 'second_engagement', 'agreement_sent'],
     delivery: ['signed', 'onboarding', 'active', 'complete'],
   },
   media: {

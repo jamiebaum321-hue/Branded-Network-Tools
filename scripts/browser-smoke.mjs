@@ -54,7 +54,9 @@ try {
     );
   await page.goto(config.origin.href);
   await button(page, 'Sign in').click();
-  await heading(page, 'Solutions');
+  await heading(page, 'Pipelines');
+  assert.deepEqual(await page.locator('.sales-board h2').allTextContents(),['Outreach','Discovery','First engagement','Second engagement','Agreement sent','Signed']);
+  await button(page,'Compact cards').click(); await page.locator('.compact-cards').waitFor();
   await page.getByText('Cinder Hospitality', { exact: true }).first().waitFor();
   await capture(page, 'solutions-desktop');
   await checkWidth(page);
@@ -76,15 +78,13 @@ try {
   const path = new URL(page.url()).pathname;
   for (const [stage, label] of [
     ['discovery', 'Discovery'], ['first_engagement', 'First engagement'], ['second_engagement', 'Second engagement'],
-    ['first_meeting_scheduled', 'First meeting scheduled'],
+    ['agreement_sent', 'Agreement sent'],
   ]) {
     await button(page, 'Move stage').click();
     await dialog.getByLabel('Stage', {exact:true}).selectOption(stage);
-    if (stage === 'first_meeting_scheduled') await dialog.getByLabel('First meeting date').fill('2027-01-12');
     await button(dialog, 'Save stage').click();
     await page.getByText('Advisory engagements · '+label, {exact:true}).waitFor();
   }
-  await page.getByText('2027-01-12', {exact:true}).waitFor();
   const upload = page.locator('form[data-form="ws-file"]');
   await upload
     .locator('input[type=file]')
@@ -98,8 +98,8 @@ try {
   await button(page, 'Move stage').click();
   await dialog.getByLabel('Stage', { exact: true }).selectOption('signed');
   await button(dialog, 'Save stage').click();
-  await page.getByText('Advisory engagements · Signed', { exact: true }).waitFor();
-  await page.getByRole('link', { name: 'Advisory intake', exact: true }).click();
+  await page.locator('.map-root').getByText('Browser Pilot').waitFor();
+  const clientId=new URL(page.url()).pathname.split('/').at(-1);
   const [generated] = await Promise.all([
     page.waitForResponse((r) => r.url().endsWith('/form-link') && r.request().method() === 'POST'),
     button(page, 'Copy intake link').click(),
@@ -115,38 +115,60 @@ try {
   client.setDefaultTimeout(10000);
   activePage = client;
   await client.goto(onboarding);
-  await heading(client, 'Solutions Partner Onboarding');
+  await heading(client, 'Welcome to Branded Hospitality Solutions!');
   await checkWidth(client);
   await client.getByLabel('Primary contact name').fill('Alex Person');
   await client.getByLabel('Primary contact email').fill('alex@example.test');
+  await client.getByLabel('Who is your ideal customer?').fill('Multi-location restaurant operators.');
   const intakeUpload = client.locator('form[data-form="ws-intake-file"]');
   await intakeUpload
     .locator('input[type=file]')
     .setInputFiles({
-      name: 'operators.csv',
-      mimeType: 'text/csv',
+      name: 'existing-presentation.pptx',
+      mimeType: 'application/octet-stream',
       buffer: Buffer.from('company,segment\nBlue House,QSR'),
     });
   await button(intakeUpload, 'Upload file').click();
   await client
     .locator('#intake-files')
-    .getByText(/operators.csv/)
+    .getByText(/existing-presentation.pptx/)
     .waitFor();
-  await button(client, 'Save and continue').click();
-  await client.getByLabel('Who is your ideal customer?').fill('Multi-location restaurant operators.');
-  for (let step = 0; step < 4; step++) {
-    const label = await client.locator('.step-label').innerText();
-    await button(client, 'Save and continue').click();
-    await client.waitForFunction((old) => document.querySelector('.step-label')?.textContent !== old, label);
-  }
-  await client.getByLabel('Engagement priorities').fill('Book operator introductions.');
-  await client.getByLabel('Invoice recipient email').fill('billing@example.test');
+await intakeUpload.locator('select').selectOption('logo');
+  await intakeUpload.locator('input[type=file]').setInputFiles({name:'company.png',mimeType:'image/png',buffer:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMBAAZpKq8AAAAASUVORK5CYII=','base64')});
+  await button(intakeUpload,'Upload file').click(); await client.locator('#intake-files').getByText(/company.png/).waitFor();
+  const advance=async(n)=>{await button(client,'Save and continue').click();await client.getByText('Step '+n+' of 9',{exact:true}).waitFor();};
+  await advance(2); await advance(3); await button(client,'Add target').click();
+  await client.getByLabel('Company',{exact:true}).fill('Harbor Kitchens'); await client.getByLabel('Person',{exact:true}).fill('Morgan Lee');
+  await advance(4); await advance(5); await client.locator('button[data-key="partnerships"]').click();
+  await client.getByLabel('Partner',{exact:true}).fill('Channel Collective');
+  await advance(6); await advance(7); await advance(8); await client.getByLabel('Engagement priorities').fill('Secure introductions in the Northeast.');
+  await advance(9); await button(client,'Add team member').click();
+  await client.getByLabel('First name').fill('Devon'); await client.getByLabel('Last name').fill('Ray');
+  await client.getByLabel('Function').selectOption('Partnerships'); await client.getByLabel('Phone number').fill('212-555-0100');
+  await client.getByLabel('Email',{exact:true}).fill('devon@example.test'); await client.getByLabel('Job title').fill('VP');
+  await client.getByLabel('Contact notes').fill('Runs partner outreach.'); await client.getByLabel('Invoice recipient email').fill('billing@example.test');
   await button(client, 'Submit answers').click();
   await heading(client, 'Response submitted');
   activePage = page;
   await page.reload();
-  await page.getByText('Multi-location restaurant operators.', { exact: true }).waitFor();
-  await page.getByRole('link', { name: 'operators.csv' }).waitFor();
+const node=(name)=>page.locator('.map-node').filter({hasText:name});
+  await node('Harbor Kitchens').waitFor();
+  await page.locator('.map-branch').filter({hasText:'Strategic and channel partners'}).getByText('Channel Collective').waitFor();
+  await page.getByRole('img',{name:'Browser Pilot logo'}).waitFor();
+  await node('Harbor Kitchens').click(); await dialog.getByLabel('Relationship health').selectOption('green');
+  await dialog.getByLabel('Next action').fill('Ask Morgan for an introduction.');
+  await dialog.getByRole('link',{name:'Intake 1'}).waitFor(); await button(dialog,'Save connection').click(); await node('Harbor Kitchens').getByText(/Strong/).waitFor();
+  await button(page,'Add note').click(); await dialog.getByLabel('Working note').fill('Harbor Kitchens wants an introduction to North Bay.');
+  await dialog.locator('summary').click(); await dialog.getByLabel('Target company').fill('North Bay'); await button(dialog,'Save note').click(); await node('North Bay').waitFor();
+  await node('Harbor Kitchens').click(); await dialog.getByText('Harbor Kitchens wants an introduction to North Bay.',{exact:true}).waitFor(); await page.keyboard.press('Escape');
+  await button(page,'Work with Claude').click(); await dialog.getByRole('link',{name:'Open Claude'}).waitFor();
+  assert((await dialog.getByLabel('Client brief').inputValue()).includes(clientId)); await button(dialog,'Copy client brief').click(); await page.keyboard.press('Escape');
+  await capture(page,'client-map'); await page.getByRole('link',{name:'Client group',exact:true}).click();
+  const person=page.locator('.person-row').filter({hasText:'Devon Ray'}); await person.getByText('212-555-0100').waitFor(); await button(person,'Edit').click();
+  await dialog.getByLabel('Title',{exact:true}).fill('VP, Partnerships'); await button(dialog,'Save contact').click(); await person.getByText('VP, Partnerships').waitFor();
+  await page.getByRole('link',{name:'Submission history',exact:true}).click(); await page.locator('#submission-list a').first().waitFor();
+  await page.getByRole('link',{name:'Advisory intake',exact:true}).click(); await page.getByText('Multi-location restaurant operators.',{exact:true}).waitFor();
+  await page.getByRole('link',{name:'existing-presentation.pptx'}).first().waitFor();
   await page.getByRole('link', { name: 'Activity', exact: true }).click();
   const log = page.locator('form[data-form="ws-work"]');
   await log.getByLabel('Activity', { exact: true }).selectOption('newsletter');
@@ -166,11 +188,7 @@ try {
     assert(download.suggestedFilename().endsWith('-v1'+extension));
     assert.equal(await download.failure(), null);
   }
-  await page
-    .getByRole('link', { name: 'Introductions', exact: true })
-    .filter({ hasNot: page.locator('svg') })
-    .first()
-    .click();
+  await page.getByRole('link',{name:'Introduction map',exact:true}).click();
   await button(page, 'Add research').click();
   const inputs = {
     Company: 'Pilot Prospect',
@@ -184,69 +202,48 @@ try {
   for (const [name, value] of Object.entries(inputs))
     await dialog.getByLabel(name, { exact: true }).fill(value);
   await button(dialog, 'Save finding').click();
-  await page.getByRole('link', { name: 'Review finding', exact: true }).click();
-  await page.getByRole('heading', { name: 'Casey', exact: true }).waitFor();
-  await page.goto(new URL('/work/media?view=conversations', config.origin).href);
-  await page.getByRole('link', { name: 'Meridian Creative', exact: true }).waitFor();
-  await page.getByText('Sponsor requested the deck', { exact: true }).waitFor();
-  await page.getByRole('link', {name:'Marrow Market', exact:true}).click();
-  await page.getByRole('link', {name:'Activity', exact:true}).click();
-  await log.getByLabel('Activity', {exact:true}).selectOption('sent');
-  await log.getByLabel('Status', {exact:true}).selectOption('done');
-  await log.getByLabel('Action, introduction or outcome').fill('Sent event sponsorship details');
-  await log.getByLabel('Activity date').fill('2024-03-08');
-  await button(log, 'Record activity').click();
-  await page.getByRole('heading', {name:'Sent event sponsorship details'}).waitFor();
-  await page.goto(new URL('/today', config.origin).href);
-  await page.getByRole('link').filter({hasText:'Follow up on unanswered outreach'}).filter({hasText:'Marrow Market'}).waitFor();
-  await page.goto(new URL('/work/media?view=conversations', config.origin).href);
-  await page.getByRole('row').filter({hasText:'Marrow Market'}).getByText('Follow up on unanswered outreach · 2024-03-11').waitFor();
-  await capture(page, 'media-desktop');
-  await page.getByRole('link', {name:'Delivery',exact:true}).click();
-  await page.getByRole('heading', {name:'Project billing'}).waitFor();
-  const billing = page.getByRole('row').filter({hasText:'Four-episode sponsorship'});
-  await billing.getByRole('cell', {name:'Pending',exact:true}).waitFor();
-  await billing.getByRole('cell', {name:'Four podcast episodes and two newsletter placements'}).waitFor();
-  await page.getByRole('link', { name: 'Guest pitches' }).click();
-  await page.getByText('Guest idea for Hospitality Hangout', { exact: true }).waitFor();
-  await page.getByRole('link', { name: 'Capital', exact: true }).click();
-  await heading(page, 'Capital');
-  await page.getByText('Capital raised', { exact: true }).waitFor();
-  await page.goto(new URL('/operations', config.origin).href);
-  await heading(page, 'Workspace operations');
-  const copyLink = page.getByRole('button', { name: 'Copy inquiry link' }).first();
-  const sourceKey = await copyLink.getAttribute('data-id');
-  await copyLink.click();
-  await client.goto(new URL('/inquire/' + sourceKey, config.origin).href);
-  await client.locator('input[name=company]').fill('Inbound sponsor');
-  await client.getByLabel('Your name').fill('Morgan');
-  await client.locator('input[name=email]').fill('morgan@example.test');
-  await client.getByLabel('What would you like to discuss?').fill('Sponsorship opportunities.');
-  await button(client, 'Send inquiry').click();
-  await client.getByRole('heading', { name: 'Inquiry received' }).waitFor();
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto(new URL('/work/media', config.origin).href);
-  await heading(page, 'Media');
-  await checkWidth(page);
-  await page.getByText('Inbound sponsor', { exact: true }).waitFor();
-  await capture(page, 'media-mobile');
-  const visible = page.locator('.deal-column:visible');
-  assert.equal(await visible.count(), 1);
-  await page.getByLabel('Jump to stage').selectOption('first_meeting_scheduled');
-  await visible.getByRole('heading', {name:'First meeting scheduled'}).waitFor();
-  await page.getByLabel('Jump to stage').selectOption('pitch');
-  await visible.getByRole('link').filter({ hasText: 'Meridian Creative' }).click();
-  await heading(page, 'Meridian Creative');
-  await checkWidth(page);
-  const pilot = await staff.request.get(
-    new URL('/api/engagements/' + path.split('/').at(-1), config.origin).href
-  );
-  assert.equal(pilot.status(), 200);
-  assert.equal((await pilot.json()).deal.stage, 'signed');
-  assert.deepEqual(failures, []);
-  console.log(
-    'Desktop and mobile workflows passed, including sales stages, signing, intake and uploads, weekly PDF and workbook downloads, introductions, project billing and inbound routing.'
-  );
+await node('Pilot Prospect').waitFor();
+  await page.getByRole('link',{name:'View project',exact:true}).click(); await heading(page,'Project management');
+  const grid=page.locator('.project-grid');
+  await button(grid,'Browser Pilot, Intake received, Done').waitFor();
+  await page.locator('.project-sheet').getByText('Secure introductions in the Northeast.').waitFor();
+  await button(grid,'Browser Pilot, Kickoff email sent, Not started').click();
+  await dialog.getByLabel('Status',{exact:true}).selectOption('done'); await dialog.getByLabel('Milestone notes').fill('Welcome email recorded.');
+  await button(dialog,'Save milestone').click(); await button(grid,'Browser Pilot, Kickoff email sent, Done').waitFor();
+  await capture(page,'project-management'); await checkWidth(page);
+  await button(page,'Edit project brief').click(); await dialog.getByLabel('Agreed deliverables').fill('Three introductions.');
+  await button(dialog,'Save project brief').click(); await page.getByText('Three introductions.',{exact:true}).waitFor();
+  const switchTo=async(label)=>{
+    const sw=page.locator('.workspace-switch:visible'); await sw.locator('summary').click();
+    await sw.getByRole('link',{name:label,exact:true}).click();
+  };
+  for(const label of ['Media','Capital']){
+    await switchTo(label); await heading(page,label); await page.getByText('Under construction',{exact:true}).waitFor();
+    assert.equal(await page.locator('.deal-column').count(),0);
+  }
+  await switchTo('Solutions'); await heading(page,'Pipelines');
+  await page.getByRole('link',{name:'Settings',exact:true}).click(); await heading(page,'Settings');
+  await page.getByRole('link',{name:'Workspace settings',exact:true}).click(); await page.getByRole('heading',{name:'Team access'}).waitFor();
+  await page.getByRole('link',{name:'Team',exact:true}).click(); await button(page,'Invite people').click();
+  await dialog.getByLabel('Name',{exact:true}).fill('Invited staff'); await dialog.getByLabel('Email',{exact:true}).fill('invited@example.test');
+  const [invite]=await Promise.all([page.waitForResponse((r)=>r.url().endsWith('/admin/accounts') && r.request().method()==='POST'),button(dialog,'Invite person').click()]);
+  const memberView=await browser.newContext(), member=await memberView.newPage(); watch(member); activePage=member;
+  await member.goto(new URL((await invite.json()).setup.path,config.origin).href); await heading(member,'Set your password');
+  await member.getByLabel('Password',{exact:true}).fill('Private-Demo-Password-24'); await member.getByLabel('Confirm password').fill('Private-Demo-Password-24');
+  await button(member,'Activate account').click(); await heading(member,'Pipelines');
+  await member.getByRole('button',{name:/Account menu/}).click(); await member.getByRole('link',{name:'My profile',exact:true}).click();
+  await member.getByLabel('Job title').fill('Account director'); await button(member,'Save profile').click(); await member.getByText('Profile saved.').waitFor();
+  await member.reload(); assert.equal(await member.getByLabel('Job title').inputValue(),'Account director');
+  assert.equal((await memberView.request.get(new URL('/api/clients/'+clientId+'/workspace',config.origin).href)).status(),404);
+  activePage=page; await page.keyboard.press('Escape');
+  await page.setViewportSize({width:390,height:844}); await page.goto(new URL('/today',config.origin).href); await heading(page,'Pipelines'); await checkWidth(page);
+  await page.getByLabel('Jump to stage').selectOption('signed');
+  const visible=page.locator('.deal-column:visible'); assert.equal(await visible.count(),1);
+  await visible.getByRole('link').filter({hasText:'Browser Pilot'}).click(); await node('Harbor Kitchens').waitFor(); await checkWidth(page); await capture(page,'client-map-mobile');
+  await page.getByRole('link',{name:'View project',exact:true}).click(); await heading(page,'Project management'); await checkWidth(page);
+  const pilot=await staff.request.get(new URL('/api/engagements/'+path.split('/').at(-1),config.origin).href);
+  assert.equal((await pilot.json()).deal.stage,'signed'); assert.deepEqual(failures,[]);
+  console.log('Desktop and mobile passed: six sales stages, signed project, nine-section intake, files and logo, client map, client group, report downloads, milestones, invitations, profile and workspace switching.');
 } catch (error) {
   if (activePage) console.error((await activePage.locator('body').innerText()).slice(-2700), failures);
   throw error;

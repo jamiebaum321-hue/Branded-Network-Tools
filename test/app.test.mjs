@@ -109,7 +109,7 @@ test('Claude scope and replay-safe sent and reply logs, metrics, and alerts', as
   assert.equal((await f.rpc(job, 'initialize', { protocolVersion: '2025-11-25' })).protocolVersion, '2025-11-25');
   const tools = (await f.rpc(job, 'tools/list')).tools;
   assert.deepEqual(tools.filter(tool => !tool.annotations.readOnlyHint).map(tool => tool.name).sort(),
-    ['add_suggested_lead','log_reply','log_sent_email','record_engagement_work','save_draft','save_introduction_research','save_weekly_report_draft','update_engagement_followup']);
+    ['add_suggested_lead','log_reply','log_sent_email','record_engagement_work','save_client_contact','save_client_note','save_draft','save_introduction_research','save_weekly_report_draft','update_client_connection','update_engagement_followup','update_project_milestone']);
   assert.equal((await f.rpc(job, 'tools/call', { name: 'move_stage', arguments: {} })).code, -32602);
   assert.equal((await f.call(job, 'get_pipeline_card', { card_id: other.id })).status, 404);
   const sent = { card_id: card.id, mailbox_scope: 'team', outlook_message_id: 'outbound-1', sent_at: past(), subject: 'Intro' };
@@ -166,7 +166,7 @@ test('OAuth MCP identities are read-only and require audience, scope and client 
   assert.equal((await f.call('writer-token','move_sales_stage',{engagement_id:lead.id,version:1,stage:'cold',due:'2027-01-01'})).version,2);
   assert.equal((await f.call('writer-token','move_sales_stage',{engagement_id:lead.id,version:2,stage:'signed'})).status,400);
   const moved = await f.call('writer-token', 'move_sales_stage', {
-    engagement_id: lead.id, version: 2, stage: 'first_meeting_scheduled', first_meeting_day: '2027-01-04',
+    engagement_id: lead.id, version: 2, stage: 'first_engagement', first_meeting_day: '2027-01-04',
   });
   assert.equal(moved.version, 3);
   assert.equal((await f.admin('/api/engagements/'+lead.id)).deal.details.first_meeting_day, '2027-01-04');
@@ -294,6 +294,120 @@ test('one-time seed preview and atomic repeat import across clients', async t =>
   assert.equal((await f.admin('/api/metrics')).replies, 1);
 });
 
+test('a signature opens one project, monthly follow-ups keep independent history and stale or out-of-scope writes fail',async t=>{
+  const f=await fixture(t), deal=await f.admin('/api/workspaces/solutions/engagements',{company:'Juniper'});
+  assert.equal((await f.admin('/api/projects')).projects.length,0);
+  const path='/api/engagements/'+deal.id;
+  await f.admin(path,{version:1,stage:'signed',details:{agreement_url:'https://example.test/signed',package:'Monthly advisory'}},'PATCH');
+  await f.admin(path,{version:1,stage:'signed'},'PATCH',409);
+  const project=(await f.admin('/api/projects?month=2027-01')).projects[0], base='/api/clients/'+project.id;
+  assert.equal(project.deliverables,'Monthly advisory');
+  await f.admin(base+'/project',{goals:'Find growth partners',deliverables:'Two introductions',version:0},'PUT');
+  const job=await f.tokenFor(project), outside=await f.addClient('Outside');
+  const step={client_id:project.id,step:'monthly',period:'2027-01',status:'done',owner_id:f.owner.user.id,due:'2027-01-29',notes:'Reviewed outcomes',version:0};
+  assert.equal((await f.call(job,'update_project_milestone',step)).version,1);
+  assert.equal((await f.call(job,'update_project_milestone',step)).status,409);
+  const jan=await f.call(job,'get_client_project',{client_id:project.id,month:'2027-01'});
+  assert.equal(jan.project.steps.monthly.notes,step.notes); assert.equal(Object.keys(jan.milestones).length,12);
+  assert.equal(jan.project.goals,'Find growth partners');
+  const feb=await f.call(job,'get_client_project',{client_id:project.id,month:'2027-02'});
+  assert.equal(feb.project.steps.monthly,undefined);
+  assert.equal((await f.call(job,'get_client_project',{client_id:outside.id,month:'2027-01'})).status,404);
+  await f.admin(base+'/milestones',{...step,period:'2027-13'},'PUT',400);
+  const other=await f.admin('/api/admin/accounts',{name:'Other',email:'other@example.test',role:'member'});
+  await f.admin(base+'/milestones',{...step,period:'2027-02',owner_id:other.user.id},'PUT',400);
+});
+
+test('intake, authored notes, CRM cards and edited contacts share a scoped, sourced client map',async t=>{
+  const f=await fixture(t),c=await f.addClient('Branded client'),other=await f.addClient('Private client');
+  const root='/api/clients/'+c.id, job=await f.tokenFor(c);
+  const link=(await f.admin(root+'/form-link',{})).path;
+  const body={company:c.name,contact_name:'Primary Contact',contact_email:'primary@example.test',
+    priority_targets:[{company:'East Harbor'}],partnerships:[{company:'Channel Partner',contact:'Kit'}],
+    team:[{first_name:'Pia',last_name:'Gray',department:'Marketing',email:'pia@example.test',phone:'212-555-0101',title:'Director',notes:'Launch owner'}]};
+  const blob=Buffer.from([0,1,40,255]);
+  const attached=(await f.check('/api'+link+'/files',{method:'POST',body:{name:'archive.custom',purpose:'asset',data:blob.toString('base64')}})).result;
+  const submission=(await f.check('/api'+link+'/submit',{method:'POST',body})).result.submission;
+  await f.addCard(c,{company:'East Harbor',person:'Jules'});
+  const named={client_id:c.id,source_key:'meeting:17',body:'East Harbor can introduce us.\nTarget: New Operator | Alex\nPartner: Second Channel'};
+  const note=await f.call(job,'save_client_note',named); assert.equal((await f.call(job,'save_client_note',named)).id,note.id);
+  const work=await f.call(job,'get_client_workspace',{client_id:c.id});
+  assert.equal(work.notes.length,1); assert.equal(work.connections.length,4);
+  const east=work.connections.find(n=>n.company==='East Harbor');
+  assert.equal(east.category,'priority'); assert.equal(east.person,'Jules'); assert.equal(east.health,'unrated');
+  assert.deepEqual(east.sources.map(s=>s.type).sort(),['card','intake','note']);
+  assert.equal(east.sources.find(s=>s.type==='intake').id,submission.id);
+  assert.equal(work.connections.find(n=>n.company==='Second Channel').category,'strategic');
+  const assessment={key:east.key,version:0,company:east.company,person:east.person,category:east.category,health:'yellow',stage:'planning',notes:'Check in after the conference'};
+  await f.admin(root+'/connections',assessment,'PUT');
+  await f.admin(root+'/connections',assessment,'PUT',409);
+  const contact=work.people.find(p=>p.first_name==='Pia');
+  const updated={client_id:c.id,key:contact.key,version:0,first_name:'Pia',last_name:'Gray',title:'VP',department:'Partnerships',email:'new-pia@example.test',notes:'Regional lead'};
+  assert.equal((await f.call(job,'save_client_contact',updated)).version,1);
+  const after=await f.admin(root+'/workspace');
+  assert.equal(after.people.filter(p=>p.first_name==='Pia').length,1); assert.equal(after.people.find(p=>p.key===contact.key).email,updated.email);
+  assert.equal(after.connections.find(n=>n.key===east.key).health,'yellow');
+  await f.admin(root+'/milestones',{step:'intake',status:'working',version:0},'PUT',409);
+  const res=await f.request('/api/files/'+attached.id+'?preview=1',{cookie:f.owner.cookie});
+  assert.match(res.headers.get('content-disposition'),/^attachment/); assert.deepEqual(Buffer.from(await res.arrayBuffer()),blob);
+  assert.equal((await f.call(job,'get_client_workspace',{client_id:other.id})).status,404);
+  assert.equal((await f.call(job,'save_client_note',{...named,client_id:other.id})).status,404);
+});
+
+test('designated CSV and Excel attachments populate targets and client contacts on submission and retain their source files',async t=>{
+  const f=await fixture(t), c=await f.addClient('File intake'), root='/api/clients/'+c.id;
+  const intake='/api'+(await f.admin(root+'/form-link',{})).path;
+  const targets={name:'export.csv',purpose:'priority_targets',data:Buffer.from('Account Name,Contact Name,Notes\r\n"Harbor, LLC",Jamie Park,"Met at conference"\r\n').toString('base64')};
+  const first=(await f.check(intake+'/files',{method:'POST',body:targets})).result;
+  assert.match(first.list_note,/1 rows? recognized/);
+  const replay=(await f.check(intake+'/files',{method:'POST',body:targets})).result;
+  assert.equal(replay.id,first.id); assert.equal(f.store.get('SELECT count(*) n FROM attachments').n,1);
+  const bytes=execFileSync(f.config.pdfPython,['-c',[
+    'import io,sys,xlsxwriter','out=io.BytesIO()','book=xlsxwriter.Workbook(out,{"in_memory":True})','ws=book.add_worksheet()',
+    'ws.write_row(0,0,["First Name","Last Name","Email Address","Department","Job Title","Phone Number","Notes"])',
+    'ws.write_row(1,0,["Morgan","Lee","morgan@example.test","Sales","Director","212-555-0181","Meet weekly"])',
+    'book.close()','sys.stdout.buffer.write(out.getvalue())'].join('\n')]);
+  const roster=(await f.check(intake+'/files',{method:'POST',body:{name:'roster.xlsx',purpose:'team',data:bytes.toString('base64')}})).result;
+  assert.match(roster.list_note,/1 rows? recognized/);
+  assert.equal((await f.admin(root+'/workspace')).connections.length,0);
+  await f.check(intake+'/submit',{method:'POST',body:{company:c.name,contact_name:'Owner',contact_email:'owner@example.test'}});
+  const data=await f.admin(root+'/workspace');
+  assert.equal(data.connections[0].company,'Harbor, LLC');assert.equal(data.connections[0].person,'Jamie Park');
+  assert.equal(data.connections[0].sources[0].id,first.id);assert.equal(data.connections[0].sources[0].type,'file');
+  const person=data.people.find(p=>p.last_name==='Lee');
+  assert.equal(person.department,'Sales');assert.equal(person.phone,'212-555-0181');assert.equal(person.source,'roster.xlsx');
+});
+
+test('staff invitations honor assigned lines, delivery readiness and replaced links, and profile changes protect active sessions',async t=>{
+  const f=await fixture(t);
+  const invite={name:'Morgan',email:'morgan@example.test',role:'member',workspaces:['solutions'],delivery:'email'};
+  await f.admin('/api/admin/accounts',invite,'POST',409);
+  f.config.mail={tenant:'mock',app:'mock',secret:'mock',sender:'staff@example.test'};
+  const invited=await f.admin('/api/admin/accounts',invite);
+  assert.equal(invited.delivery,'queued');
+  const requests=[];
+  const fake=async(url,opts)=>{requests.push(JSON.parse(opts.body));return new Response(null,{status:202});};
+  await drainMail(f.store,f.config,'mock',fake); await drainMail(f.store,f.config,'mock',fake);
+  assert.equal(requests.length,1); assert.equal(requests[0].message.toRecipients[0].emailAddress.address,invite.email);
+  assert(requests[0].message.body.content.includes(invited.setup.path));
+  const dbMessage=f.store.get("SELECT body FROM dispatches WHERE kind='team_invite'");
+  assert(!dbMessage.body.includes(invited.setup.path));
+  const another=await f.admin('/api/admin/accounts',{...invite,email:'replace@example.test',workspaces:[]});
+  await f.admin('/api/admin/accounts/'+another.user.id+'/setup',{});
+  await drainMail(f.store,f.config,'mock',fake); assert.equal(requests.length,1);
+  await f.check('/api'+another.setup.path,{},410);
+  const staff=await f.activate(invited.setup.path), personal=f.as(staff.cookie);
+  assert.deepEqual((await personal('/api/workspaces')).lines,['solutions']);
+  const second=await f.check('/api/session',{method:'POST',body:{email:invite.email,password}});
+  const previous=f.as(second.res.headers.get('set-cookie').split(';')[0]);
+  const d={name:'Morgan Lee',job_title:'Partnerships',phone:'212-555-0102',bio:'Regional team',onboarding_alerts:true,version:1};
+  await personal('/api/profile',d,'PATCH'); await personal('/api/profile',d,'PATCH',409);
+  await personal('/api/profile/password',{current:'incorrect',password:'Replacement-password-42'},'POST',400);
+  await personal('/api/profile/password',{current:password,password:'Replacement-password-42'});
+  assert.equal((await personal('/api/profile')).phone,d.phone); await previous('/api/profile',undefined,'GET',401);
+  await f.check('/api/session',{method:'POST',body:{email:invite.email,password}},401);
+});
+
 test('persistent store keeps accounts across restarts and only runs migrations once', () => {
   const temp = mkdtempSync(join(tmpdir(), 'branded-network-test-'));
   const file = join(temp, 'test.sqlite');
@@ -304,12 +418,39 @@ test('persistent store keeps accounts across restarts and only runs migrations o
     const reopened = openStore(file);
     try {
       assert.equal(reopened.get('SELECT email FROM users').email, adminEmail);
-      assert.equal(reopened.get('PRAGMA user_version').user_version, 2);
+      assert.equal(reopened.get('PRAGMA user_version').user_version, 3);
     } finally { reopened.db.close(); }
   } finally {
     for (const suffix of ['', '-wal', '-shm']) rmSync(`${file}${suffix}`, { force: true });
     rmdirSync(temp);
   }
+});
+
+test('version 2 prospect migration preserves meeting details and keeps the old stage in the history exactly once',()=>{
+  const dir=mkdtempSync(join(tmpdir(),'branded-legacy-')),file=join(dir,'workspace.sqlite');
+  let db;
+  try {
+    db=new DatabaseSync(file);
+    for(const name of ['schema','workspaces']) db.exec(readFileSync(new URL('../server/'+name+'.sql',import.meta.url),'utf8'));
+    db.exec(`PRAGMA user_version=2;
+      INSERT INTO users(id,name,email,role,created_at) VALUES('u','Staff','staff@example.test','member','2026-01-01');
+      INSERT INTO companies VALUES('co','Company','company');
+      INSERT INTO engagements(id,company_id,line,owner_id,title,stage,details,created_at,updated_at) VALUES
+      ('a','co','solutions','u','Pipeline','first_meeting_scheduled','{"first_meeting_day":"2026-12-10"}','2026-01-01','2026-11-10'),
+      ('b','co','media','u','Media','discussion','{}','2026-01-01','2026-11-10'),
+      ('c','co','solutions','u','Advisory','discussion','{}','2026-01-01','2026-11-10');`);
+    db.close(); db=null;
+    for(let n=0;n<2;n++) {
+      const store=openStore(file); db=store.db;
+      const first=store.get("SELECT * FROM engagements WHERE id='a'");
+      assert.equal(first.stage,'first_engagement');assert.equal(first.owner_id,'u');assert.equal(first.signed_at,null);
+      assert.equal(JSON.parse(first.details).first_meeting_day,'2026-12-10');
+      assert.equal(store.get("SELECT stage FROM engagements WHERE id='b'").stage,'discussion');
+      assert.equal(store.get("SELECT stage FROM engagements WHERE id='c'").stage,'first_engagement');
+      assert.equal(store.get("SELECT count(*) n FROM work_items WHERE kind='note'").n,2);
+      db.close();db=null;
+    }
+  } finally {db?.close();rmSync(file,{force:true});for(const suffix of ['-wal','-shm'])rmSync(file+suffix,{force:true});rmdirSync(dir);}
 });
 
 test('version 1 clients and recorded introductions migrate once with the same owners, identifiers and permission boundaries', () => {
@@ -368,11 +509,11 @@ test('one company can have private sales in three lines, with scoped sharing, nu
 
 test('spoken sales checkpoints, line-specific delivery and inquiry counts stay consistent in each workspace', async t => {
   const f = await fixture(t);
-  const shared = ['discovery', 'first_engagement', 'second_engagement', 'first_meeting_scheduled', 'discussion'];
+  const shared = ['discovery', 'first_engagement', 'second_engagement'];
   const workflows = {
-    solutions: { sales: ['agreement_sent'], delivery: ['onboarding', 'active', 'complete'] },
-    media: { sales: ['pitch', 'agreement_sent'], delivery: ['production', 'complete'] },
-    capital: { sales: ['mandate_sent'], delivery: ['raising', 'complete'] },
+    solutions: { sales: ['agreement_sent'], delivery: [] },
+    media: { sales: ['first_meeting_scheduled','discussion','pitch', 'agreement_sent'], delivery: ['production', 'complete'] },
+    capital: { sales: ['first_meeting_scheduled','discussion','mandate_sent'], delivery: ['raising', 'complete'] },
   };
   for (const [line, workflow] of Object.entries(workflows)) {
     const source = await f.admin('/api/admin/inquiry-sources', { line, label: line, owner_id: f.owner.user.id });
@@ -386,15 +527,18 @@ test('spoken sales checkpoints, line-specific delivery and inquiry counts stay c
     assert.equal(deal.stage, 'outreach');
     assert.equal((await sourceTotals()).in_discussion, 0);
     for (const stage of [...shared, ...workflow.sales]) {
-      const details = stage === 'first_meeting_scheduled' ? {first_meeting_day: '2027-02-09'} : {};
+      const details = stage === 'first_engagement' ? {first_meeting_day: '2027-02-09'} : {};
       await f.admin(path, {version: version++, stage, details}, 'PATCH');
       assert.equal((await f.admin(path)).deal.stage, stage);
       assert.equal((await sourceTotals()).in_discussion, 1);
     }
     assert.equal((await f.admin(path)).dispatches.length, 0);
-    await f.admin(path, {version, stage: workflow.delivery[0]}, 'PATCH', 400);
+    await f.admin(path, {version, stage: workflow.delivery[0] || 'active'}, 'PATCH', 400);
     await f.admin(path, {version, stage: line === 'capital' ? 'agreement_sent' : 'mandate_sent'}, 'PATCH', 400);
     await f.admin(path, {version: version++, stage: 'signed', details: {agreement_url:'https://example.test/executed'}}, 'PATCH');
+    if (line==='solutions') {
+      for (const stage of ['discussion','first_meeting_scheduled','onboarding','active','complete']) await f.admin(path,{version,stage},'PATCH',400);
+    }
     for (const stage of workflow.delivery) {
       await f.admin(path, {version: version++, stage}, 'PATCH');
       assert.equal((await f.admin(path)).deal.stage, stage);

@@ -361,6 +361,8 @@ function applyDealChange(s, a, key, input, config) {
       next = data.stage || row.stage;
     if (row.version !== data.version)
       throw new AppError(409, 'This engagement changed. Refresh before saving.');
+    if (row.line==='solutions' && next!==row.stage && def.delivery.includes(next) && next!=='signed')
+      throw new AppError(400, 'Manage delivery milestones in Project management.');
     if (![...def.live, ...def.delivery, 'cold', 'dead'].includes(next))
       throw new AppError(400, 'Choose a stage from this workspace.');
     if (

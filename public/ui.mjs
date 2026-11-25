@@ -118,19 +118,24 @@ export function outboundLink(value) {
 
 export function shell(user, location) {
   if (!user) return '';
-  const sections = [
-    ['/work', 'Workspaces', 'network', location === '/' || location.startsWith('/work')],
-    ['/today', 'Today', 'today', location === '/today'],
-    ...(user.workspaces?.includes('solutions')||user.role==='admin'?[
-      ['/pipeline', 'Introductions', 'board', location.startsWith('/pipeline')],
-      ['/clients', 'Clients', 'clients', location.startsWith('/clients')]]:[]),
-  ];
-  if (user.role === 'admin') sections.push(['/admin', 'Admin', 'shield', location === '/admin'||location==='/operations']);
+  const allowed=user.workspaces || [];
+  const routeLine=/^\/work\/(solutions|media|capital)(?:\/|$)/.exec(location)?.[1];
+  const line=routeLine || (location.startsWith('/clients') || location.startsWith('/projects') || location.startsWith('/pipeline') ? 'solutions' : sessionStorage.getItem('branded-line-'+user.id)) || allowed[0] || 'solutions';
+  sessionStorage.setItem('branded-line-'+user.id,line);
+  const names={solutions:'Solutions',media:'Media',capital:'Capital'};
+  const switcher=`<details class="workspace-switch"><summary aria-label="Switch workspace, ${h(names[line])}"><span class="workspace-monogram">${icon('network')}</span><strong>${h(names[line])}</strong>${icon('down')}</summary>
+    <div class="workspace-menu">${Object.entries(names).filter(([id])=>id!=='solutions' || allowed.includes(id) || user.role==='admin').map(([id,name])=>`<a href="/work/${id}" ${line===id?'aria-current="true"':''}><span class="ws-dot dot-${id}"></span>${name}${line===id?icon('check'):''}</a>`).join('')}</div></details>`;
+  const sections = line==='solutions' && (allowed.includes('solutions') || user.role==='admin') ? [
+    ['/work/solutions','Pipelines','board',location==='/' || location.startsWith('/work')],
+    ['/projects','Project management','stack',location==='/projects'],
+    ['/clients','Clients','clients',location.startsWith('/clients') || location.startsWith('/pipeline')],
+  ] : [];
+  if (user.role==='admin') sections.push(['/admin','Settings','settings',location==='/admin'||location==='/operations']);
   const current = sections.find(section => section[3]);
   const nav = sections.map(([url, label, glyph, active]) => `<a href="${url}"${active ? ' aria-current="page"' : ''}><span class="nav-icon">${icon(glyph)}</span><span>${label}</span></a>`).join('');
-  return `<header class="app-header"><div class="bar"><div class="bar-brand">${brand()}</div>
-    <div class="workspace-context" aria-hidden="true">${icon('network')}<span>Workspace</span>${icon('chevron')}<strong>${h(current?.[1] ?? 'Today')}</strong></div>
-    <div class="app-rail"><div class="rail-brand">${brand()}</div><span class="rail-caption" aria-hidden="true">Workspace</span><nav class="main-nav" aria-label="Main">${nav}</nav></div>
+  return `<header class="app-header"><div class="bar"><div class="bar-brand">${brand()}${switcher}</div>
+    <div class="workspace-context" aria-hidden="true">${icon('network')}<span>${h(names[line])}</span>${icon('chevron')}<strong>${h(current?.[1] || (location==='/profile'?'My profile':names[line]))}</strong></div>
+    <div class="app-rail"><div class="rail-brand">${brand()}</div><div class="rail-switch">${switcher}</div><nav class="main-nav" aria-label="Main">${nav}</nav></div>
     <div class="account-actions"><button class="icon-button" data-action="alerts" aria-label="Alerts" title="Alerts">${icon('bell')}<span id="alert-dot" class="alert-dot" hidden></span></button>
     <button class="account-button" data-action="account" aria-label="Account menu for ${h(user.name)}" title="${h(user.name)}"><span class="avatar" aria-hidden="true">${h(initials(user.name))}</span><span class="account-name" aria-hidden="true">${h(user.name)}${icon('down')}</span></button></div></div></header>`;
 }

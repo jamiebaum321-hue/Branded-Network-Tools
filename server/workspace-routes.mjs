@@ -88,7 +88,7 @@ export function registerWorkspaceRoutes(route, s, config) {
   route(
     'POST',
     '/api/engagements/' + key + '/files',
-    ({ actor, ids, data }) => dealUpload(s, actor, ids[0], data),
+    ({ actor, ids, data }) => dealUpload(s, actor, ids[0], data, config),
     { bodyLimit: uploadLimit }
   );
   route('GET', '/api/files/' + key, ({ actor, ids, res, url }) =>

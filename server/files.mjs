@@ -5,41 +5,43 @@ import { getFormLink } from './clients.mjs';
 import { engagement } from './engagements.mjs';
 import { choice, object, str, validate } from './validation.mjs';
 
-export const fileLimit = 5 * 1024 * 1024;
+import { listPurposes, readContactList } from './contact-list.mjs';
+import { fileLimitMiB } from '../public/solution-model.mjs';
+export const fileLimit = fileLimitMiB * 1024 * 1024;
 export const uploadLimit = Math.ceil((fileLimit * 4) / 3) + 8192;
 const types = {
   pdf: 'application/pdf',
   xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   xls: 'application/vnd.ms-excel',
   csv: 'text/csv',
+  gif: 'image/gif',
   png: 'image/png',
   jpg: 'image/jpeg',
   jpeg: 'image/jpeg',
   webp: 'image/webp',
   svg: 'image/svg+xml',
 };
-const fields = 'id,name,mime,purpose,length(bytes) AS size,created_at,submission_id';
+const fields = 'id,name,mime,purpose,length(bytes) AS size,created_at,submission_id,(SELECT note FROM attachment_lists WHERE file_id=attachments.id) list_note';
 function decodeFile(input) {
   const data = validate(
     object({
       name: str(180),
       data: str(uploadLimit),
-      purpose: choice('asset', 'logo', 'agreement', 'collateral'),
+      purpose: choice('asset', 'logo', 'agreement', 'collateral', ...listPurposes),
     }),
     input
   );
   const name = data.name.replace(/[\\/:"<>|?*\x00-\x1f\x7f]/g, '_');
   const ext = extname(name).slice(1).toLowerCase(),
-    mime = types[ext];
+    mime = Object.hasOwn(types,ext) ? types[ext] : 'application/octet-stream';
   if (
-    !mime ||
     !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(data.data.slice(-8)) ||
     data.data.length % 4 !== 0
   )
-    throw new AppError(400, 'Choose a supported document or image.');
+    throw new AppError(400, 'The upload data is incomplete.');
   const bytes = Buffer.from(data.data, 'base64');
   if (!bytes.length || bytes.length > fileLimit || bytes.toString('base64') !== data.data)
-    throw new AppError(400, 'Each file must be valid and at most 5 MiB.');
+    throw new AppError(400, `Each file must be valid and at most ${fileLimitMiB} MiB.`);
   const prefix = bytes.subarray(0, 600).toString('utf8');
   const matches = {
     pdf: prefix.startsWith('%PDF-'),
@@ -49,22 +51,24 @@ function decodeFile(input) {
     jpg: bytes[0] === 255 && bytes[1] === 216,
     webp: prefix.startsWith('RIFF') && prefix.slice(8, 12) === 'WEBP',
     svg: /<svg[\s>]/i.test(prefix),
-    csv: !bytes.includes(0),
+    gif: prefix.startsWith('GIF87a') || prefix.startsWith('GIF89a'),
+    csv: !bytes.includes(0) || (bytes[0]===255 && bytes[1]===254) || (bytes[0]===254 && bytes[1]===255),
   };
-  if (!matches[ext === 'jpeg' ? 'jpg' : ext])
+  if (Object.hasOwn(types,ext) && !matches[ext === 'jpeg' ? 'jpg' : ext])
     throw new AppError(400, 'The file content does not match its extension.');
-  if (data.purpose === 'logo' && !mime.startsWith('image/'))
-    throw new AppError(400, 'Choose an image for the logo.');
   return { name, mime, bytes, purpose: data.purpose };
 }
-function insert(s, data, { client = null, deal = null, form = null }) {
-  const f = decodeFile(data);
+function insert(s, f, { client = null, deal = null, form = null }, list) {
+const existing=s.get(`SELECT id,name,purpose,(SELECT note FROM attachment_lists WHERE file_id=attachments.id) list_note
+    FROM attachments WHERE (form_key=? OR engagement_id=?) AND name=? AND purpose=? AND length(bytes)=? AND bytes=?`,
+    form,deal,f.name,f.purpose,f.bytes.length,f.bytes);
+  if(existing) return {...existing,replayed:true};
   const used = s.get(
     'SELECT count(*) n,coalesce(sum(length(bytes)),0) total FROM attachments WHERE form_key=? OR engagement_id=?',
     form,
     deal
   );
-  if (used.n >= 32 || used.total + f.bytes.length > 50 * 1024 * 1024)
+  if (used.n >= 32 || used.total + f.bytes.length > 250 * 1024 * 1024)
     throw new AppError(413, 'This record has reached its upload allowance.');
   const key = id();
   s.run(
@@ -79,23 +83,28 @@ function insert(s, data, { client = null, deal = null, form = null }) {
     f.bytes,
     iso()
   );
-  return { id: key, name: f.name, purpose: f.purpose };
+  if(list) s.run('INSERT INTO attachment_lists VALUES(?,?,?)',key,JSON.stringify(list.rows),list.note);
+  return { id: key, name: f.name, purpose: f.purpose, ...(list?{list_note:list.note}:{}) };
 }
-export function intakeUpload(s, token, data, config) {
+export async function intakeUpload(s, token, data, config) {
+  const initial=getFormLink(s,token,config.linkSecret);
+  if (initial.submission_id) throw new AppError(409,'This intake has already been submitted.');
+  if (!['logo','asset',...listPurposes].includes(data?.purpose)) throw new AppError(400,'Choose an intake file purpose.');
+  const file=decodeFile(data), list=await readContactList(file,config);
   return s.tx(() => {
     const f = getFormLink(s, token, config.linkSecret);
     if (f.submission_id) throw new AppError(409, 'This intake has already been submitted.');
-    if (!['logo', 'asset'].includes(data?.purpose))
-      throw new AppError(400, 'Choose a logo or supporting asset.');
-    return insert(s, data, { client: f.client_id, form: f.token_hash });
+    return insert(s, file, { client: f.client_id, form: f.token_hash },list);
   });
 }
-export function dealUpload(s, a, key, data) {
+export async function dealUpload(s, a, key, data,config) {
   requireHuman(a);
-  const e = engagement(s, a, key);
+  engagement(s,a,key);
+  const decoded=decodeFile(data), list=await readContactList(decoded,config);
   return s.tx(() => {
-    const file = insert(s, data, { deal: key, client: e.client_id });
-    audit(s, a, 'file.added', 'attachment', file.id, e.client_id);
+    const e=engagement(s,a,key);
+    const file = insert(s, decoded, { deal: key, client: e.client_id },list);
+    if (!file.replayed) audit(s, a, 'file.added', 'attachment', file.id, e.client_id);
     return file;
   });
 }
