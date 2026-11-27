@@ -91,6 +91,7 @@ export const labels = {
   outcome: 'Outcome',
   report_email: 'Weekly report recipient',
   monthly: 'Monthly retainer',
+  deal_value: 'Total contract value',
   project_fee: 'Project fee',
   target: 'Raise target',
   raised: 'Capital raised',

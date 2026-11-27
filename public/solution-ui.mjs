@@ -1,7 +1,8 @@
-import { btn, emptyState, field, h, hidden, icon, initials, link, outboundLink, select } from './ui.mjs';
-import { clientForm, submissionRows } from './views.mjs';
+import { projectController } from './project-views.mjs';
+import { btn, emptyState, field, formatDate, h, hidden, icon, initials, link, outboundLink, select } from './ui.mjs';
+import { clientForm } from './views.mjs';
 import { overview, profileView, reportsView, workView } from './workspace.mjs';
-import { departments, groups, healthStates, milestoneStates, projectPhases, relationshipStages, stepNames } from './solution-model.mjs';
+import { departments, groups, healthStates, relationshipStages } from './solution-model.mjs';
 
 const choices = (values) => Object.entries(values).map(([id,name])=>({id,name}));
 const primary = (label) => btn(label,{type:'submit',kind:'primary'});
@@ -9,8 +10,6 @@ const action = (label,name,attrs='',glyph='') => btn(label,{action:name,data:att
 const form = (name,body) => '<form class="stack" data-form="'+name+'">'+body+'</form>';
 const panel = (name,body) => '<section class="panel stack"><h2>'+h(name)+'</h2>'+body+'</section>';
 const clientUrl = (id,tab) => '/clients/'+encodeURIComponent(id)+(tab?'?tab='+tab:'');
-const projectUrl = (month,client) => '/projects?'+new URLSearchParams({month,...(client?{client}: {})});
-const projectProgress = (project) => Object.keys(stepNames).filter((id)=>project.steps[id]?.status==='done').length;
 const sourceLink = (client,source) => {
   if (source.type==='file') return `<a class="text-link" href="/api/files/${encodeURIComponent(source.id)}" target="_blank" rel="noopener">${h(source.label)}</a>`;
   if (source.type==='intake') return link(clientUrl(client)+'/submissions/'+encodeURIComponent(source.id),source.label,'intake');
@@ -19,11 +18,17 @@ const sourceLink = (client,source) => {
   return h(source.label);
 };
 function mapView(data,query) {
-  const id=data.client.id, health=query.get('health') || '', search=(query.get('q')||'').trim().toLowerCase();
-  const visible=data.connections.filter((n)=>(!health || n.health===health) && [n.company,n.person,n.next_action,n.notes].some((v)=>v?.toLowerCase().includes(search)));
-  return `<div class="map-actions"><div class="actions">${action('Add connection','sol-connection','','plus')}${action('Add note','sol-note','','draft')}${action('Add research','ws-research','','shortlist')}</div>
-    </div>
-    <form class="ws-filter" data-form="filter">${hidden('tab','map')}${field('Find a connection','q',query.get('q') || '',{type:'search',placeholder:'Company, person or next action'})}${select('Relationship health','health',choices(healthStates),health,'All connections')}${btn('Apply',{type:'submit'})}${health||search?link(clientUrl(id,'map'),'Clear'):''}</form>
+  const id=data.client.id,health=query.get('health')||'',sort=query.get('sort')||'latest',since=query.get('since')||'',until=query.get('until')||'';
+  const visible=data.connections.filter(n=>{
+    const date=n.added_at?.slice(0,10)||'';
+    return (!health||n.health===health)&&(!since||date>=since)&&(!until||(date && date<=until));
+  }).sort((a,b)=>sort==='name'?(a.company||a.person).localeCompare(b.company||b.person):
+    (sort==='oldest'?1:-1)*(a.added_at||'').localeCompare(b.added_at||'')||a.key.localeCompare(b.key));
+  const filtered=health||since||until||sort!=='latest';
+  return `<div class="map-toolbar"><h2>Introduction map</h2><details class="map-filter"><summary>${icon('settings')}Filter${filtered?' · Active':''}</summary>
+    <form class="stack" data-form="filter">${hidden('tab','map')}${select('Relationship health','health',choices(healthStates),health,'All connections')}
+    ${select('Sort by','sort',[{id:'latest',name:'Latest added'},{id:'oldest',name:'Oldest added'},{id:'name',name:'Name A–Z'}],sort)}
+    ${field('Added from','since',since,{type:'date'})}${field('Added through','until',until,{type:'date'})}<div class="actions">${primary('Apply filters')}${link(clientUrl(id,'map'),'Reset')}</div></form></details></div>
     <section class="relationship-map" aria-label="Client introduction map"><div class="map-root">${icon('network')}<strong>${h(data.client.name)}</strong><span>${data.connections.length} connections</span></div>
       <div class="map-branches">${Object.entries(groups).map(([key,label])=>{
         const children=visible.filter((node)=>node.category===key);
@@ -46,36 +51,17 @@ function peopleView(data) {
     }).join('') || emptyState('No client contacts yet.','Add a contact or collect the client’s intake.')}</div>`;
 }
 
-function notesView(data) {
-  return `<div class="section-toolbar"><h2>Working notes</h2>${action('Add note','sol-note','','plus')}</div>
-    <div class="stack">${data.notes.map((n)=>`<article class="panel client-note"><strong>${h(n.author)}</strong> <time>${h(n.created_at.slice(0,10))}</time>
-      <p class="multiline">${h(n.body)}</p>${n.company || n.person?`<small>${h([n.company,n.person].filter(Boolean).join(' · '))}</small>`:''}</article>`).join('') || emptyState('No working notes yet.')}</div>`;
-}
-
-function projectPage(result,board,query) {
-  const {month,projects}=result, search=(query.get('q')||'').trim().toLowerCase(), owner=query.get('owner')||'';
-  const rows=projects.filter((p)=>p.name.toLowerCase().includes(search) && (!owner || p.owner_id===owner));
-  const active=projects.find((p)=>p.id===query.get('client'));
-  const currentPhase=(p)=>projectPhases.find((phase)=>phase.steps.some(([key])=>p.steps[key]?.status!=='done'))?.name || 'Complete';
-  const cell=(p,key)=>{const step=p.steps[key],state=step?.status || 'pending';
-    return `<button class="step-cell state-${state}" data-action="sol-step" data-client="${h(p.id)}" data-step="${key}" data-month="${month}" aria-label="${h(p.name+', '+stepNames[key]+', '+milestoneStates[state])}">
-      <span class="status-pill"><i></i>${h(milestoneStates[state])}</span>${step?.due?`<small>${h(step.due)}</small>`:''}</button>`;};
-  const managed=board.deals.filter((d)=>!d.client_id && !d.signed_at);
-  const paused=managed.filter((d)=>['cold','dead'].includes(d.stage));
-  return `<header class="section-title"><div><h1>Project management</h1><p>${projects.length} advisory projects <span>·</span> ${h(month)} follow-ups</p></div></header>
-    <form class="ws-filter" data-form="filter">${field('Find a client','q',query.get('q') || '',{type:'search',placeholder:'Client name'})}${select('Owner','owner',board.owners,owner,'All owners')}${field('Follow-up month','month',month,{type:'month',required:true})}${btn('Apply',{type:'submit'})}</form>
-    <div class="project-layout${active?' with-sheet':''}"><section class="project-grid-wrap" tabindex="0" aria-label="Client milestone grid"><table class="project-grid"><thead><tr><th class="pinned" rowspan="2" scope="col">Client</th><th rowspan="2" scope="col">Current phase</th>
-    ${projectPhases.map((phase,i)=>`<th class="phase-band band-${i}" scope="colgroup" colspan="${phase.steps.length}">${h(phase.name)}</th>`).join('')}</tr><tr>
-    ${projectPhases.flatMap((phase,i)=>phase.steps.map(([key,label])=>`<th scope="col" class="phase-label band-${i}">${h(label)}${key==='monthly'?`<small>${h(month)}</small>`:''}</th>`)).join('')}</tr></thead><tbody>
-    ${rows.map((p)=>`<tr><th class="pinned" scope="row">${link(projectUrl(month,p.id),p.name)}<small>${h(p.owner)}</small><progress value="${projectProgress(p)}" max="${Object.keys(stepNames).length}" aria-label="${h(p.name)} progress"></progress></th><td>${h(currentPhase(p))}</td>
-    ${projectPhases.flatMap((phase)=>phase.steps.map(([key])=>'<td>'+cell(p,key)+'</td>')).join('')}</tr>`).join('')}</tbody></table>${rows.length?'':emptyState('No matching projects.','Signing a Solutions engagement creates its project.')}</section>
-    ${active?`<aside class="project-sheet panel stack" aria-label="Project details"><div class="section-toolbar"><h2>${h(active.name)}</h2>${link(projectUrl(month),'Close','close')}</div>
-      <p>${h(active.owner)} · ${projectProgress(active)}/${Object.keys(stepNames).length} milestones completed</p>
-      <h3>Growth goals</h3><p class="multiline">${h(active.goals||'Awaiting goals')}</p><h3>Agreed deliverables</h3><p class="multiline">${h(active.deliverables||'Awaiting deliverables')}</p>
-      <div class="actions">${action('Edit project brief','sol-brief',`data-client="${h(active.id)}"`,'edit')}${link(clientUrl(active.id),'Open client','clients')}</div>
-      ${projectPhases.map((phase)=>`<div class="journey-group"><h3>${h(phase.name)}</h3>${phase.steps.map(([key,label])=>`<div><span>${h(label)}</span>${cell(active,key)}</div>`).join('')}</div>`).join('')}</aside>`:''}</div>
-    <details class="panel project-dispositions"><summary>Paused and closed opportunities · ${paused.length}</summary>${paused.map((d)=>`<p>${h(d.company)} · ${d.stage==='cold'?'Nurture':'Closed lost'} · ${h(d.details.due||d.details.outcome||'')}</p>`).join('')}
-    ${managed.length?action('Manage opportunity disposition','sol-disposition','','edit'):''}</details>`;
+function notesView(feed,client,zone,detail,owners) {
+  return `<div class="section-toolbar"><h2>Notes &amp; activity</h2></div>${detail?`<details class="panel feed-composer"><summary>Record activity</summary>${workView(detail,owners,zone,true)}</details>`:''}
+    <div class="client-feed">${feed.items.map(item=>{
+      const title=item.kind==='submission'?'Intake submitted · Version '+item.version:item.title;
+      const glyph={submission:'intake',note:'draft',work:'flag',activity:'history',milestone:'check'}[item.kind];
+      return `<article class="feed-entry"><span class="feed-icon">${icon(glyph)}</span><div><small>${h(item.author)} · <time datetime="${h(item.at)}">${h(formatDate(item.at,zone))}</time></small>
+        <h3>${h(title)}</h3>${item.body?`<p class="multiline">${h(item.body)}</p>`:''}${item.detail?`<small>${h(item.detail)}</small>`:''}
+        ${item.kind==='submission'?link('/clients/'+client+'/submissions/'+item.id,item.version>1?'View submission and changes':'View submission','history'):''}
+        ${item.kind==='work'?action('Update outcome','ws-item',`data-id="${h(item.id)}"`):''}</div></article>`;
+    }).join('')||emptyState('No notes or activity yet.')}</div>
+    ${feed.next?link(clientUrl(client,'notes')+'&before='+encodeURIComponent(feed.next),'Older activity','down'):''}`;
 }
 
 function profilePage(p,user) {
@@ -91,6 +77,7 @@ function profilePage(p,user) {
 
 export function solutionController({api,navigate,render,showDialog,notify,getUser,getZone,setUser}) {
   let board;
+  const projects=projectController({api,getUser,showDialog,render,navigate,notify});
   const currentClient=()=>location.pathname.split('/')[2];
   const close=()=>document.querySelector('#dialog').close();
   const latest=async()=>api('/api/clients/'+encodeURIComponent(currentClient())+'/workspace');
@@ -99,38 +86,41 @@ export function solutionController({api,navigate,render,showDialog,notify,getUse
   const readProject=(client,month)=>api('/api/clients/'+encodeURIComponent(client)+'/project'+(month?'?month='+encodeURIComponent(month):''));
   async function page(path,query) {
     if(path==='/profile') return profilePage(await api('/api/profile'),getUser());
-    const [projectData,projectBoard]=await Promise.all([api('/api/projects'+(query.get('month')?'?month='+encodeURIComponent(query.get('month')):'')), api('/api/workspaces/solutions')]);
-    board=projectBoard;
-    return projectPage(projectData,projectBoard,query);
+    board=await api('/api/workspaces/solutions');
+    return projects.page(query,board);
   }
   async function client(info,ctx,query,zone) {
     const c=info.client;
-    const [data,detail]=await Promise.all([api('/api/clients/'+c.id+'/workspace'),info.engagement_id?api('/api/engagements/'+info.engagement_id):null]);
-    const tabs={map:'Introduction map',people:'Client group',notes:'Notes',intake:'Advisory intake',history:'Submission history',activity:'Activity',reports:'Weekly updates',account:'Engagement'};
-    const tab=Object.hasOwn(tabs,query.get('tab'))?query.get('tab'):'map';
-    const owners=ctx.owners, logo=detail?.files.find((file)=>file.purpose==='logo' && file.mime.startsWith('image/'));
+    const tabs={intake:'Client intake',map:'Introduction map',people:'Client group',notes:'Notes & activity',reports:'Weekly updates',account:'Engagement'};
+    const requested=query.get('tab'),tab=['activity','history'].includes(requested)?'notes':Object.hasOwn(tabs,requested)?requested:'intake';
+    const [data,detail,feed]=await Promise.all([
+      ['map','people'].includes(tab)?api('/api/clients/'+c.id+'/workspace'):null,
+      info.engagement_id?api('/api/engagements/'+info.engagement_id):null,
+      tab==='notes'?api('/api/clients/'+c.id+'/timeline'+(query.get('before')?'?before='+encodeURIComponent(query.get('before')):'')):null,
+    ]);
+    const owners=info.owners || ctx.owners,logo=detail?.files.find(file=>file.purpose==='logo' && file.mime?.startsWith('image/'));
     const views={
-      map:()=>mapView(data,query),people:()=>peopleView(data),notes:()=>notesView(data),
-      intake:()=>detail?profileView(detail):'',activity:()=>detail?workView(detail,owners,zone):'',
+      map:()=>mapView(data,query),people:()=>peopleView(data),notes:()=>notesView(feed,c.id,zone,detail,owners),
+      intake:()=>`${detail?profileView(detail):emptyState('Awaiting client intake.')}
+        <details class="panel intake-options"><summary>Intake options</summary><div class="actions">${action('Copy intake link','form-link',`data-id="${h(c.id)}"`,'link')}
+        ${info.link?action('Revoke active link','revoke-form',`data-id="${h(c.id)}"`,'lock'):''}</div></details>`,
       reports:()=>detail?reportsView(detail,new Intl.DateTimeFormat('en-CA',{timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date())):'',
-      history:()=>panel('Submission history',`<div id="submission-list">${info.submissions.items.length?submissionRows(info.submissions.items,c.id,zone):emptyState('No submissions yet.')}</div>
-        ${info.submissions.next_cursor?action('Load older submissions','more-submissions',`data-id="${h(c.id)}" data-next="${h(info.submissions.next_cursor)}"`):''}
-        ${info.link?`<p>Intake link expires ${h(new Date(info.link.expires_at).toLocaleDateString())}.</p>${action('Revoke active link','revoke-form',`data-id="${h(c.id)}"`,'lock')}`:''}`),
       account:()=>`${detail?`<div class="actions">${action('Edit engagement','ws-edit','','edit')}${!detail.deal.signed_at?action('Record existing agreement','ws-history'):''}</div>${overview(detail,owners,getUser(),zone)}`:''}
         ${getUser().role==='admin'?panel('Client access',clientForm(ctx,info)):''}`,
     };
     return `<section data-engagement-context="${h(info.engagement_id||'')}">${link('/clients','All clients','back','back-link')}
       <header class="section-title client-head"><div class="client-identity">${logo?`<img src="/api/files/${h(logo.id)}?preview=1" alt="${h(c.name)} logo">`:`<span class="client-monogram">${h(initials(c.name))}</span>`}<div><h1>${h(c.name)}</h1><p>Solutions client · ${h(c.owner_name)}</p></div></div>
-      <div class="actions">${action('Work with Claude','sol-claude','','draft')}${link('/projects?client='+c.id,'View project','stack')}${action('Copy intake link','form-link',`data-id="${h(c.id)}"`,'link')}</div></header>
+      <div class="actions">${action('Add connection','sol-connection','','plus')}${action('Add note','sol-note','','draft')}</div></header>
       <nav class="client-tabs" aria-label="Client sections">${Object.entries(tabs).map(([id,label])=>`<a href="${clientUrl(c.id,id)}"${id===tab?' aria-current="page"':''}>${label}</a>`).join('')}</nav>${views[tab]()}</section>`;
   }
 
   const actions={
+    ...projects.actions,
     'sol-connection':async(b)=>{
       const data=await latest(), c=data.client.id, n=b.dataset.key?data.connections.find((v)=>v.key===b.dataset.key):{};
       if(!n) throw new Error('This connection has changed. Refresh the map.');
       const who=await members(c);
-      const identity=n.key?hidden('key',n.key)+hidden('company',n.company)+hidden('person',n.person)+`<h3>${h([n.company,n.person].filter(Boolean).join(' · '))}</h3>`:
+      const identity=n.key?hidden('key',n.key)+hidden('company',n.company)+hidden('person',n.person)+`<h3>${h([n.company,n.person].filter(Boolean).join(' · '))}</h3>${n.added_at?`<small>Added ${h(formatDate(n.added_at,getZone()))}</small>`:''}`:
         field('Company','company','',{max:180})+field('Person','person','',{max:150});
       const evidence=(n.sources||[]).map((v)=>`<li>${sourceLink(c,v)}${v.detail?`<p>${h(v.detail)}</p>`:''}${v.link?outboundLink(v.link):''}</li>`).join('');
       showDialog(n.key?'Connection details':'Add connection',form('sol-connection',hidden('version',n.version||0)+identity+
@@ -152,28 +142,6 @@ export function solutionController({api,navigate,render,showDialog,notify,getUse
     'sol-note':()=>showDialog('Add client note',form('sol-note',hidden('source_key',crypto.randomUUID())+field('Working note','body','',{type:'textarea',required:true,max:8000})+
       '<p class="muted">Existing names link to their map cards. For new connections, use a line like <b>Target: Harbor Kitchens | Morgan Lee</b> or <b>Partner: Channel Collective</b>, or enter a name below.</p><details class="ws-fold"><summary>Link or create an introduction target</summary>'+field('Target company','company','',{max:180})+field('Target person','person','',{max:150})+
       select('Map branch','category',choices(groups),'priority')+'</details>'+primary('Save note'))),
-    'sol-claude':async()=>{
-      const data=await latest();
-      const brief=`Work with me on ${data.client.name} (Branded client ID ${data.client.id}). Read get_client_workspace for the relationship map, working notes and client group, and get_client_project for this month’s delivery milestones. Read the latest get_onboarding_submission and relevant files. Check priority targets and strategic channels against the sources I can access. Show evidence and a suggested next action. Use save_introduction_research for new research and save_client_note for new notes with a stable source key. Preserve staff relationship assessments.`;
-showDialog('Work with Claude',`<div class="stack"><p>Open Claude with your Branded connection and paste the client brief. Working notes and research saved through that connection appear on ${h(data.client.name)}’s record.</p>
-        <label class="field"><span>Client brief</span><textarea id="claude-client-brief" readonly rows="5">${h(brief)}</textarea></label>
-        <div class="actions">${action('Copy client brief','sol-copy-brief','','copy')}<a class="button primary" target="_blank" rel="noopener" href="https://claude.ai/">Open Claude</a></div>
-        <a class="text-link" href="/api/skills/branded-introductions" target="_blank" rel="noopener">Download introductions skill</a></div>`);
-    },
-    'sol-copy-brief':async()=>{
-      const input=document.querySelector('#claude-client-brief');
-      try { await navigator.clipboard.writeText(input.value); notify('Client brief copied.'); }
-      catch { input.focus(); input.select(); notify('Client brief selected for copying.'); }
-    },
-    'sol-step':async(b)=>{
-      const [p,owners]=await Promise.all([readProject(b.dataset.client,b.dataset.month),members(b.dataset.client)]);
-      const key=b.dataset.step, v=p.steps[key] || {};
-      showDialog(stepNames[key],form('sol-step',hidden('client',p.id)+hidden('step',key)+hidden('period',key==='monthly'?b.dataset.month:'')+hidden('version',v.version||0)+
-        `<p>${h(p.name)}${key==='monthly'?' · '+h(b.dataset.month):''}</p>`+
-        select('Status','status',choices(v.evidence?{done:'Done'}:milestoneStates),v.status||'pending')+select('Owner','owner_id',owners,v.owner_id||p.owner_id,'Unassigned')+
-        field('Due date','due',v.due,{type:'date'})+field('Milestone notes','notes',v.notes,{type:'textarea',max:5000})+
-        (v.evidence?`<small>Recorded delivery${v.completed_at?' · '+h(v.completed_at.slice(0,10)):''}</small>`:'')+primary('Save milestone')));
-    },
     'sol-brief':async(b)=>{
       const p=await readProject(b.dataset.client);
       showDialog('Project brief',form('sol-brief',hidden('client',p.id)+hidden('version',p.version)+field('Growth goals','goals',p.goals,{type:'textarea',max:8000})+
@@ -186,7 +154,7 @@ showDialog('Work with Claude',`<div class="stack"><p>Open Claude with your Brand
         field('Revisit date','due','',{type:'date'})+field('Outcome','outcome','',{max:300})+primary('Save disposition')));
     },
   };
-  const forms={};
+  const forms={...projects.forms};
   for(const [name,resource,method] of [['sol-connection','connections','PUT'],['sol-person','people','PUT'],['sol-note','notes','POST'],['sol-step','milestones','PUT'],['sol-brief','project','PUT']]){
     forms[name]=async(f,values)=>{
       const d=Object.fromEntries(values), client=d.client || currentClient();

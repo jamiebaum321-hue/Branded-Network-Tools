@@ -1,5 +1,5 @@
 import { sections } from './intake-fields.mjs';
-import { badge, brand, btn, emptyState, field, formatDate, h, heading, hidden, icon, initials, link,
+import { artwork, badge, brand, btn, emptyState, field, formatDate, h, heading, hidden, icon, initials, link,
   localInput, outboundLink, pathId, pipelineTabs, select, stageBadge, stageDuration, stageOptions, stages, timeLabel } from './ui.mjs';
 
 const names = rows => rows.map(row => ({ id: row.id, name: row.name }));
@@ -16,7 +16,7 @@ const subjectForm = (type, id, inner) => `<form class="stack" data-form="${type}
 
 function illustratedState(art, title, detail, action = '') {
   return `<div class="illustrated-state"><div class="state-art">
-    <img src="/assets/artwork/${h(art)}.webp" width="184" height="114" loading="lazy" decoding="async" alt=""></div>
+    <img src="/assets/artwork/${artwork(art)}.png" width="184" height="114" loading="lazy" decoding="async" alt=""></div>
     <div class="state-copy"><strong>${h(title)}</strong><p>${h(detail)}</p>${action}</div></div>`;
 }
 
@@ -26,7 +26,7 @@ export function signInPage(demo) {
     ${field('Password', 'password', demo ? 'Local-Demo-Pipeline-24' : '', { type: 'password', autocomplete: 'current-password', required: true, max: 256 })}
     ${btn('Sign in', { kind: 'primary', type: 'submit', endGlyph: 'arrow' })}`)}
     ${demo ? '<p class="demo-note muted small">Local demo · Fictional records reset when the server stops.</p>' : ''}</div>
-    <div class="auth-art" aria-hidden="true"><img src="/assets/artwork/signal-welcome.webp" width="540" height="540" alt="" decoding="async"></div></div>`;
+    <div class="auth-art" aria-hidden="true"><img src="/assets/artwork/desk-bell.png" width="540" height="540" alt="" decoding="async"></div></div>`;
 }
 
 export function setupPage(info, key) {
@@ -263,7 +263,7 @@ export function clientPage(data, context, zone) {
   const { client, submissions, link: active } = data;
   return `${link('/clients', 'Back to clients', 'back', 'back-link')}${heading(client.name, `Owner · ${client.owner_name}`, '', { art: 'signal-clients', compact: true })}
     <div class="grid-two"><section class="panel stack"><div class="onboarding-entry"><div>${sectionLabel('Solutions Partner Onboarding', 'link')}<p class="muted section-copy">Share a form link so the client can enter their answers.</p></div>
-    <img src="/assets/artwork/signal-intake.webp" width="96" height="64" loading="lazy" decoding="async" alt=""></div>
+    <img src="/assets/artwork/field-notes.png" width="96" height="64" loading="lazy" decoding="async" alt=""></div>
     <div class="actions">${btn('Copy form link', { action: 'form-link', glyph: 'link', kind: 'primary', data: `data-id="${h(client.id)}"` })}</div>
     ${active ? `<div class="muted">Active link expires ${h(formatDate(active.expires_at, zone))}.</div><details>${disclosure('Link settings', 'settings')}
       ${btn('Revoke active link', { action: 'revoke-form', kind: 'danger', data: `data-id="${h(client.id)}"` })}</details>` : ''}</section>
@@ -279,16 +279,33 @@ function answerValue(value) {
   return `<span class="multiline">${h(value === '' || value === undefined ? 'Not provided' : value)}</span>`;
 }
 
-export function submissionPage(row, zone) {
+function submittedAnswer(field,value) {
+  if(field.rows && Array.isArray(value)){
+    return value.map(item=>`<div class="evidence">${field.rows.filter(child=>item[child.key]).map(child=>`<p>${h(child.label)} · ${answerValue(item[child.key])}</p>`).join('')}</div>`).join('')||answerValue('');
+  }
+  return answerValue(value);
+}
+function changes(row,previous,files) {
+  if(!previous) return '';
+  const canonical=(field,value)=>field.rows?JSON.stringify((Array.isArray(value)?value:[]).map(item=>field.rows.map(c=>item[c.key]??''))):JSON.stringify(value??'');
+  const entries=sections.flatMap(section=>section.fields).filter(f=>canonical(f,row.answers[f.key])!==canonical(f,previous.answers[f.key]))
+    .map(f=>[f.label,submittedAnswer(f,previous.answers[f.key]),submittedAnswer(f,row.answers[f.key])]);
+  const names=list=>list.map(f=>h(f.name)+' · '+h(f.purpose)).join('<br>')||'None';
+  if(files && (files.added.length || files.removed.length)) entries.push(['Files added, removed or replaced',names(files.removed),names(files.added)]);
+  return `<section class="panel version-changes"><h2>Changes since version ${previous.version}</h2>
+    ${entries.length?`<table><thead><tr><th>Field</th><th>Version ${previous.version}</th><th>Version ${row.version}</th></tr></thead><tbody>
+    ${entries.map(([name,before,after])=>`<tr><th scope="row">${h(name)}</th><td>${before}</td><td>${after}</td></tr>`).join('')}</tbody></table>`:'<p>The answers and files match the previous submission.</p>'}</section>`;
+}
+export function submissionPage(row, zone, previous, files) {
   const clientPath = `/clients/${pathId(row.client_id)}`;
-  return `${link(clientPath, 'Back to client', 'back', 'back-link')}${heading(`${row.client_name} onboarding`,
+  return `${link(clientPath+'?tab=notes', 'Back to notes and activity', 'back', 'back-link')}${heading(`${row.client_name} onboarding`,
     `Submission ${row.version} · ${timeLabel(row.submitted_at, zone)}`, `<a class="button" href="/api${clientPath}/submissions/${pathId(row.id)}/pdf" download>${icon('download')}Export PDF</a>`,
     { art: 'signal-intake', compact: true })}
+    ${changes(row,previous,files)}
     ${row.files?.length?`<section class="panel"><h2>Submitted files</h2><ul>${row.files.map(f=>`<li><a href="/api/files/${pathId(f.id)}" target="_blank" rel="noopener">${h(f.name)}</a> · ${h(f.purpose)}</li>`).join('')}</ul></section>`:''}
     <div class="grid-two">${sections.map(section => `<section class="panel submission-section"><h2>${h(section.title)}</h2><dl>${section.fields.map(field => {
       const answer = row.answers[field.key];
-      const value = field.rows && Array.isArray(answer) && answer.length ? answer.map(item => `<div class="evidence">${field.rows.filter(child => item[child.key]).map(child =>
-        `<p>${h(child.label)} · ${answerValue(item[child.key])}</p>`).join('')}</div>`).join('') : answerValue(answer);
+      const value=submittedAnswer(field,answer);
       return `<div class="submission-field"><dt>${h(field.label)}</dt><dd>${value}</dd></div>`;
     }).join('')}</dl></section>`).join('')}</div>`;
 }

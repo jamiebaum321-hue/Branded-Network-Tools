@@ -1,5 +1,6 @@
 import { btn, emptyState, field, formatDate, h, hidden, icon, link, outboundLink, select } from './ui.mjs';
 import { billingStates, kinds, labels, lines, money, stages, statuses, tiers } from './business-lines.mjs';
+import { salesSummary } from './sales-summary.mjs';
 import { sections } from './intake-fields.mjs';
 
 const choices = (values) => Object.entries(values).map(([id, name]) => ({ id, name }));
@@ -32,9 +33,9 @@ const stamp = (row) => {
   const due = followupDate(row);
   return due ? `<time datetime="${h(due)}">${h(due)}</time>` : '';
 };
-const currencyKeys = ['monthly', 'project_fee', 'target', 'raised'];
+const currencyKeys = ['monthly', 'project_fee', 'deal_value', 'target', 'raised'];
 const workspaceKeys = {
-  solutions: ['monthly', 'term', 'fee_percent', 'fee_terms', 'report_email'],
+  solutions: ['monthly', 'term', 'project_fee', 'deal_value', 'fee_percent', 'fee_terms', 'report_email'],
   media: [
     'campaign',
     'research_sources',
@@ -124,25 +125,22 @@ const mailStatus = (k) =>
     check_delivery: 'Verify delivery',
     failed: 'Failed',
   })[k] || '';
-function boardView(data, query) {
-  const stageKeys=[...lines.solutions.live,'signed'];
+function boardView(data, query, admin) {
   const owner=query.get('owner') || '', search=(query.get('q') || '').trim().toLowerCase();
-  const sales=data.deals.filter((row)=>stageKeys.includes(row.stage) || Boolean(row.signed_at));
-  const filtered=sales.filter((row)=>(!owner || row.owner_id===owner) &&
-    `${row.company} ${row.title} ${row.owner} ${row.details.contact || ''}`.toLowerCase().includes(search));
-  const chosen=stageKeys.includes(query.get('stage'))?query.get('stage'):stageKeys[0];
-  const columns=stageKeys.map((stage)=>({stage,rows:filtered.filter((row)=>(row.signed_at?'signed':row.stage)===stage)}));
-  const monthly=sales.filter((row)=>row.signed_at && row.stage!=='complete').reduce((sum,row)=>sum+(row.details.monthly || 0),0);
-  const compact=localStorage.getItem('branded-card-density')==='compact';
-  return `<section class="sales-screen"><header class="section-title"><div><h1>Pipelines</h1>
-    <p>Solutions sales <span>·</span> ${sales.filter((r)=>!r.signed_at).length} open <span>·</span> ${sales.filter((r)=>r.signed_at).length} signed <span>·</span> ${h(money(monthly))}/mo signed</p></div>
-    ${action('New engagement','ws-new','solutions','plus','primary')}</header>
-    <div class="sales-toolbar"><form class="ws-filter" data-form="filter">${hidden('stage',query.get('stage') || '')}${field('Search pipeline','q',query.get('q') || '',{type:'search',placeholder:'Company or contact',glyph:'search'})}${select('Owner','owner',data.owners,owner,'All owners')}${btn('Apply',{type:'submit'})}${search||owner?link(base('solutions'),'Clear'):''}</form>
-    <button class="button density-button" data-action="ws-density" aria-pressed="${compact}">${icon('stack')}Compact cards</button></div>
-    <div class="board-stage-picker">${select('Jump to stage','board_stage',columns.map(({stage,rows})=>({id:stage,name:`${stages[stage]} (${rows.length})`})),chosen)}</div>
-    <div class="deal-board sales-board${compact?' compact-cards':''}" aria-label="Solutions sales stages">${columns.map(({stage,rows},i)=>`
-      <section class="deal-column tone-${i}${stage===chosen?' chosen':''}" data-ws-stage="${stage}"><header><h2>${h(stages[stage])}</h2><span>${rows.length}</span></header>
-      ${rows.map((r)=>boardCard(r,data.today)).join('') || '<p class="quiet empty-stage">No engagements</p>'}</section>`).join('')}</div></section>`;
+  const visible=data.deals.filter(row=>(!owner || row.owner_id===owner) &&
+    [row.company,row.title,row.owner,row.details.contact].join(' ').toLowerCase().includes(search));
+  const totals=salesSummary(data.deals), compact=localStorage.getItem('branded-card-density')==='compact';
+  const definitions={won:'Total contract value of signed engagements',lost:'Total contract value of closed-lost opportunities',
+    mrr:'Monthly recurring revenue from active signed retainers',arr:'Annual recurring revenue equals monthly recurring revenue multiplied by 12'};
+  return `<section class="sales-screen"><header class="studio-heading pipeline-heading"><h1>Pipelines</h1>
+    <dl class="sales-metrics">${['won','lost','arr','mrr'].map(key=>`<div title="${definitions[key]}"><dt>${{won:'Won',lost:'Lost',arr:'ARR',mrr:'MRR'}[key]}</dt><dd>${h(money(totals[key]).replace(/\.00$/,''))}</dd></div>`).join('')}</dl><img class="pipeline-illustration" src="/assets/artwork/correspondence.png" width="114" height="76" alt=""></header>
+    <div class="sales-toolbar"><form class="compact-filter" data-form="filter">${field('Search pipeline','q',query.get('q')||'',{type:'search',placeholder:'Company or contact',glyph:'search'})}${select('Owner','owner',data.owners,owner,'All owners')}${btn('Apply',{type:'submit'})}${search||owner?link(base('solutions'),'Clear'):''}</form>
+    <div class="actions">${admin?action('Edit stages','ws-columns','','settings'):''}<button type="button" class="density-switch" role="switch" aria-checked="${compact}" aria-label="Compact cards" data-action="ws-density"><i aria-hidden="true"></i>Compact cards</button>${action('New engagement','ws-new','solutions','plus','primary')}</div></div>
+    <div class="deal-board sales-board${compact?' compact-cards':''}" aria-label="Solutions sales stages">${data.stages.map(({id,name},i)=>{
+      const rows=visible.filter(row=>(row.signed_at?'signed':row.stage)===id);
+      return `<section class="deal-column tone-${i%6}" data-ws-stage="${h(id)}"><header><h2>${h(name)}</h2><span>${rows.length}</span></header>
+        ${rows.map(r=>boardCard(r,data.today)).join('') || '<p class="quiet empty-stage">No engagements</p>'}</section>`;
+    }).join('')}</div></section>`;
 }
 
 function unavailable(line) {
@@ -232,7 +230,7 @@ export function overview(data, owners, user, zone) {
         : ''
     }</div>`;
 }
-export function workView(data, owners, zone) {
+export function workView(data, owners, zone, formOnly=false) {
   const e = data.deal;
   const people = owners.filter((u) => u.id === e.owner_id || data.team.includes(u.id) || u.admin);
   const controls = form(
@@ -258,6 +256,7 @@ export function workView(data, owners, zone) {
       submit('Record activity'),
     e.id
   );
+  if(formOnly) return controls;
   return `<div class="ws-detail-grid">${panel('Record work', controls)}${panel(
     'Activity and next actions',
     data.work.length
@@ -306,34 +305,18 @@ function profileValue(key, v) {
   return typeof v === 'string' && /^https?:\/\//i.test(v) ? outboundLink(v) : h(v);
 }
 export function profileView(data) {
-  const e = data.deal,
-    s = data.latest,
-    files = s?.files || [],
-    logo = [...files,...data.files].find((x) => x.purpose === 'logo' && x.mime?.startsWith('image/'));
-  return `${panel('Logos and supporting files', fileList(data.files)+uploadForm(e.id,false,'asset'))}
-    ${
-      !s
-        ? emptyState('Awaiting advisory intake.')
-        : `
-    <div class="profile-heading">${logo ? `<img src="/api/files/${h(logo.id)}?preview=1" alt="${h(e.company)} logo">` : ''}<div><h2>${h(e.company)}</h2><p>Advisory intake · Version ${s.version}</p></div></div>
-    <div class="ws-detail-grid">${Object.entries(profileGroups)
-      .map(([name, keys]) => {
-        const values = keys.filter(
-          (k) =>
-            s.answers[k] !== undefined &&
-            s.answers[k] !== '' &&
-            (!Array.isArray(s.answers[k]) || s.answers[k].length)
-        );
-        return panel(
-          name,
-          values.length
-            ? fields(values.map((k) => [fieldDefs[k]?.label || k, profileValue(k, s.answers[k])]))
-            : '<p class="quiet">Not supplied.</p>'
-        );
-      })
-      .join('')}${panel('Submission files', fileList(files))}</div>`
-    }`;
+  const e=data.deal,submission=data.latest;
+  const files=[...new Map([...(submission?.files || []),...data.files].map(f=>[f.id,f])).values()];
+  const latest=submission?link('/clients/'+e.client_id+'/submissions/'+submission.id,'View submission '+submission.version,'history'):'';
+  return `<div class="intake-summary"><h2>Client intake</h2>${latest}</div>
+    <section class="panel intake-files"><div class="section-toolbar"><h3>Uploaded files</h3><small>${files.length} file${files.length===1?'':'s'}</small></div>${fileList(files)}
+    <details><summary>Add files</summary>${uploadForm(e.id,false,'asset')}</details></section>
+    ${!submission?emptyState('Awaiting client intake.'):`<div class="intake-groups">${Object.entries(profileGroups).map(([name,keys])=>{
+      const values=keys.filter(k=>submission.answers[k]!==undefined && submission.answers[k]!=='' && (!Array.isArray(submission.answers[k])||submission.answers[k].length));
+      return `<section class="panel"><h3>${h(name)}</h3>${values.length?fields(values.map(k=>[fieldDefs[k]?.label||k,profileValue(k,submission.answers[k])])):'<p class="quiet">Not supplied.</p>'}</section>`;
+    }).join('')}</div>`}`;
 }
+
 function researchView(data) {
   const client = data.deal.client_id;
   return `<div class="actions">${link('/pipeline?client_id=' + client, 'Introduction board', 'board')}${link('/pipeline/suggestions?client_id=' + client, 'Review suggested leads', 'shortlist')}${action('Add research', 'ws-research', data.deal.id, 'plus')}${skillLink('introductions', 'Download introductions skill')}</div>
@@ -415,7 +398,7 @@ export function reportsView(data, today) {
         .join('') || emptyState('No weekly updates yet.')
     }</div>`;
 }
-function detailView(allowed, data, owners, user, query, zone, today) {
+function detailView(columns, data, owners, user, query, zone, today) {
   const e = data.deal,
     path = base(e.line, e.id);
   const names = {
@@ -429,7 +412,7 @@ function detailView(allowed, data, owners, user, query, zone, today) {
   const board = history.state?.workBoard;
   const destination = typeof board === 'string' && board.split('?')[0] === base(e.line) ? board : base(e.line);
   return `${link(destination, 'Back to pipelines', 'back', 'back-link')}
-    <header class="ws-head"><div><p>${h(e.title === e.company ? lines[e.line].noun : e.title)} · ${h(stages[e.stage])}</p><h1>${h(e.company)}</h1></div><div class="actions">${e.client_id && !e.signed_at ? action('Record existing agreement', 'ws-history', e.id) : ''}${action('Move stage', 'ws-stage', e.id, 'board')}${action('Edit engagement', 'ws-edit', e.id, 'edit', 'primary')}</div></header>
+    <header class="ws-head"><div><p>${h(e.title === e.company ? lines[e.line].noun : e.title)} · ${h(columns.find(c=>c.id===e.stage)?.name || stages[e.stage])}</p><h1>${h(e.company)}</h1></div><div class="actions">${e.client_id && !e.signed_at ? action('Record existing agreement', 'ws-history', e.id) : ''}${action('Move stage', 'ws-stage', e.id, 'board')}${action('Edit engagement', 'ws-edit', e.id, 'edit', 'primary')}</div></header>
     ${tabs(
       Object.entries(names).map(([key, name]) => [key, name, urlWith(path, query, { tab: key })]),
       selected,
@@ -503,14 +486,14 @@ function editForm(e, users, user) {
     e.id
   );
 }
-function stageForm(e, selected = e.stage) {
+function stageForm(e, selected = e.stage, columns) {
   const def = lines[e.line],
     keys =
       e.line==='solutions' ? [...def.live,'signed'] : e.signed_at || def.delivery.includes(e.stage) ? def.delivery : [...def.live, 'signed', 'cold', 'dead'];
   return form(
     'ws-stage',
     hidden('version', e.version) +
-      select('Stage', 'stage', options(keys), selected) +
+      select('Stage', 'stage', e.line==='solutions' && columns ? columns : options(keys), selected) +
       grid(['first_meeting_day', 'due', 'outcome', 'agreement_url'].map((k) => formField(k, e.details)).join('')) +
       '<small class="quiet">Signing starts accounting handoff. Attach the executed copy under Overview or include its link here.</small>' +
       submit('Save stage'),
@@ -639,13 +622,27 @@ async function uploadFiles(f,values,external) {
     ]);
     if (detail && detail.deal.line !== line) throw new Error('This engagement belongs to another workspace.');
     if (detail?.deal.client_id) {
-      const tab = {overview:'account',profile:'intake',research:'map',reports:'reports',activity:'activity'}[q.get('tab')] || 'map';
+      const tab = {overview:'account',profile:'intake',research:'map',reports:'reports',activity:'notes'}[q.get('tab')] || 'intake';
       navigate('/clients/'+detail.deal.client_id+'?tab='+tab,{replace:true});
       return '';
     }
-    return detail ? detailView(allowed, detail, board.owners, getUser(), q, getZone(), board.today) : boardView(board,q);
+    return detail ? detailView(board.stages, detail, board.owners, getUser(), q, getZone(), board.today) : boardView(board,q,getUser()?.role==='admin');
   }
   const actions = {
+    'ws-columns': async () => {
+      const {stages:columns}=await api('/api/workspaces/solutions');
+      const open=columns.filter(c=>c.id!=='signed');
+      showDialog('Edit pipeline stages',form('ws-add-column',field('New stage name','name','',{required:true,max:55})+
+        select('Place after','after',open,open.at(-1).id)+submit('Add stage'))+
+        `<div class="stage-list">${columns.map(c=>`<div><span>${h(c.name)}</span>${!['outreach','signed'].includes(c.id)?action('Delete','ws-remove-column',c.id):''}</div>`).join('')}</div>`);
+    },
+    'ws-remove-column':async b=>{
+      const {stages:columns,deals}=await api('/api/workspaces/solutions');
+      const key=b.dataset.id,stage=columns.find(c=>c.id===key),remaining=deals.filter(d=>d.stage===key).length;
+      if(!stage) throw new Error('Reopen the stage editor.');
+      showDialog('Delete '+stage.name,form('ws-delete-column',`<p>${remaining?`${remaining} engagement${remaining===1?'':'s'} will move to the stage you select.`:'This stage is empty.'}</p>`+
+        (remaining?select('Move engagements to','destination',columns.filter(c=>c.id!==key && c.id!=='signed')):'')+submit('Delete stage'),key));
+    },
     'ws-density': async () => { localStorage.setItem('branded-card-density',localStorage.getItem('branded-card-density')==='compact'?'comfortable':'compact'); await render(); },
     'ws-history': async () => {
       const { deal } = await currentDeal();
@@ -673,7 +670,7 @@ async function uploadFiles(f,values,external) {
       const { deal } = await currentDeal();
       showDialog('Edit engagement', editForm(deal, await eligible(deal.line), getUser()));
     },
-    'ws-stage': async () => showDialog('Move stage', stageForm((await currentDeal()).deal)),
+    'ws-stage': async () => {const [record,board]=await Promise.all([currentDeal(),api('/api/workspaces/solutions')]);showDialog('Move stage',stageForm(record.deal,record.deal.stage,board.stages));},
     'ws-targets': () => showDialog('Add campaign targets', targetForm()),
     'ws-item': async (b) => {
       const record = await currentDeal(),
@@ -735,6 +732,8 @@ async function uploadFiles(f,values,external) {
       ),
   };
   const forms = {
+    async 'ws-add-column'(f,v) {await api('/api/workspaces/solutions/stages','POST',Object.fromEntries(v));await saved('Stage added.');},
+    async 'ws-delete-column'(f,v) {await api('/api/workspaces/solutions/stages/'+f.dataset.id,'DELETE',Object.fromEntries(v));await saved('Stage deleted.');},
     async 'ws-history'(f, v) {
       await api('/api/engagements/' + f.dataset.id + '/existing-agreement', 'POST', {
         version: Number(v.get('version')),
@@ -854,27 +853,13 @@ async function uploadFiles(f,values,external) {
       await saved('Mail match resolved.');
     },
   };
-  document.addEventListener('change', (event) => {
-    if (event.target.name !== 'board_stage') return;
-    const board = document.querySelector('.deal-board');
-    const column = [...board.children].find((item) => item.dataset.wsStage === event.target.value);
-    if (!column) return;
-    board.querySelector('.chosen')?.classList.remove('chosen');
-    column.classList.add('chosen');
-    board.scrollLeft = column.offsetLeft;
-    const savedStage=document.querySelector('.sales-toolbar [name="stage"]');
-    if (savedStage) savedStage.value=column.dataset.wsStage;
-    const url = new URL(location.href);
-    url.searchParams.set('stage', column.dataset.wsStage);
-    history.replaceState(history.state, '', url);
-  });
-
   let dragged, dropTarget;
   function clearTarget() { dropTarget?.classList.remove('drop-ready'); dropTarget=null; }
   document.addEventListener('dragstart', (e) => {
     const card = e.target.closest('.deal-card');
     if (card) {
       dragged = card;
+      card.classList.add('is-lifted');
       e.dataTransfer.effectAllowed = 'move';
       e.dataTransfer.setData('text/plain', card.dataset.deal);
     }
@@ -887,21 +872,20 @@ async function uploadFiles(f,values,external) {
     }
   });
   document.addEventListener('dragend', () => {
+    document.querySelector('.deal-card.is-lifted')?.classList.remove('is-lifted');
     dragged = null;
     clearTarget();
   });
-  document.addEventListener('drop', async (e) => {
-    const stage = e.target.closest('[data-ws-stage]')?.dataset.wsStage,
-      card = dragged;
+  async function dropCard(card,stage) {
+    card?.classList.remove('is-lifted');
     dragged = null;
     clearTarget();
     if (!card || !stage) return;
-    e.preventDefault();
     if (stage === card.dataset.stage) return;
     try {
       if (stage === 'signed' || stage === 'first_meeting_scheduled') {
         const { deal } = await api('/api/engagements/' + card.dataset.deal);
-        showDialog(stage === 'signed' ? 'Record signed agreement' : 'Schedule first meeting', stageForm(deal, stage));
+        showDialog(stage === 'signed' ? 'Record signed agreement' : 'Schedule first meeting', stageForm(deal, stage,(await api('/api/workspaces/solutions')).stages));
         return;
       }
       await api('/api/engagements/' + card.dataset.deal, 'PATCH', {
@@ -913,6 +897,44 @@ async function uploadFiles(f,values,external) {
     } catch (err) {
       notify(err.message);
     }
+}
+  document.addEventListener('drop',e=>{
+    if(!dragged) return;
+    e.preventDefault();
+    dropCard(dragged,e.target.closest('[data-ws-stage]')?.dataset.wsStage);
   });
+  let touch, timer, suppressClick=false;
+  const cancelTouch=()=>{clearTimeout(timer);touch?.card.classList.remove('is-lifted');touch=null;clearTarget();};
+  document.addEventListener('touchstart',e=>{
+    cancelTouch();
+    const card=e.target.closest('.deal-card');
+    if(!card || e.touches.length!==1) return;
+    const pt=e.touches[0];
+    touch={card,x:pt.clientX,y:pt.clientY,active:false};
+    timer=setTimeout(()=>{if(touch){touch.active=true;card.classList.add('is-lifted');}},320);
+  },{passive:true});
+  document.addEventListener('touchmove',e=>{
+    if(!touch) return;
+    const pt=e.touches[0];
+    if(!touch.active){if(Math.hypot(pt.clientX-touch.x,pt.clientY-touch.y)>9) cancelTouch();return;}
+    e.preventDefault();
+    const board=touch.card.closest('.deal-board'),box=board.getBoundingClientRect();
+    if(pt.clientX<box.left+50) board.scrollLeft-=32;
+    if(pt.clientX>box.right-50) board.scrollLeft+=32;
+    const column=document.elementFromPoint(pt.clientX,pt.clientY)?.closest('[data-ws-stage]');
+    clearTarget();
+    if(column && column.dataset.wsStage!==touch.card.dataset.stage){dropTarget=column;column.classList.add('drop-ready');}
+  },{passive:false});
+  document.addEventListener('touchend',e=>{
+    if(touch?.active){
+      e.preventDefault();suppressClick=true;setTimeout(()=>{suppressClick=false;},350);
+      const pt=e.changedTouches[0],stage=document.elementFromPoint(pt.clientX,pt.clientY)?.closest('[data-ws-stage]')?.dataset.wsStage;
+      dropCard(touch.card,stage);
+    }
+    cancelTouch();
+  },{passive:false});
+  document.addEventListener('touchcancel',cancelTouch);
+  document.addEventListener('contextmenu',e=>{if(touch?.active && touch.card.contains(e.target)) e.preventDefault();});
+  document.addEventListener('click',e=>{if(suppressClick && e.target.closest('.deal-card')){e.preventDefault();e.stopImmediatePropagation();}},true);
   return { actions, forms, page };
 }

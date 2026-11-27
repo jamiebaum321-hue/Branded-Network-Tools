@@ -1,3 +1,4 @@
+import { salesSummary } from '../public/sales-summary.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
@@ -71,6 +72,76 @@ async function fixture(t) {
   const call = async (token, name, args) => (await rpc(token, 'tools/call', { name, arguments: args })).structuredContent;
   return { store, config, request, check, activate, owner, as, admin, addClient, addCard, tokenFor, rpc, call };
 }
+
+test('custom sales stages move occupied deals atomically and revenue separates contract value from MRR',async t=>{
+  const f=await fixture(t),root='/api/workspaces/solutions';
+  const col=await f.admin(root+'/stages',{name:'Partner review',after:'discovery'});
+  assert.equal((await f.admin(root)).stages[2].id,col.id);
+  const lead=await f.admin(root+'/engagements',{company:'Example',details:{monthly:120050,term:'Six months',project_fee:30000}});
+  await f.admin('/api/engagements/'+lead.id,{version:1,stage:col.id},'PATCH');
+  await f.admin(root+'/stages/'+col.id,{},'DELETE',409);
+  assert.equal((await f.admin('/api/engagements/'+lead.id)).deal.stage,col.id);
+  assert.equal((await f.admin(root+'/stages/'+col.id,{destination:'discovery'},'DELETE')).moved,1);
+  const e=(await f.admin('/api/engagements/'+lead.id)).deal;
+  assert.equal(e.stage,'discovery'); assert.equal(e.version,3);
+  await f.admin('/api/engagements/'+lead.id,{stage:col.id,version:3},'PATCH',400);
+  await f.admin('/api/engagements/'+lead.id,{stage:'signed',version:3,details:{agreement_url:'https://example.test/agreement'}},'PATCH');
+  const lost=await f.admin(root+'/engagements',{company:'Lost',details:{monthly:50000,term:'1 year',deal_value:525000}});
+  await f.admin('/api/engagements/'+lost.id,{version:1,stage:'dead',details:{outcome:'Declined'}},'PATCH');
+  assert.deepEqual(salesSummary((await f.admin(root)).deals),{won:750300,lost:525000,mrr:120050,arr:1440600});
+  assert.deepEqual(salesSummary([{stage:'complete',signed_at:'2026-01-01',details:{monthly:90000,term:'annual'}}]),{won:1080000,lost:0,mrr:0,arr:0});
+  await f.admin(root+'/stages/signed',{},'DELETE',400);
+});
+
+test('project boards preserve independent stages, authorized participants, weekly periods and percent in CSV',async t=>{
+  const f=await fixture(t),a=await f.addClient('Shared A'),b=await f.addClient('Private B');
+  const stageNames=Array.from({length:10},(_,i)=>'Stage '+(i+1));
+  const root='/api/project-library';
+  const p=await f.admin(root,{name:'Partner rollout',cadence:'week',stages:stageNames,clients:[a.id]});
+  const path=root+'/'+p.id,week='2026-11-27';
+  let board=(await f.admin(path+'?date='+week)).projects[0];
+  assert.deepEqual(board.rows.map(r=>r.id),[a.id]); assert.equal(board.percent,0); assert.equal(board.stages[0].period,'2026-11-23');
+  for(const stage of board.stages.slice(0,9)) await f.admin('/api/clients/'+a.id+'/milestones',{step:stage.id,period:week,status:'done',notes:'=approved, "yes"',version:0},'PUT');
+  board=(await f.admin(path+'?date='+week)).projects[0];
+  assert.equal(board.rows[0].percent,90);assert.equal(board.percent,90);
+  const token=await f.tokenFor(a);
+  const catalog=await f.call(token,'get_client_project',{client_id:a.id,month:'2026-11',week});
+  assert.equal(catalog.boards.find(item=>item.id===p.id).stages[0].period,'2026-11-23');
+  assert.equal(catalog.boards.find(item=>item.id===p.id).stages[0].name,'Stage 1');
+  assert.equal((await f.admin(path+'?date=2026-12-01')).projects[0].percent,0);
+  const r=await f.request(path+'/export?date='+week,{cookie:f.owner.cookie});
+  assert.match(r.headers.get('Content-Type'),/text\/csv/);
+  const csv=await r.text();assert.match(csv,/"90%"/);assert.match(csv,/"'=approved, ""yes"""/);assert(!csv.includes('Private B'));
+  await f.admin('/api/clients/'+b.id+'/milestones',{step:board.stages[0].id,period:week,status:'done',version:0},'PUT',404);
+  await f.admin(path+'/stages',{name:'Stage 1'},'POST',409);
+  const {setup}=await f.admin('/api/admin/accounts',{name:'A member',email:'only-b@example.test',role:'member'});
+  const member=await f.activate(setup.path),as=f.as(member.cookie);
+  assert(!(await as(root)).projects.some(row=>row.id===p.id));
+  await as(path+'/export',undefined,'GET',404);
+  await as(path+'/clients',{clients:[b.id]},'POST',403);
+  await f.admin(path+'/clients',{clients:[b.id]});
+  assert.equal((await f.admin(path+'?date='+week)).projects[0].percent,45);
+});
+
+test('client timeline combines notes and archived intakes, and detects changed files with identical names and sizes',async t=>{
+  const f=await fixture(t),c=await f.addClient('Linden'),root='/api/clients/'+c.id;
+  async function intake(icp,bytes) {
+    const form='/api'+(await f.admin(root+'/form-link',{})).path;
+    await f.check(form+'/files',{method:'POST',body:{name:'deck.bin',purpose:'asset',data:Buffer.from(bytes).toString('base64')}});
+    return (await f.check(form+'/submit',{method:'POST',body:{company:'Linden',contact_name:'Lee',contact_email:'lee@example.test',icp}})).result.submission;
+  }
+  const one=await intake('Hotels','AA'),two=await intake('Restaurants','BB');
+  await f.admin(root+'/notes',{body:'Review the new targets.',source_key:'linden-visit'});
+  const feed=await f.admin(root+'/timeline');
+  assert.equal(feed.items.filter(r=>r.kind==='submission').length,2);
+  assert(feed.items.some(r=>r.kind==='note' && r.body==='Review the new targets.'));
+  const comparison=await f.admin(root+'/submissions/'+two.id+'?compare=1');
+  assert.equal(comparison.previous.id,one.id);
+  assert.equal(comparison.previous.answers.icp,'Hotels');
+  assert.equal(comparison.submission.answers.icp,'Restaurants');
+  assert.deepEqual(comparison.file_changes,{removed:[{name:'deck.bin',purpose:'asset'}],added:[{name:'deck.bin',purpose:'asset'}]});
+  assert.equal((await f.admin(root+'/submissions/'+one.id+'?compare=1')).previous,undefined);
+});
 
 test('sign-in, client isolation, multiple admins, account revocation and audit', async t => {
   const f = await fixture(t);
@@ -418,7 +489,7 @@ test('persistent store keeps accounts across restarts and only runs migrations o
     const reopened = openStore(file);
     try {
       assert.equal(reopened.get('SELECT email FROM users').email, adminEmail);
-      assert.equal(reopened.get('PRAGMA user_version').user_version, 3);
+      assert.equal(reopened.get('PRAGMA user_version').user_version, 4);
     } finally { reopened.db.close(); }
   } finally {
     for (const suffix of ['', '-wal', '-shm']) rmSync(`${file}${suffix}`, { force: true });

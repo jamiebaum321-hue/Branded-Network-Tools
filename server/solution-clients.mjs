@@ -37,18 +37,19 @@ function mergeConnection(nodes, source, record) {
     nodes.set(key, node);
   }
   if (record.category && (node.category === 'other' || record.category === 'priority')) node.category = record.category;
+  if (source.at && (!node.added_at || source.at<node.added_at)) node.added_at=source.at;
   if (record.stage) node.stage = record.stage;
   for (const field of ['next_action','owner_id','due','card_id','suggestion_id']) if (record[field]) node[field] = record[field];
   if (!node.sources.some((row) => row.type === source.type && row.id === source.id && row.detail === source.detail)) node.sources.push(source);
 }
 
 function intakeRows(s, client) {
-const submissions=s.all('SELECT id,version,answers FROM submissions WHERE client_id=? ORDER BY version DESC',client)
+const submissions=s.all('SELECT id,version,answers,submitted_at FROM submissions WHERE client_id=? ORDER BY version DESC',client)
     .map(row=>({...row,answers:decode(row.answers)}));
-  const lists=s.all(`SELECT f.id,f.name,f.purpose,l.rows FROM attachments f JOIN attachment_lists l ON l.file_id=f.id
+  const lists=s.all(`SELECT f.id,f.name,f.purpose,f.created_at,l.rows FROM attachments f JOIN attachment_lists l ON l.file_id=f.id
     LEFT JOIN engagements e ON e.id=f.engagement_id
     WHERE (f.client_id=? AND f.submission_id IS NOT NULL) OR e.client_id=? ORDER BY f.created_at DESC,f.id`,client,client)
-    .map(row=>({id:row.id,file:row.name,answers:{[row.purpose]:decode(row.rows)}}));
+    .map(row=>({id:row.id,file:row.name,submitted_at:row.created_at,answers:{[row.purpose]:decode(row.rows)}}));
   return [...submissions,...lists];
 }
 
@@ -57,7 +58,7 @@ function relationshipMap(s, client, intakes, notes) {
   for (const intake of intakes) {
     for (const [field, group] of [['priority_targets','priority'],['partnerships','strategic']]) {
       for (const item of intake.answers[field] || []) {
-        mergeConnection(nodes, {type:intake.file?'file':'intake', id:intake.id, label:intake.file || 'Intake '+intake.version,
+        mergeConnection(nodes, {type:intake.file?'file':'intake', id:intake.id, at:intake.submitted_at, label:intake.file || 'Intake '+intake.version,
           detail:[item.relationship,item.notes].filter(Boolean).join(' · '), link:item.link || ''},
         {company:item.company,person:item.contact,category:group});
       }
@@ -65,16 +66,16 @@ function relationshipMap(s, client, intakes, notes) {
   }
   for (const item of s.all('SELECT s.*,r.tier,r.next_action FROM suggestions s LEFT JOIN introduction_research r ON r.suggestion_id=s.id WHERE s.client_id=? AND s.status<>?', client, 'dismissed')) {
     const evidence = decode(item.evidence).map((row) => row.detail).filter(Boolean).join(' · ');
-    mergeConnection(nodes, {type:'research',id:item.id,label:item.source || 'Research',detail:[item.reason,evidence].filter(Boolean).join(' · ')},
+    mergeConnection(nodes, {type:'research',id:item.id,at:item.created_at,label:item.source || 'Research',detail:[item.reason,evidence].filter(Boolean).join(' · ')},
       {...item, suggestion_id:item.id});
   }
   const progress = {to_contact:'planning',reached_out:'contacted',in_conversation:'followup',closed:'closed'};
   for (const card of s.all("SELECT p.*,EXISTS(SELECT 1 FROM activity x WHERE x.card_id=p.id AND x.kind='introduction') introduced FROM cards p WHERE p.client_id=?", client)) {
-    mergeConnection(nodes, {type:'card',id:card.id,label:'Introduction activity',detail:card.outcome || card.fit_reason},
+    mergeConnection(nodes, {type:'card',id:card.id,at:card.created_at,label:'Introduction activity',detail:card.outcome || card.fit_reason},
       {...card,stage:card.introduced && card.stage!=='closed'?'introduced':progress[card.stage],next_action:card.next_step,due:card.due_at?.slice(0,10),card_id:card.id});
   }
 for (const note of notes) {
-    const source={type:'note',id:note.id,label:note.author+' · Note',detail:note.body};
+    const source={type:'note',id:note.id,at:note.created_at,label:note.author+' · Note',detail:note.body};
     if (note.company || note.person) mergeConnection(nodes,source,note);
     for (const line of note.body.split(/\r?\n/)) {
       const match=/^\s*(?:[-*]\s*)?(target|partner|channel|introduction)\s*:\s*([^|]+?)(?:\s*\|\s*(.+))?\s*$/i.exec(line);
@@ -85,7 +86,8 @@ for (const note of notes) {
   }
   for (const saved of s.all('SELECT * FROM client_connections WHERE client_id=?',client)) {
     const node = nodes.get(saved.node_key) || {key:saved.node_key,sources:[]};
-    Object.assign(node, saved);
+    const added=[node.added_at,saved.added_at].filter(Boolean).sort()[0] || '';
+    Object.assign(node,saved,{added_at:added});
     nodes.set(node.key,node);
   }
 const byCompany=new Map();
@@ -110,7 +112,7 @@ const byCompany=new Map();
     for (const node of nodes.values()) {
       if (node.sources.some((x) => x.type==='note' && x.id===note.id)) continue;
       if ([node.company,node.person].some((v) => v && v.trim().length>=3 && body.includes(words(v))))
-        node.sources.push({type:'note',id:note.id,label:note.author+' · Note',detail:note.body});
+        node.sources.push({type:'note',id:note.id,at:note.created_at,label:note.author+' · Note',detail:note.body});
     }
   }
   return [...nodes.values()].sort((a,b) => (a.company || a.person).localeCompare(b.company || b.person) || a.person.localeCompare(b.person));
@@ -175,10 +177,10 @@ export function saveConnection(s,a,input) {
   return s.tx(() => {
     const old=s.get('SELECT version FROM client_connections WHERE client_id=? AND node_key=?',d.client_id,key);
     if ((old?.version || 0)!==d.version) throw new AppError(409,'This connection changed. Reopen it to see the latest version.');
-    s.run(`INSERT INTO client_connections VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(client_id,node_key) DO UPDATE SET
+    s.run(`INSERT INTO client_connections VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(client_id,node_key) DO UPDATE SET
       category=excluded.category,health=excluded.health,stage=excluded.stage,next_action=excluded.next_action,due=excluded.due,
       owner_id=excluded.owner_id,notes=excluded.notes,version=excluded.version`,
-      d.client_id,key,d.company,d.person,d.category,d.health,d.stage,d.next_action || '',d.due || '',d.owner_id || null,d.notes || '',d.version+1);
+      d.client_id,key,d.company,d.person,d.category,d.health,d.stage,d.next_action || '',d.due || '',d.owner_id || null,d.notes || '',d.version+1,iso());
     audit(s,a,'connection.saved','connection',key,d.client_id);
     return {key,version:d.version+1};
   });

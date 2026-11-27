@@ -197,7 +197,8 @@ async function render({ focus = false } = {}) {
       context = ctx;
       html = clientsPage(data, query, user, zone);
     } else if (/^\/clients\/[\w-]+\/submissions\/[\w-]+$/.test(path)) {
-      html = submissionPage((await api(`/api${path}`)).submission, zone);
+      const {submission,previous,file_changes}=await api(`/api${path}?compare=1`);
+      html = submissionPage(submission,zone,previous,file_changes);
     } else if (path.startsWith('/clients/')) {
       const [data, ctx] = await Promise.all([api(`/api${path}`), getContext()]);
       if (current !== revision) return;

@@ -25,6 +25,9 @@ const assets = new Map(Object.entries({
   '/app.mjs': ['app.mjs', 'text/javascript; charset=utf-8'],
   '/workspace.mjs': ['workspace.mjs', 'text/javascript; charset=utf-8'],
   '/business-lines.mjs': ['business-lines.mjs', 'text/javascript; charset=utf-8'],
+  '/sales-summary.mjs': ['sales-summary.mjs','text/javascript; charset=utf-8'],
+  '/project-views.mjs': ['project-views.mjs','text/javascript; charset=utf-8'],
+  '/studio.css': ['studio.css','text/css; charset=utf-8'],
   '/solution-ui.mjs': ['solution-ui.mjs', 'text/javascript; charset=utf-8'],
   '/solution-model.mjs': ['solution-model.mjs', 'text/javascript; charset=utf-8'],
   '/solutions.css': ['solutions.css', 'text/css; charset=utf-8'],
@@ -39,6 +42,7 @@ const assets = new Map(Object.entries({
   '/assets/type/plus-jakarta-sans-latin.woff2': ['assets/type/plus-jakarta-sans-latin.woff2', 'font/woff2'],
 }));
 const imageAssets = [
+  ...['desk-bell','room-key','field-notes','correspondence'].flatMap(name=>[['artwork/'+name+'.svg','image/svg+xml'],['artwork/'+name+'.png','image/png']]),
   ...['favicon-32', 'favicon-48', 'apple-touch-icon', 'social-share', 'network-touch'].map(name => [`brand/${name}.png`, 'image/png']),
   ...['focus-rings', 'iris-dot-grid', 'connection-ribbon'].map(name => [`accents/${name}.png`, 'image/png']),
   ...['today', 'pipeline', 'clients', 'settings', 'metrics', 'suggested-leads']
@@ -165,10 +169,16 @@ export function createApp(store, config) {
   route('POST', `/api/clients/${ident}/form-link/revoke`, ({ actor, ids }) => revokeFormLinks(store, actor, ids[0]));
   route('GET', `/api/clients/${ident}/submissions`, ({ actor, ids, url }) => listSubmissions(store, actor, ids[0],
     { before: boundedInt(url.searchParams.get('before'), undefined, Number.MAX_SAFE_INTEGER) }));
-  route('GET', `/api/clients/${ident}/submissions/${ident}`, ({ actor, ids }) => {
+  route('GET', `/api/clients/${ident}/submissions/${ident}`, ({ actor, ids, url }) => {
     const result = getSubmission(store, actor, ...ids);
     audit(store, actor, 'intake.viewed', 'submission', result.id, result.client_id);
-    return { submission: result };
+    const previous=url.searchParams.get('compare')==='1' && store.get('SELECT id FROM submissions WHERE client_id=? AND version<? ORDER BY version DESC LIMIT 1',ids[0],result.version);
+    if(!previous) return {submission:result};
+    const unmatched=(from,to)=>store.all(`SELECT f.name,f.purpose FROM attachments f WHERE f.submission_id=? AND NOT EXISTS
+      (SELECT 1 FROM attachments other WHERE other.submission_id=? AND other.name=f.name AND other.purpose=f.purpose
+      AND other.mime=f.mime AND length(other.bytes)=length(f.bytes) AND other.bytes=f.bytes) ORDER BY f.name,f.id`,from,to);
+    return {submission:result,previous:getSubmission(store,actor,ids[0],previous.id),
+      file_changes:{removed:unmatched(previous.id,result.id),added:unmatched(result.id,previous.id)}};
   });
   route('GET', `/api/clients/${ident}/submissions/${ident}/pdf`, async ({ actor, ids, res }) => {
     const result = getSubmission(store, actor, ...ids);

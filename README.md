@@ -4,9 +4,9 @@ Branded Network Tools manages advisory sales and delivery for Branded Hospitalit
 
 | Screen | Workflow |
 | --- | --- |
-| Pipelines | Track Outreach, Discovery, First engagement, Second engagement, Agreement sent and Signed. Recording a signed agreement opens a client project and queues the accounting handoff. |
-| Project management | Review clients across onboarding, outreach and reporting, five follow-ups and a recurring monthly checkpoint. Each milestone has a status, owner, date and notes. |
-| Clients | Open the client’s introduction map, team contacts, advisory intake, submission history, attachments, working notes, engagement and weekly updates. |
+| Pipelines | Move opportunities from Outreach to Signed. Admins can add or remove stages. Won and Lost use total contract value, or the fee plus the retainer over the recorded term. MRR totals active signed retainers. ARR equals MRR multiplied by 12. Signing opens the client record and queues the accounting handoff. |
+| Project management | Open Onboarding, Weekly report, Introductions or Client follow-ups, or create a project with its own stages, schedule and clients. Track completed milestones as a percentage and export progress, dates and notes to CSV. |
+| Clients | Start with intake and uploaded files. Add a note or connection beside the client name. Filter the introduction map by relationship health or date. Notes & activity includes submissions, changes between versions and recorded work. |
 | Settings | Invite admins and team members, manage accounts and workspace access, and review mail delivery, Claude access, imports and audit history. |
 | My profile | From the account menu, edit your name, job title, phone, bio, notification preference or password. |
 

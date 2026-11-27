@@ -20,7 +20,7 @@ import { skillBundle, skillLines } from './skills.mjs';
 import { authorizedFile, billingDownload, dealUpload, intakeUpload, sendFile, uploadLimit } from './files.mjs';
 import { changePitch, createSource, pitches, source, submitInquiry } from './inquiries.mjs';
 import { ready, reconcileMatch, resolveMail } from './mail.mjs';
-import { salesStages } from '../public/business-lines.mjs';
+import { salesColumns, addSalesColumn, removeSalesColumn } from './sales-stages.mjs';
 import { weeklyReportFile } from './pdf.mjs';
 
 const key = '([\\w-]{1,80})';
@@ -34,9 +34,12 @@ export function registerWorkspaceRoutes(route, s, config) {
   );
   route('GET', '/api/workspaces', ({ actor }) => ({ lines: workspaceLines(s, actor) }));
   route('GET', '/api/work-due', ({ actor }) => ({ items: dueWork(s, actor, config) }));
+  route('POST','/api/workspaces/solutions/stages',({actor,data})=>addSalesColumn(s,actor,data));
+  route('DELETE','/api/workspaces/solutions/stages/'+key,({actor,ids,data})=>removeSalesColumn(s,actor,ids[0],data || {}));
   route('POST', '/api/workspaces/media/targets', ({ actor, data }) => addTargets(s, actor, data));
   route('GET', '/api/workspaces/' + line, ({ actor, ids: [line] }) => ({
     deals: deals(s, actor, line, config),
+    ...(line==='solutions'?{stages:salesColumns(s)}:{}),
     owners: workspaceAccounts(s, actor, line),
     today: todayKey(config.timeZone),
   }));
@@ -143,7 +146,7 @@ export function registerWorkspaceRoutes(route, s, config) {
         sum(CASE WHEN e.stage IN (SELECT value FROM json_each(?)) THEN 1 ELSE 0 END) in_discussion,
         count(e.signed_at) signed FROM inquiry_sources s JOIN users u ON u.id=s.owner_id
         LEFT JOIN inquiry_entries i ON i.source_id=s.id LEFT JOIN engagements e ON e.id=i.engagement_id GROUP BY s.id ORDER BY s.created_at DESC`,
-      JSON.stringify(salesStages.filter((stage) => stage !== 'outreach'))
+      JSON.stringify([...new Set([...salesColumns(s).map(c=>c.id), 'first_meeting_scheduled','discussion','pitch','mandate_sent'])].filter(stage=>!['outreach','signed'].includes(stage)))
     ),
     mail: s.all(
       'SELECT id,subject,recipient,kind,status,detail,created_at FROM dispatches ORDER BY created_at DESC LIMIT 150'

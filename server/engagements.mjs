@@ -13,11 +13,12 @@ import {
 } from './store.mjs';
 import { insertClient } from './clients.mjs';
 import { choice, email, int, list, num, object, str, validate } from './validation.mjs';
-import { billingStates, kinds, labels, lines, money, salesStages, stages, statuses } from '../public/business-lines.mjs';
+import { salesColumns } from './sales-stages.mjs';
+import { billingStates, kinds, labels, lines, money, stages, statuses } from '../public/business-lines.mjs';
 
 export const lineSchema = choice(...Object.keys(lines));
 const small = str(300, 0);
-const amounts = ['monthly', 'project_fee', 'target', 'raised'];
+const amounts = ['monthly', 'project_fee', 'deal_value', 'target', 'raised'];
 const detailFields = Object.fromEntries(Object.keys(labels).map((key) => [key, small]));
 Object.assign(detailFields, {
   ...Object.fromEntries(amounts.map((k) => [k, int(0, 100000000000000)])),
@@ -35,9 +36,9 @@ const detailsSchema = object(detailFields, []);
 const editorFields = {
   title: str(240),
   owner_id: str(80),
-  stage: choice(...Object.keys(stages)),
+  stage: str(80),
   details: detailsSchema,
-  clear: list(choice(...amounts, 'fee_percent'), 5),
+  clear: list(choice(...amounts, 'fee_percent'), 6),
   version: int(1, 2147483647),
 };
 export const todayKey = (zone = 'America/New_York', at = new Date()) =>
@@ -335,7 +336,7 @@ export function changeDeal(s, a, key, input, config) {
 export const salesMoveSchema = object(
   {
     engagement_id: str(80),
-    stage: choice(...salesStages, 'cold', 'dead'),
+    stage: str(80),
     version: int(1, 2147483647),
     next_action: str(300),
     due: str(10),
@@ -347,6 +348,8 @@ export const salesMoveSchema = object(
 export function moveSalesStage(s, a, input, config) {
   const { engagement_id: key, version, stage, ...details } = validate(salesMoveSchema, input);
   const e = engagement(s, a, key);
+  const open=e.line==='solutions'?salesColumns(s).filter(c=>c.id!=='signed').map(c=>c.id):lines[e.line].live;
+  if (![...open,'cold','dead'].includes(stage)) throw new AppError(400,'Choose an open sales stage or disposition.');
   if (e.signed_at || lines[e.line].delivery.includes(e.stage))
     throw new AppError(409, 'This engagement is already in delivery.');
   if (e.stage === stage && Object.entries(details).every(([k, v]) => e.details[k] === v))
@@ -363,7 +366,9 @@ function applyDealChange(s, a, key, input, config) {
       throw new AppError(409, 'This engagement changed. Refresh before saving.');
     if (row.line==='solutions' && next!==row.stage && def.delivery.includes(next) && next!=='signed')
       throw new AppError(400, 'Manage delivery milestones in Project management.');
-    if (![...def.live, ...def.delivery, 'cold', 'dead'].includes(next))
+    const columns=row.line==='solutions'?salesColumns(s):def.live.map(id=>({id,name:stages[id]}));
+    const names={...stages,...Object.fromEntries(columns.map(c=>[c.id,c.name]))};
+    if (![...columns.map(c=>c.id), ...def.delivery, 'cold', 'dead'].includes(next))
       throw new AppError(400, 'Choose a stage from this workspace.');
     if (
       data.owner_id &&
@@ -437,7 +442,7 @@ function applyDealChange(s, a, key, input, config) {
         key,
         {
           kind: 'note',
-          title: stages[row.stage] + ' → ' + stages[next],
+          title: names[row.stage] + ' → ' + names[next],
           status: 'done',
           notes: next === 'dead' ? d.outcome : next === 'cold' ? 'Revisit ' + d.due : '',
         },
