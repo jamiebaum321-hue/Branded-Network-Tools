@@ -8,7 +8,8 @@ import { randomUUID } from 'node:crypto';
 import { AppError, audit, clientScope } from './store.mjs';
 import { auditPage, changeAccount, createJobToken, finishSetup, inviteAccount, listAccounts, listJobTokens, rateLimit,
   resetAccount, revokeJobToken, sessionUser, setupInfo, signIn, signOut } from './accounts.mjs';
-import { clientDetail, copyFormLink, createClient, getSubmission, listClients, listSubmissions, publicForm,
+import { ready as mailReady } from './mail.mjs';
+import { clientDetail, queueIntakeEmail, copyFormLink, createClient, getSubmission, listClients, listSubmissions, publicForm,
   revokeFormLinks, saveIntake, submitIntake, updateClient } from './clients.mjs';
 import { acknowledgeToday, metrics, today } from './dashboard.mjs';
 import { alerts, seeAlerts } from './events.mjs';
@@ -25,6 +26,7 @@ const assets = new Map(Object.entries({
   '/app.mjs': ['app.mjs', 'text/javascript; charset=utf-8'],
   '/workspace.mjs': ['workspace.mjs', 'text/javascript; charset=utf-8'],
   '/business-lines.mjs': ['business-lines.mjs', 'text/javascript; charset=utf-8'],
+  '/pipeline-editor.mjs': ['pipeline-editor.mjs','text/javascript; charset=utf-8'],
   '/sales-summary.mjs': ['sales-summary.mjs','text/javascript; charset=utf-8'],
   '/project-views.mjs': ['project-views.mjs','text/javascript; charset=utf-8'],
   '/studio.css': ['studio.css','text/css; charset=utf-8'],
@@ -163,9 +165,10 @@ export function createApp(store, config) {
 
   route('GET', '/api/clients', ({ actor, url }) => listClients(store, actor, { ...pageQuery(url), q: selectQuery(url, 'q') }));
   route('POST', '/api/clients', ({ actor, data }) => ({ client: createClient(store, actor, data) }));
-  route('GET', `/api/clients/${ident}`, ({ actor, ids }) => clientDetail(store, actor, ids[0]));
+  route('GET', `/api/clients/${ident}`, ({ actor, ids }) => ({...clientDetail(store,actor,ids[0]),intake_email_ready:mailReady(config)}));
   route('PATCH', `/api/clients/${ident}`, ({ actor, ids, data }) => ({ client: updateClient(store, actor, ids[0], data) }));
   route('POST', `/api/clients/${ident}/form-link`, ({ actor, ids }) => copyFormLink(store, actor, ids[0], config.linkSecret));
+  route('POST', `/api/clients/${ident}/form-link/email`,({actor,ids,data})=>queueIntakeEmail(store,actor,ids[0],data,config,mailReady(config)));
   route('POST', `/api/clients/${ident}/form-link/revoke`, ({ actor, ids }) => revokeFormLinks(store, actor, ids[0]));
   route('GET', `/api/clients/${ident}/submissions`, ({ actor, ids, url }) => listSubmissions(store, actor, ids[0],
     { before: boundedInt(url.searchParams.get('before'), undefined, Number.MAX_SAFE_INTEGER) }));

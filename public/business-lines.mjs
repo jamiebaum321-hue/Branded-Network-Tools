@@ -71,6 +71,7 @@ export const money = (cents) =>
   );
 export const labels = {
   contact: 'Contact name',
+  pipeline_note: 'Pipeline note',
   contact_email: 'Contact email',
   campaign: 'Campaign',
   agency: 'Agency',

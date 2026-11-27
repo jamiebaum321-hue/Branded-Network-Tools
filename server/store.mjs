@@ -1,3 +1,4 @@
+import { linkLegacySales } from './client-links.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync, mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -25,7 +26,7 @@ export function openStore(path) {
   const db = new DatabaseSync(file, { timeout: 5000, enableForeignKeyConstraints: true });
   db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA trusted_schema=OFF;');
   const version = db.prepare('PRAGMA user_version').get().user_version;
-  if (version > 4) {
+  if (version > 5) {
     db.close();
     throw new Error('The database requires a newer app version.');
   }
@@ -69,6 +70,13 @@ export function openStore(path) {
     if (store.get('PRAGMA user_version').user_version < 4) {
       db.exec(readFileSync(new URL('./project-library.sql', import.meta.url), 'utf8'));
       db.exec('PRAGMA user_version=4');
+    }
+  });
+  if (version < 5) store.tx(() => {
+    if (store.get('PRAGMA user_version').user_version < 5) {
+      db.exec(readFileSync(new URL('./client-sales.sql', import.meta.url), 'utf8'));
+      linkLegacySales(store,id);
+      db.exec('PRAGMA user_version=5');
     }
   });
   return store;

@@ -3,7 +3,8 @@ import { sections } from '../public/intake-fields.mjs';
 import { AppError, audit, canAccessClient, clientFor, clientScope, decode, digest, encode, id, iso, requireAdmin, requireHuman } from './store.mjs';
 import { email, int, list, object, str, validate } from './validation.mjs';
 import { emit } from './events.mjs';
-import { provisionClient, companyId, applyIntakeBilling } from './engagements.mjs';
+import { primaryEngagement } from './client-links.mjs';
+import { provisionClient, insertDeal, workspaceAccounts, companyId, applyIntakeBilling } from './engagements.mjs';
 
 const clientFields = { name: str(180), owner_id: str(80), member_ids: list(str(80), 500) };
 const submissionFields = 's.id,s.client_id,s.version,s.form_version,s.submitted_at,s.source_ref';
@@ -11,7 +12,7 @@ const submissionFields = 's.id,s.client_id,s.version,s.form_version,s.submitted_
 export function listClients(store, actor, { q, limit = 50, offset = 0 } = {}) {
   const [scope, params] = clientScope(actor, 'c.id');
   const rows = store.all(`SELECT c.*,u.name AS owner_name,
-    (SELECT e.id FROM engagements e WHERE e.client_id=c.id) AS engagement_id,
+    (${primaryEngagement}) AS engagement_id,
     (SELECT count(*) FROM cards p WHERE p.client_id=c.id AND p.stage<>'closed') AS open_cards,
     (SELECT max(s.submitted_at) FROM submissions s WHERE s.client_id=c.id) AS latest_submission
     FROM clients c JOIN users u ON u.id=c.owner_id WHERE (${scope}) AND (? IS NULL OR instr(lower(c.name),lower(?))>0)
@@ -32,13 +33,23 @@ export function insertClient(store, actor, data, createdAt = iso(), createEngage
   for (const userId of new Set(data.member_ids ?? [])) store.run('INSERT INTO client_members VALUES(?,?)', clientId, userId);
   provisionClient(store,{id:clientId,name:data.name,owner_id:owner,created_at:createdAt},createEngagement);
   audit(store, actor, 'client.created', 'client', clientId, clientId, { owner_id: owner });
+  if(actor.kind==='system') return {id:clientId,name:data.name,owner_id:owner};
   return clientFor(store, actor, clientId);
 }
 
 export function createClient(store, actor, input) {
   requireAdmin(actor);
-  const data = validate(object(clientFields, ['name']), input);
-  return store.tx(() => insertClient(store, actor, data));
+  const data=validate(object({...clientFields,pipeline_stage:str(80),contact:str(150,0),contact_email:str(254,0)},['name']),input);
+  if(data.contact_email) email(data.contact_email);
+  return store.tx(()=>{
+    const owner=data.owner_id||actor.id;
+    if(data.pipeline_stage && !workspaceAccounts(store,actor,'solutions').some(p=>p.id===owner)) throw new AppError(400,'Choose a Solutions owner.');
+    const client=insertClient(store,actor,data,iso(),!data.pipeline_stage);
+    const details={contact:data.contact||'',contact_email:data.contact_email||''};
+    if(data.pipeline_stage) insertDeal(store,actor,'solutions',{client_id:client.id,company:client.name,stage:data.pipeline_stage,details},owner);
+    else if(details.contact||details.contact_email) store.run('UPDATE engagements SET details=? WHERE id=?',encode(details),client.id);
+    return client;
+  });
 }
 
 export function updateClient(store, actor, clientId, input) {
@@ -60,9 +71,15 @@ export function updateClient(store, actor, clientId, input) {
       throw new AppError(409, 'Reassign this client’s open cards before removing their owner’s access.');
     }
     audit(store, actor, 'client.updated', 'client', clientId, clientId, { fields: Object.keys(data), owner_id: owner });
-    store.run('UPDATE engagements SET company_id=?,owner_id=?,updated_at=?,version=version+1 WHERE client_id=?',
-      companyId(store,data.name??previous.name),owner,iso(),clientId);
-    if (data.member_ids) store.run('DELETE FROM engagement_members WHERE engagement_id IN (SELECT id FROM engagements WHERE client_id=?)',clientId);
+    const company=companyId(store,data.name??previous.name);
+    const changedAt=iso();
+    for(const deal of store.all('SELECT id,company_id,owner_id FROM engagements WHERE client_id=?',clientId)) {
+      const assigned=deal.owner_id===previous.owner_id || !canAccessClient(store,deal.owner_id,clientId)?owner:deal.owner_id;
+      if(company!==deal.company_id || assigned!==deal.owner_id)
+        store.run('UPDATE engagements SET company_id=?,owner_id=?,updated_at=?,version=version+1 WHERE id=?',company,assigned,changedAt,deal.id);
+    }
+    if(data.member_ids) store.run(`DELETE FROM engagement_members WHERE engagement_id IN (SELECT id FROM engagements WHERE client_id=?)
+      AND user_id<>? AND user_id NOT IN (SELECT user_id FROM client_members WHERE client_id=?)`,clientId,owner,clientId);
     return clientFor(store, actor, clientId);
   });
 }
@@ -72,20 +89,22 @@ export function clientDetail(store, actor, clientId) {
   const link = store.get(`SELECT expires_at,created_at FROM form_links WHERE client_id=? AND revoked=0
     AND expires_at>? AND submission_id IS NULL ORDER BY created_at DESC LIMIT 1`, clientId, Date.now()) ?? null;
   return {
-    client, link, engagement_id:store.get('SELECT id FROM engagements WHERE client_id=?',clientId)?.id, submissions: listSubmissions(store, actor, clientId, {}),
+    client, link, engagement_id:store.get(`SELECT (${primaryEngagement}) AS id FROM clients c WHERE c.id=?`,clientId)?.id,
+    engagements:store.all('SELECT id,title,stage,signed_at,created_at FROM engagements WHERE client_id=? ORDER BY created_at DESC,id',clientId),
+    files:store.all(`SELECT f.id,f.name,f.purpose,f.mime,length(f.bytes) size,f.created_at,(SELECT note FROM attachment_lists WHERE file_id=f.id) list_note FROM attachments f LEFT JOIN engagements e ON e.id=f.engagement_id
+      WHERE e.client_id=? OR (f.client_id=? AND f.submission_id IS NOT NULL) ORDER BY f.created_at DESC,f.id`,clientId,clientId),
+    submissions: listSubmissions(store, actor, clientId, {}),
     member_ids: store.all('SELECT user_id FROM client_members WHERE client_id=? ORDER BY user_id', clientId).map(row => row.user_id),
     owners: store.all(`SELECT id,name FROM users WHERE enabled=1 AND (role='admin' OR (id IN (SELECT user_id FROM workspace_members WHERE line='solutions') AND
       (id=? OR id IN (SELECT user_id FROM client_members WHERE client_id=?)))) ORDER BY name`, client.owner_id, clientId),
   };
 }
 
-function formToken(publicId, secret) {
+export function formToken(publicId, secret) {
   return `${publicId}.${createHmac('sha256', secret).update(`onboarding:${publicId}`).digest('base64url')}`;
 }
 
-export function copyFormLink(store, actor, clientId, secret) {
-  requireHuman(actor);
-  return store.tx(() => {
+function intakeLink(store,actor,clientId,secret) {
     clientFor(store, actor, clientId);
     const active = store.get(`SELECT public_id,expires_at FROM form_links WHERE client_id=? AND revoked=0
       AND expires_at>? AND submission_id IS NULL ORDER BY created_at DESC LIMIT 1`, clientId, Date.now());
@@ -99,7 +118,33 @@ export function copyFormLink(store, actor, clientId, secret) {
       throw new AppError(409, 'The form link was signed with an older secret. Revoke it and create a new link.');
     }
     audit(store, actor, active ? 'intake.link_copied' : 'intake.link_created', 'client', clientId, clientId);
-    return { path: `/onboard/${value}`, expires_at: new Date(expiresAt).toISOString() };
+    return { publicId,path:`/onboard/${value}`,expires_at:new Date(expiresAt).toISOString() };
+}
+export function copyFormLink(store,actor,clientId,secret) {
+  requireHuman(actor);
+  return store.tx(()=>{
+    const {path,expires_at}=intakeLink(store,actor,clientId,secret);
+    return {path,expires_at};
+  });
+}
+export function queueIntakeEmail(store,actor,clientId,input,config,available) {
+  requireHuman(actor);
+  const d=validate(object({recipient:str(254),request_id:str(80)}),input),recipient=email(d.recipient);
+  return store.tx(()=>{
+    const client=clientFor(store,actor,clientId);
+    const key=digest(JSON.stringify(['intake',actor.id,clientId,d.request_id]));
+    const previous=store.get('SELECT recipient,status FROM dispatches WHERE id=?',key);
+    if(previous) {
+      if(previous.recipient!==recipient) throw new AppError(409,'The recipient changed. Reopen the intake form to send again.');
+      return {status:previous.status};
+    }
+    if(!available) throw new AppError(409,'Workspace email is unavailable. Reopen the form to use your email app.');
+    const {publicId}=intakeLink(store,actor,clientId,config.linkSecret);
+    store.run(`INSERT INTO dispatches(id,dedupe_key,kind,recipient,subject,body,created_at) VALUES(?,?,'client_intake',?,?,?,?)`,
+      key,'intake:'+publicId+':'+key,recipient,'Branded Hospitality Solutions | '+client.name+' client intake',
+      'Please complete the Branded Hospitality Solutions intake for '+client.name+'. You can include existing documents and shared links.',iso());
+    audit(store,actor,'intake.email_queued','client',clientId,clientId);
+    return {status:'queued'};
   });
 }
 

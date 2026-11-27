@@ -1,3 +1,4 @@
+import { registerWeeklyView } from './weekly-view.mjs';
 import { registerProjectLibrary } from './project-library.mjs';
 import { timeline } from './client-timeline.mjs';
 import { clientFor } from './store.mjs';
@@ -8,6 +9,7 @@ import { projectGrid, saveBrief, saveStep } from './solution-projects.mjs';
 export function registerSolutionRoutes(route,s,config) {
   registerProjectLibrary(route,s,config);
   const root='/api/clients/([\\w-]{1,80})';
+  registerWeeklyView(route,s,config,root);
   route('GET','/api/projects',({actor,url})=>{
     checkLine(s,actor,'solutions');
     const month=url.searchParams.get('month') || todayKey(config.timeZone).slice(0,7);

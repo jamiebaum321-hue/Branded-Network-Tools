@@ -73,6 +73,128 @@ async function fixture(t) {
   return { store, config, request, check, activate, owner, as, admin, addClient, addCard, tokenFor, rpc, call };
 }
 
+test('new and existing engagements share one client profile and separate agreement handoffs',async t=>{
+  const f=await fixture(t),root='/api/workspaces/solutions/engagements';
+  const request={client_mode:'new',company:'Summit Dining',request_id:'summit-first',details:{contact:'Kai Stone',pipeline_note:'Expansion in May'}};
+  const first=await f.admin(root,request);
+  assert.deepEqual(await f.admin(root,request),first);
+  await f.admin(root,{...request,request_id:'different'},'POST',409);
+  const path='/api/clients/'+first.client_id;
+  assert.deepEqual((await f.admin('/api/clients?q=summit')).items.map(c=>c.id),[first.client_id]);
+  const next=await f.admin(root,{client_mode:'existing',client_id:first.client_id,title:'New region',stage:'discovery'});
+  await f.admin('/api/engagements/'+next.id,{version:1,stage:'signed'},'PATCH',400);
+  await f.admin('/api/engagements/'+next.id,{version:1,stage:'signed',details:{agreement_url:'https://example.test/summit'}},'PATCH');
+  const client=await f.admin(path);
+  assert.equal(client.engagement_id,next.id);
+  assert.deepEqual(new Set(client.engagements.map(d=>d.id)),new Set([first.id,next.id]));
+  assert.equal(f.store.get("SELECT count(*) n FROM dispatches WHERE kind='agreement_signed' AND engagement_id=?",next.id).n,1);
+  const direct=await f.addClient('Bay Dining',{pipeline_stage:'discovery',contact:'Mara',contact_email:'mara@example.test'});
+  const list=(await f.admin('/api/workspaces/solutions')).deals.filter(d=>d.client_id===direct.id);
+  assert.equal(list.length,1);assert.equal(list[0].stage,'discovery');assert.equal(list[0].details.contact,'Mara');
+  await f.admin(root,{client_mode:'new',company:'Broken stage',stage:'signed'},'POST',400);
+  assert.equal((await f.admin('/api/clients?q=Broken%20stage')).items.length,0);
+  const member=await f.admin('/api/admin/accounts',{name:'New member',email:'member-only@example.test',role:'member',workspaces:['solutions']});
+  const as=f.as((await f.activate(member.setup.path)).cookie);
+  await as(root,{client_mode:'existing',client_id:first.client_id},'POST',404);
+  await as(path,undefined,'GET',404);
+});
+
+test('intake email queues once through the configured sender and honors link revocation',async t=>{
+  const f=await fixture(t),c=await f.addClient('Sage House'),path='/api/clients/'+c.id+'/form-link';
+  const input={recipient:'sage@example.test',request_id:'send-12'};
+  await f.admin(path+'/email',input,'POST',409);
+  f.config.mail={tenant:'test',app:'test',secret:'test',sender:'staff@example.test'};
+  assert.equal((await f.admin('/api/clients/'+c.id)).intake_email_ready,true);
+  for(let i=0;i<2;i++) assert.equal((await f.admin(path+'/email',input)).status,'queued');
+  const d=f.store.get("SELECT count(*) count,body,recipient FROM dispatches WHERE kind='client_intake'");
+  assert.equal(d.count,1);assert.equal(d.recipient,input.recipient);assert(!d.body.includes('/onboard/'));
+  const link=(await f.admin(path,{})).path,deliveries=[];
+  await drainMail(f.store,f.config,'fixture',async(url,options)=>{
+    deliveries.push(JSON.parse(options.body).message);return new Response(null,{status:202});
+  });
+  assert.equal(deliveries.length,1);assert(deliveries[0].body.content.includes(link));
+  await f.admin(path+'/email',{...input,request_id:'send-13'});await f.admin(path+'/revoke',{});
+  await drainMail(f.store,f.config,'fixture',async()=>{throw Error('Revoked form reached the mail transport');});
+  assert.equal(f.store.get("SELECT count(*) n FROM dispatches WHERE kind='client_intake' AND status='cancelled'").n,1);
+});
+
+test('stage colors and identifiers survive renaming and reordering every stage',async t=>{
+  const f=await fixture(t),root='/api/workspaces/solutions',initial=(await f.admin(root)).stages;
+  const signed=initial.find(s=>s.id==='signed'),keys=initial.map(s=>s.id),order=keys.toReversed();
+  await f.admin(root+'/stages/signed',{name:'Contract signed',previous:'Signed'},'PATCH');
+  await f.admin(root+'/stages/signed',{name:'Invalid stale change',previous:'Signed'},'PATCH',409);
+  await f.admin(root+'/stages/order',{order,previous:keys},'PUT');
+  await f.admin(root+'/stages/order',{order:keys,previous:keys},'PUT',409);
+  const reordered=(await f.admin(root)).stages;
+  assert.deepEqual(reordered.map(s=>s.id),order);
+  assert.deepEqual(reordered[0],{id:'signed',name:'Contract signed',color:signed.color});
+  assert.deepEqual(Object.fromEntries(initial.map(s=>[s.id,s.color])),Object.fromEntries(reordered.map(s=>[s.id,s.color])));
+});
+
+test('project edits preserve milestone identity, respect revisions and delete only the project',async t=>{
+  const f=await fixture(t),c=await f.addClient('Oak Restaurant'),root='/api/project-library';
+  const p=await f.admin(root,{name:'Launch',icon:'flag',cadence:'once',stages:['Brief','Review'],clients:[c.id]});
+  const path=root+'/'+p.id,initial=(await f.admin(path)).projects[0],first=initial.stages[0];
+  await f.admin('/api/clients/'+c.id+'/milestones',{step:first.id,status:'done',notes:'Board approved',period:'',version:0},'PUT');
+  const edit={name:'Launch plan',icon:'target',description:'Market rollout',cadence:'week',all_clients:false,clients:[c.id],
+    stages:[{id:first.id,name:'Brief approved'},{name:'Introduce partners'}],version:initial.version};
+  await f.admin(path,edit,'PATCH');
+  const updated=(await f.admin(path)).projects[0];
+  assert.equal(updated.icon,'target');assert.equal(updated.stages[0].id,first.id);assert.equal(updated.rows[0].steps[first.id].notes,'Board approved');
+  assert.deepEqual(updated.stages.map(t=>t.name),['Brief approved','Introduce partners']);assert.equal(updated.rows[0].percent,50);
+  await f.admin(path,edit,'PATCH',409);await f.admin(path,{version:initial.version},'DELETE',409);
+  await f.admin(path,{version:updated.version},'DELETE');await f.admin(path,undefined,'GET',404);
+  assert.equal((await f.admin('/api/clients/'+c.id)).client.name,'Oak Restaurant');
+  assert(!((await f.admin(root)).projects.some(x=>x.id===p.id)));
+});
+
+test('weekly preview and exports use one revision across engagements without sending mail',async t=>{
+  const f=await fixture(t),c=await f.addClient('Juniper Group'),root='/api/clients/'+c.id;
+  const extra=await f.admin('/api/workspaces/solutions/engagements',{client_mode:'existing',client_id:c.id,title:'Renewal'});
+  await f.admin('/api/engagements/'+extra.id+'/work',{kind:'meeting',title:'Reviewed the launch dates',status:'done',audience:'client'});
+  await f.admin('/api/engagements/'+c.id+'/work',{kind:'note',title:'Internal only memo',status:'done',audience:'internal'});
+  await f.admin(root+'/notes',{source_key:'brief',body:'Warm introduction from the owner'});
+  const preview=await f.admin(root+'/weekly-update');
+  assert.match(preview.body,/Reviewed the launch dates/);assert.match(preview.body,/Warm introduction/);assert.doesNotMatch(preview.body,/Internal only memo/);
+  const downloads=f.store.get('SELECT count(*) n FROM dispatches').n;
+  const range=new URLSearchParams({start_day:preview.start_day,end_day:preview.end_day,revision:preview.revision});
+  const file=fmt=>f.request(root+'/weekly-update/'+fmt+'?'+range,{cookie:f.owner.cookie});
+  const pdf=await file('pdf');assert.equal(pdf.status,200);assert.equal(Buffer.from(await pdf.arrayBuffer()).subarray(0,5).toString(),'%PDF-');
+  const book=await file('xlsx');assert.equal(book.status,200);
+  const content=execFileSync(f.config.pdfPython,['-c','import io,sys,zipfile; from xml.etree import ElementTree as E; root=E.fromstring(zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read())).read("xl/sharedStrings.xml")); sys.stdout.buffer.write("\\n".join(t.text or "" for t in root.iter() if t.tag.endswith("}t")).encode("utf-8"))'],
+    {input:Buffer.from(await book.arrayBuffer()),encoding:'utf8',windowsHide:true});
+  for(const line of preview.body.split('\n').filter(Boolean)) assert(content.includes(line),line);
+  await f.admin(root+'/notes',{source_key:'changed',body:'Second note'});
+  assert.equal((await file('pdf')).status,409);
+  assert.equal(f.store.get('SELECT count(*) n FROM dispatches').n,downloads);
+  assert.equal(f.store.get('SELECT count(*) n FROM report_versions').n,0);
+});
+
+test('version 4 links existing prospects once without crossing different client rosters',()=>{
+  const dir=mkdtempSync(join(tmpdir(),'branded-client-sales-')),file=join(dir,'workspace.sqlite');
+  let db;
+  try {
+    db=new DatabaseSync(file);
+    for(const schema of ['schema','workspaces','solutions','project-library']) db.exec(readFileSync(new URL('../server/'+schema+'.sql',import.meta.url),'utf8'));
+    db.exec(`PRAGMA user_version=4;
+      INSERT INTO users(id,name,email,role,created_at) VALUES('o','Owner','o@example.test','member','2026-01-01'),('m','Member','m@example.test','member','2026-01-01');
+      INSERT INTO clients VALUES('original','Example','o','2026-01-01');
+      INSERT INTO companies VALUES('co','Example','example');
+      INSERT INTO engagements(id,company_id,line,owner_id,title,stage,created_at,updated_at) VALUES
+      ('public-team','co','solutions','o','Shared','outreach','2026-01-01','2026-11-10'),('owner-only','co','solutions','o','Private','discovery','2026-01-01','2026-11-10');
+      INSERT INTO engagement_members VALUES('public-team','m');`);
+    db.close();db=null;
+    for(let n=0;n<2;n++) {
+      const store=openStore(file);db=store.db;
+      assert.equal(store.get("SELECT client_id FROM engagements WHERE id='owner-only'").client_id,'original');
+      const other=store.get("SELECT client_id FROM engagements WHERE id='public-team'").client_id;
+      assert.notEqual(other,'original');assert.equal(store.get('SELECT user_id FROM client_members WHERE client_id=?',other).user_id,'m');
+      assert.equal(store.get('SELECT count(*) n FROM clients').n,2);
+      db.close();db=null;
+    }
+  } finally {db?.close();rmSync(dir,{recursive:true,force:true});}
+});
+
 test('custom sales stages move occupied deals atomically and revenue separates contract value from MRR',async t=>{
   const f=await fixture(t),root='/api/workspaces/solutions';
   const col=await f.admin(root+'/stages',{name:'Partner review',after:'discovery'});
@@ -489,7 +611,7 @@ test('persistent store keeps accounts across restarts and only runs migrations o
     const reopened = openStore(file);
     try {
       assert.equal(reopened.get('SELECT email FROM users').email, adminEmail);
-      assert.equal(reopened.get('PRAGMA user_version').user_version, 4);
+      assert.equal(reopened.get('PRAGMA user_version').user_version, 5);
     } finally { reopened.db.close(); }
   } finally {
     for (const suffix of ['', '-wal', '-shm']) rmSync(`${file}${suffix}`, { force: true });

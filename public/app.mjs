@@ -1,6 +1,7 @@
 import { sections } from './intake-fields.mjs';
 import { solutionController } from './solution-ui.mjs';
 import { workspaceController, intakeAssets, operations } from './workspace.mjs';
+import { connectBoardScrollbar } from './pipeline-editor.mjs';
 import { btn, emptyState, h, heading, icon, link, pathId, shell, stages } from './ui.mjs';
 import { activityItems, adminPage, alertRows, auditRows, boardCard, cardPage, clientForm,
   clientRows, clientsPage, createCardForm, intakePage, inviteForm, jobTokenForm, setupPage, signInPage,
@@ -104,7 +105,9 @@ function navigate(path, { replace = false } = {}) {
 }
 
 function show(html, focus, hash) {
+  const boardScroll=main.querySelector('.sales-board')?.scrollLeft || 0;
   main.innerHTML = html;
+  connectBoardScrollbar(boardScroll);
   const selectedStage = main.querySelector('.deal-board > .chosen');
   if (selectedStage) selectedStage.parentElement.scrollLeft = selectedStage.offsetLeft;
   main.setAttribute('aria-busy', 'false');
@@ -331,7 +334,9 @@ const forms = {
     navigate(`${location.pathname}#draft-${pathId(draft.id)}`, { replace: true });
   },
   async 'add-client'(form, data) {
-    const { client } = await api('/api/clients', 'POST', { name: data.get('name'), owner_id: data.get('owner_id'), member_ids: data.getAll('member_ids') });
+    const payload={name:data.get('name'),owner_id:data.get('owner_id'),member_ids:data.getAll('member_ids'),contact:data.get('contact'),contact_email:data.get('contact_email')};
+    if(data.get('pipeline_stage')) payload.pipeline_stage=data.get('pipeline_stage');
+    const { client }=await api('/api/clients','POST',payload);
     notify('Client added.');
     navigate(`/clients/${pathId(client.id)}`);
   },
@@ -504,7 +509,7 @@ const actions = {
   'clear-filters': () => navigate(location.pathname),
   'pick-stage': button => pickStage(button.dataset.stage),
   'add-card': () => showDialog('Add contact', createCardForm(context), { glyph: 'leads' }),
-  'add-client': () => showDialog('Add client', clientForm(context), { glyph: 'building' }),
+  'add-client': async () => { const board=await api('/api/workspaces/solutions');showDialog('Add client',clientForm(context,null,board.stages),{glyph:'building'}); },
   'invite-account': () => showDialog('Invite user', inviteForm(), { glyph: 'team' }),
   'new-job': () => showDialog('Create Claude job credential', jobTokenForm(context), { glyph: 'lock' }),
   'copy-dialog-value': () => clipboard(dialog.querySelector('textarea').value, 'Copied.'),

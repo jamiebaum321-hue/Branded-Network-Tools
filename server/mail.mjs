@@ -4,6 +4,7 @@ import { accountingFileUrl } from './files.mjs';
 import { ingestPitch } from './inquiries.mjs';
 import { email } from './validation.mjs';
 
+import { formToken } from './clients.mjs';
 import { invitationToken } from './invite-link.mjs';
 
 const graphRoot = 'https://graph.microsoft.com/v1.0';
@@ -207,6 +208,14 @@ export async function drainMail(s, config, token, request = fetch) {
         continue;
       }
       body+='\n\n'+new URL('/setup/'+value,config.origin).href;
+    }
+    if(d.kind==='client_intake') {
+      const publicId=d.dedupe_key.split(':')[1],value=formToken(publicId,config.linkSecret);
+      if(!s.get('SELECT 1 FROM form_links WHERE token_hash=? AND revoked=0 AND submission_id IS NULL AND expires_at>?',digest(value),Date.now())) {
+        s.run("UPDATE dispatches SET status='cancelled',detail='Intake link expired, revoked or completed.' WHERE id=? AND status='queued'",d.id);
+        continue;
+      }
+      body+='\n\n'+new URL('/onboard/'+value,config.origin).href;
     }
     const attachments = [];
     let remaining = 2 * 1024 * 1024;

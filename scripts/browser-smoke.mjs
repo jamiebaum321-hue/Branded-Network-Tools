@@ -56,6 +56,7 @@ try {
   await button(page, 'Sign in').click();
   await heading(page, 'Pipelines');
   assert.deepEqual(await page.locator('.sales-board h2').allTextContents(),['Outreach','Discovery','First engagement','Second engagement','Agreement sent','Signed']);
+  assert(await page.locator('.deal-card').evaluateAll(cards=>cards.every(card=>card.getBoundingClientRect().height<=75)));
   await page.getByRole('switch',{name:'Compact cards'}).click(); await page.locator('.compact-cards').waitFor();
   await page.getByText('Cinder Hospitality', { exact: true }).first().waitFor();
   await capture(page, 'solutions-desktop');
@@ -68,23 +69,46 @@ await page.reload();
   await button(page,'Edit stages').click();
   await page.getByLabel('New stage name').fill('Contract review');
   await button(page.getByRole('dialog'),'Add stage').click();
-  const review=page.locator('.deal-column').filter({has:page.getByRole('heading',{name:'Contract review'})});
+  const editor=page.getByRole('dialog');
+  const newChip=editor.locator('.stage-chip').filter({hasText:'Contract review'});
+  await newChip.getByRole('button',{name:'Rename'}).click();
+  await editor.getByLabel('Stage name').fill('Legal review');await button(editor,'Save name').click();
+  const renamed=editor.locator('.stage-chip').filter({hasText:'Legal review'});
+  const grip=renamed.getByRole('button',{name:'Reorder Legal review'});
+  const before=await renamed.getAttribute('class');
+  await Promise.all([page.waitForResponse(r=>r.url().endsWith('/stages/order')&&r.ok()),grip.dragTo(editor.locator('[data-stage-row="discovery"]'))]);
+  await Promise.all([page.waitForResponse(r=>r.url().endsWith('/stages/order')&&r.ok()),grip.press('ArrowUp')]);
+  assert.equal(await renamed.getAttribute('class'),before);
+  assert.equal(await editor.locator('.stage-chip strong').first().textContent(),'Legal review');
+  await capture(page,'stage-editor');await page.keyboard.press('Escape');
+  const review=page.locator('.deal-column').filter({has:page.getByRole('heading',{name:'Legal review'})});
   await review.waitFor();
   await page.locator('.deal-card').filter({hasText:'Cinder Hospitality'}).dragTo(review);
   await review.getByText('Cinder Hospitality',{exact:true}).waitFor();
   await button(page,'Edit stages').click();
-  await page.locator('.stage-list > div').filter({hasText:'Contract review'}).getByRole('button',{name:'Delete'}).click();
+  await page.locator('.stage-chip').filter({hasText:'Legal review'}).getByRole('button',{name:'Delete'}).click();
   await page.getByLabel('Move engagements to').selectOption('first_engagement');
   await button(page.getByRole('dialog'),'Delete stage').click();
   await page.locator('[data-ws-stage="first_engagement"]').getByText('Cinder Hospitality',{exact:true}).waitFor();
   await button(page, 'New engagement').click();
   let dialog = page.getByRole('dialog');
+  await button(dialog,'New client').click();
   await dialog.locator('input[name=company]').fill('Browser Pilot');
+  await dialog.locator('input[name=contact]').fill('Devon Ray');
+  await dialog.locator('[name=pipeline_note]').fill('Pilot timing confirmed.');
   await dialog.locator('summary').filter({ hasText: 'Commercial terms' }).click();
   await dialog.getByLabel('Monthly retainer (USD)').fill('1500.50');
   await button(dialog, 'Create engagement').click();
   await heading(page, 'Browser Pilot');
   const path = new URL(page.url()).pathname;
+  await page.getByRole('link',{name:'Client profile'}).click();await heading(page,'Browser Pilot');
+  const originalClient=new URL(page.url()).pathname;
+  await page.locator('.awaiting-intake').waitFor();
+  await button(page,'New engagement').click();await dialog.getByLabel('Engagement name').fill('Pilot renewal');
+  await button(dialog,'Create engagement').click();await heading(page,'Browser Pilot');
+  await page.getByRole('link',{name:'Client profile'}).click();assert.equal(new URL(page.url()).pathname,originalClient);
+  await page.getByRole('link',{name:'Engagement',exact:true}).click();await page.getByRole('navigation',{name:'Client engagements'}).getByText('Pilot renewal').waitFor();
+  await page.goto(new URL(path,config.origin).href);
   for (const [stage, label] of [
     ['discovery', 'Discovery'], ['first_engagement', 'First engagement'], ['second_engagement', 'Second engagement'],
     ['agreement_sent', 'Agreement sent'],
@@ -108,11 +132,12 @@ await page.reload();
   await dialog.getByLabel('Stage', { exact: true }).selectOption('signed');
   await button(dialog, 'Save stage').click();
   await page.getByRole('heading',{name:'Client intake',exact:true}).waitFor();
-  await page.locator('summary').filter({hasText:'Intake options'}).click();
+  await button(page,'Send client intake form').click();await dialog.getByLabel('Recipient email').waitFor();
+  await button(dialog,'Open email draft').waitFor();await page.keyboard.press('Escape');
   const clientId=new URL(page.url()).pathname.split('/').at(-1);
   const [generated] = await Promise.all([
     page.waitForResponse((r) => r.url().endsWith('/form-link') && r.request().method() === 'POST'),
-    button(page, 'Copy intake link').click(),
+    button(page, 'Copy link').click(),
   ]);
   const onboarding = new URL((await generated.json()).path, config.origin).href;
   const guest = await browser.newContext({
@@ -169,8 +194,9 @@ await intakeUpload.locator('select').selectOption('logo');
   await node('Harbor Kitchens').click(); await dialog.getByLabel('Relationship health').selectOption('green');
   await dialog.getByLabel('Next action').fill('Ask Morgan for an introduction.');
   await dialog.getByRole('link',{name:'Intake 1'}).waitFor(); await button(dialog,'Save connection').click(); await node('Harbor Kitchens').getByText(/Strong/).waitFor();
+  await page.getByRole('link',{name:'Notes & activity',exact:true}).click();
   await button(page,'Add note').click(); await dialog.getByLabel('Working note').fill('Harbor Kitchens wants an introduction to North Bay.');
-  await dialog.locator('summary').click(); await dialog.getByLabel('Target company').fill('North Bay'); await button(dialog,'Save note').click(); await node('North Bay').waitFor();
+  await dialog.locator('summary').click(); await dialog.getByLabel('Target company').fill('North Bay'); await button(dialog,'Save note').click(); await page.getByRole('link',{name:'Introduction map',exact:true}).click(); await node('North Bay').waitFor();
   await node('Harbor Kitchens').click(); await dialog.getByText('Harbor Kitchens wants an introduction to North Bay.',{exact:true}).waitFor(); await page.keyboard.press('Escape');
 await page.locator('.map-filter summary').click();
   await page.getByLabel('Relationship health').selectOption('green');
@@ -195,15 +221,16 @@ await page.locator('.map-filter summary').click();
   await button(log, 'Record activity').click();
   await page.getByRole('heading', { name: 'Published the pilot newsletter' }).waitFor();
   await page.getByRole('link', { name: 'Weekly updates' }).click();
-  await button(page, 'Generate draft').click();
-  const report = page.getByLabel('Client update');
-  await report.waitFor();
-  assert.match(await report.inputValue(), /Published the pilot newsletter/);
-  for (const [label, extension] of [['Download saved PDF', '.pdf'], ['Download saved workbook', '.xlsx']]) {
+  const report=page.getByRole('article',{name:'Weekly update preview'});
+  await report.getByText(/Published the pilot newsletter/).waitFor();
+  await report.getByText(/Harbor Kitchens wants an introduction/).waitFor();
+  assert.equal(await page.getByLabel('Recipient for email').count(),0);
+  assert.equal(await page.getByLabel('Action',{exact:true}).count(),0);
+  for(const [label,extension] of [['Export PDF','.pdf'],['Export workbook','.xlsx']]){
     const [download] = await Promise.all([
       page.waitForEvent('download'), page.getByRole('link', {name:label}).click(),
     ]);
-    assert(download.suggestedFilename().endsWith('-v1'+extension));
+    assert(download.suggestedFilename().includes('-weekly-update-') && download.suggestedFilename().endsWith(extension));
     assert.equal(await download.failure(), null);
   }
   await page.getByRole('link',{name:'Introduction map',exact:true}).click();
@@ -226,10 +253,30 @@ await button(page,'Add connection').click(); await dialog.getByLabel('Company',{
 const [exported]=await Promise.all([page.waitForEvent('download'),page.getByRole('link',{name:'Export CSV'}).click()]);
   assert.match(exported.suggestedFilename(),/Onboarding.*\.csv$/); assert.equal(await exported.failure(),null);
   await page.locator('main').getByRole('link',{name:'Project management',exact:true}).click();
-  await button(page,'New project').click(); await dialog.getByLabel('Project name').fill('Partner launch'); await dialog.getByLabel('Stages, one per line').fill('Brief\nReview');
+  await button(page,'New project').click(); await dialog.getByLabel('Project name').fill('Partner launch'); await dialog.getByLabel('Target',{exact:true}).check();
+  await dialog.getByLabel('Stage 1',{exact:true}).fill('Brief'); await button(dialog,'Add another stage').click();
+  await dialog.getByLabel('Stage 2',{exact:true}).fill('Review');
   await dialog.getByLabel('Browser Pilot',{exact:true}).check(); await button(dialog,'Create project').click(); await heading(page,'Partner launch');
   await button(page,'Add stage').click(); await dialog.getByLabel('Stage name').fill('Handoff'); await button(dialog,'Add stage').click();
   await page.locator('.project-grid').getByRole('columnheader',{name:/Handoff/}).waitFor();
+  await page.getByLabel('More options for Partner launch').click();await button(page,'Edit project').click();
+  await dialog.getByLabel('Project name').fill('Partner rollout');await dialog.getByLabel('Stage 2',{exact:true}).fill('Partner review');
+  await dialog.getByLabel('Flag',{exact:true}).check();await button(dialog,'Save project').click();await heading(page,'Partner rollout');
+  await page.locator('.project-grid').getByRole('columnheader',{name:/Partner review/}).waitFor();
+  await page.locator('main').getByRole('link',{name:'Project management',exact:true}).click();
+  await page.getByLabel('More options for Partner rollout').click();await button(page,'Delete project').click();await button(dialog,'Delete project').click();
+  await page.getByText('Project deleted.',{exact:true}).waitFor();assert.equal(await page.locator('.project-tile').filter({hasText:'Partner rollout'}).count(),0);
+  await page.getByRole('link',{name:'Clients',exact:true}).click();await heading(page,'Clients');
+  await button(page,'Add client').click();await dialog.getByLabel('Client name',{exact:true}).fill('Dock House');
+  await dialog.getByLabel('Contact name').fill('Aria');await dialog.getByLabel('Add to pipeline').selectOption('discovery');
+  await button(dialog,'Add client').click();await heading(page,'Dock House');
+  await page.getByRole('link',{name:'Pipelines',exact:true}).click();await page.locator('[data-ws-stage="discovery"]').getByText('Dock House').waitFor();
+  await button(page,'New engagement').click();await button(dialog,'Existing client').click();
+  await dialog.getByLabel('Search clients').fill('Dock House');await dialog.getByRole('button',{name:/Dock House/}).click();
+  assert.equal(await dialog.getByLabel('Contact name').inputValue(),'Aria');
+  await dialog.getByLabel('Engagement name').fill('Second location');await button(dialog,'Create engagement').click();await heading(page,'Dock House');
+  await page.getByRole('link',{name:'Client profile'}).click();await page.getByRole('link',{name:'Engagement',exact:true}).click();
+  await page.getByRole('navigation',{name:'Client engagements'}).getByText('Second location').waitFor();
   const switchTo=async(label)=>{
     const sw=page.locator('.workspace-switch:visible'); await sw.locator('summary').click();
     await sw.getByRole('link',{name:label,exact:true}).click();
@@ -266,7 +313,7 @@ assert.equal(await page.locator('.deal-column:visible').count(),6);
   await touchPage.goto(new URL('/work/solutions',config.origin).href);await heading(touchPage,'Pipelines');
   const source=touchPage.locator('[data-ws-stage="outreach"] .deal-card').first(), target=touchPage.locator('[data-ws-stage="discovery"]');
   await source.scrollIntoViewIfNeeded();
-  const cardBox=await source.boundingBox(),stageBox=await target.boundingBox(),touchName=await source.locator('strong').textContent();
+  const cardBox=await source.boundingBox(),stageBox=await target.boundingBox(),touchId=await source.getAttribute('data-deal');
   const touchSession=await phone.newCDPSession(touchPage);
   const x=Math.floor(cardBox.x+cardBox.width/2),y=Math.floor(cardBox.y+cardBox.height/2);
   await touchSession.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x,y}]});
@@ -275,8 +322,12 @@ assert.equal(await page.locator('.deal-column:visible').count(),6);
   await touchSession.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:Math.floor(Math.min(374,stageBox.x+20)),y}]});
   await target.locator('xpath=self::*[contains(@class,"drop-ready")]').waitFor();
   await touchSession.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
-  await target.getByText(touchName,{exact:true}).waitFor();
+  await target.locator('[data-deal="'+touchId+'"]').waitFor();
   await touchPage.setViewportSize({width:320,height:720});await checkWidth(touchPage);
+  await touchPage.locator('.board-scrollbar:visible').waitFor();
+  await touchPage.waitForFunction(()=>{const s=document.querySelector('.board-scrollbar'),b=document.querySelector('.sales-board');return s.scrollWidth===b.scrollWidth&&s.scrollWidth>s.clientWidth;});
+  await touchPage.locator('.board-scrollbar').evaluate(el=>{el.scrollLeft=el.scrollWidth;});
+  await touchPage.waitForFunction(()=>{const b=document.querySelector('.sales-board');return b.scrollLeft>100;});
   await touchPage.emulateMedia({reducedMotion:'reduce'});
   await target.locator('.deal-card').first().evaluate(el=>el.classList.add('is-lifted'));
   assert.equal(await target.locator('.is-lifted').evaluate(el=>getComputedStyle(el).animationName),'none');

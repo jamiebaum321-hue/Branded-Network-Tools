@@ -1,5 +1,6 @@
 import { projectController } from './project-views.mjs';
 import { btn, emptyState, field, formatDate, h, hidden, icon, initials, link, outboundLink, select } from './ui.mjs';
+import { lines, stages } from './business-lines.mjs';
 import { clientForm } from './views.mjs';
 import { overview, profileView, reportsView, workView } from './workspace.mjs';
 import { departments, groups, healthStates, relationshipStages } from './solution-model.mjs';
@@ -25,7 +26,7 @@ function mapView(data,query) {
   }).sort((a,b)=>sort==='name'?(a.company||a.person).localeCompare(b.company||b.person):
     (sort==='oldest'?1:-1)*(a.added_at||'').localeCompare(b.added_at||'')||a.key.localeCompare(b.key));
   const filtered=health||since||until||sort!=='latest';
-  return `<div class="map-toolbar"><h2>Introduction map</h2><details class="map-filter"><summary>${icon('settings')}Filter${filtered?' · Active':''}</summary>
+  return `<div class="map-toolbar"><h2>Introduction map</h2>${action('Add connection','sol-connection','','plus')}<details class="map-filter"><summary>${icon('settings')}Filter${filtered?' · Active':''}</summary>
     <form class="stack" data-form="filter">${hidden('tab','map')}${select('Relationship health','health',choices(healthStates),health,'All connections')}
     ${select('Sort by','sort',[{id:'latest',name:'Latest added'},{id:'oldest',name:'Oldest added'},{id:'name',name:'Name A–Z'}],sort)}
     ${field('Added from','since',since,{type:'date'})}${field('Added through','until',until,{type:'date'})}<div class="actions">${primary('Apply filters')}${link(clientUrl(id,'map'),'Reset')}</div></form></details></div>
@@ -52,14 +53,14 @@ function peopleView(data) {
 }
 
 function notesView(feed,client,zone,detail,owners) {
-  return `<div class="section-toolbar"><h2>Notes &amp; activity</h2></div>${detail?`<details class="panel feed-composer"><summary>Record activity</summary>${workView(detail,owners,zone,true)}</details>`:''}
+  return `<div class="section-toolbar"><h2>Notes &amp; activity</h2>${action('Add note','sol-note','','draft')}</div>${detail?`<details class="panel feed-composer"><summary>Record activity</summary>${workView(detail,owners,zone,true)}</details>`:''}
     <div class="client-feed">${feed.items.map(item=>{
       const title=item.kind==='submission'?'Intake submitted · Version '+item.version:item.title;
       const glyph={submission:'intake',note:'draft',work:'flag',activity:'history',milestone:'check'}[item.kind];
       return `<article class="feed-entry"><span class="feed-icon">${icon(glyph)}</span><div><small>${h(item.author)} · <time datetime="${h(item.at)}">${h(formatDate(item.at,zone))}</time></small>
         <h3>${h(title)}</h3>${item.body?`<p class="multiline">${h(item.body)}</p>`:''}${item.detail?`<small>${h(item.detail)}</small>`:''}
         ${item.kind==='submission'?link('/clients/'+client+'/submissions/'+item.id,item.version>1?'View submission and changes':'View submission','history'):''}
-        ${item.kind==='work'?action('Update outcome','ws-item',`data-id="${h(item.id)}"`):''}</div></article>`;
+        ${item.kind==='work'?action('Update outcome','ws-item',`data-id="${h(item.id)}" data-engagement="${h(item.engagement_id)}"`):''}</div></article>`;
     }).join('')||emptyState('No notes or activity yet.')}</div>
     ${feed.next?link(clientUrl(client,'notes')+'&before='+encodeURIComponent(feed.next),'Older activity','down'):''}`;
 }
@@ -93,29 +94,51 @@ export function solutionController({api,navigate,render,showDialog,notify,getUse
     const c=info.client;
     const tabs={intake:'Client intake',map:'Introduction map',people:'Client group',notes:'Notes & activity',reports:'Weekly updates',account:'Engagement'};
     const requested=query.get('tab'),tab=['activity','history'].includes(requested)?'notes':Object.hasOwn(tabs,requested)?requested:'intake';
-    const [data,detail,feed]=await Promise.all([
+    const selected=info.engagements.find(e=>e.id===query.get('engagement'))?.id || info.engagement_id;
+    const range=new URLSearchParams();
+    for(const key of ['start_day','end_day']) if(query.get(key)) range.set(key,query.get(key));
+    const [data,detail,feed,weekly,pipeline]=await Promise.all([
       ['map','people'].includes(tab)?api('/api/clients/'+c.id+'/workspace'):null,
-      info.engagement_id?api('/api/engagements/'+info.engagement_id):null,
+      selected?api('/api/engagements/'+selected):null,
       tab==='notes'?api('/api/clients/'+c.id+'/timeline'+(query.get('before')?'?before='+encodeURIComponent(query.get('before')):'')):null,
+      tab==='reports'?api('/api/clients/'+c.id+'/weekly-update?'+range):null,
+      tab==='account'?api('/api/workspaces/solutions'):null,
     ]);
-    const owners=info.owners || ctx.owners,logo=detail?.files.find(file=>file.purpose==='logo' && file.mime?.startsWith('image/'));
+    const owners=info.owners || ctx.owners, files=info.files || detail?.files || [];
+    const logo=files.find(file=>file.purpose==='logo' && file.mime?.startsWith('image/'));
+    const complete=Boolean(detail?.latest || info.submissions?.items?.length);
+    const recipient=detail?.latest?.answers?.contact_email || detail?.deal.details.contact_email || '';
+    const intakeActions=`<section class="${complete?'intake-share':'intake-share awaiting-intake'}">
+      <div><h2>${complete?'Request an updated intake':'Awaiting client intake'}</h2>${complete?'':'<p>Send the form to collect this client’s goals, team contacts and files.</p>'}</div>
+      <div class="actions">${btn('Send client intake form',{action:'sol-intake-send',kind:'primary',glyph:'mail',data:`data-id="${h(c.id)}" data-company="${h(c.name)}" data-ready="${info.intake_email_ready?1:0}" data-recipient="${h(recipient)}"`})}
+      ${action('Copy link','form-link',`data-id="${h(c.id)}"`,'link')}</div></section>`;
+    const stageName=key=>pipeline?.stages.find(s=>s.id===key)?.name || stages[key] || key;
+    const engagements=info.engagements.length>1?`<nav class="engagement-list" aria-label="Client engagements">${info.engagements.map(e=>
+      `<a href="${clientUrl(c.id,'account')}&amp;engagement=${h(e.id)}" ${selected===e.id?'aria-current="page"':''}><strong>${h(e.title)}</strong><small>${h(stageName(e.stage))} · ${h(formatDate(e.created_at,zone))}</small></a>`).join('')}</nav>`:'';
     const views={
       map:()=>mapView(data,query),people:()=>peopleView(data),notes:()=>notesView(feed,c.id,zone,detail,owners),
-      intake:()=>`${detail?profileView(detail):emptyState('Awaiting client intake.')}
-        <details class="panel intake-options"><summary>Intake options</summary><div class="actions">${action('Copy intake link','form-link',`data-id="${h(c.id)}"`,'link')}
-        ${info.link?action('Revoke active link','revoke-form',`data-id="${h(c.id)}"`,'lock'):''}</div></details>`,
-      reports:()=>detail?reportsView(detail,new Intl.DateTimeFormat('en-CA',{timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date())):'',
-      account:()=>`${detail?`<div class="actions">${action('Edit engagement','ws-edit','','edit')}${!detail.deal.signed_at?action('Record existing agreement','ws-history'):''}</div>${overview(detail,owners,getUser(),zone)}`:''}
+      intake:()=>`${complete?'':intakeActions}${detail?profileView({...detail,files}):''}${complete?intakeActions:''}`,
+      reports:()=>reportsView(weekly,c.id),
+      account:()=>`${engagements}${detail?`<div class="actions">${action('Edit engagement','ws-edit','','edit')}
+        ${!lines.solutions.delivery.includes(detail.deal.stage)?link('/work/solutions/'+detail.deal.id,'Open in pipeline','board'):
+          !detail.deal.signed_at?action('Record existing agreement','ws-history'):''}</div>${overview(detail,owners,getUser(),zone)}`:''}
         ${getUser().role==='admin'?panel('Client access',clientForm(ctx,info)):''}`,
     };
-    return `<section data-engagement-context="${h(info.engagement_id||'')}">${link('/clients','All clients','back','back-link')}
+    return `<section data-engagement-context="${h(selected||'')}">${link('/clients','All clients','back','back-link')}
       <header class="section-title client-head"><div class="client-identity">${logo?`<img src="/api/files/${h(logo.id)}?preview=1" alt="${h(c.name)} logo">`:`<span class="client-monogram">${h(initials(c.name))}</span>`}<div><h1>${h(c.name)}</h1><p>Solutions client · ${h(c.owner_name)}</p></div></div>
-      <div class="actions">${action('Add connection','sol-connection','','plus')}${action('Add note','sol-note','','draft')}</div></header>
+      <div class="actions">${btn('New engagement',{action:'ws-new',glyph:'plus',kind:'primary',data:`data-client="${h(c.id)}"`})}</div></header>
       <nav class="client-tabs" aria-label="Client sections">${Object.entries(tabs).map(([id,label])=>`<a href="${clientUrl(c.id,id)}"${id===tab?' aria-current="page"':''}>${label}</a>`).join('')}</nav>${views[tab]()}</section>`;
   }
 
   const actions={
     ...projects.actions,
+    'sol-intake-send':async b=>{
+      const {id,company,recipient,ready}=b.dataset;
+      showDialog('Send client intake form',form('sol-intake-draft',hidden('client',id)+hidden('request_id',crypto.randomUUID())+hidden('ready',ready)+hidden('company',company)+
+        field('Recipient email','email',recipient,{type:'email',required:true,max:254})+
+        `<p>${ready==='1'?'Your workspace will email the intake link to this recipient.':'Your email app will open a draft with the intake link for '+h(company)+'.'}</p>`+
+        primary(ready==='1'?'Send intake email':'Open email draft')));
+    },
     'sol-connection':async(b)=>{
       const data=await latest(), c=data.client.id, n=b.dataset.key?data.connections.find((v)=>v.key===b.dataset.key):{};
       if(!n) throw new Error('This connection has changed. Refresh the map.');
@@ -148,13 +171,28 @@ export function solutionController({api,navigate,render,showDialog,notify,getUse
         field('Agreed deliverables','deliverables',p.deliverables,{type:'textarea',max:8000})+primary('Save project brief')));
     },
     'sol-disposition':()=>{
-      const available=board.deals.filter((d)=>!d.signed_at && !d.client_id);
+      const available=board.deals.filter((d)=>!d.signed_at && !lines.solutions.delivery.includes(d.stage));
       showDialog('Opportunity disposition',form('sol-disposition',select('Opportunity','deal',available.map((d)=>({id:d.id,name:d.company+' · '+d.title})))+
         select('Disposition','stage',[{id:'cold',name:'Nurture'},{id:'dead',name:'Closed lost'},{id:'outreach',name:'Resume outreach'}])+
         field('Revisit date','due','',{type:'date'})+field('Outcome','outcome','',{max:300})+primary('Save disposition')));
     },
   };
-  const forms={...projects.forms};
+  const forms={...projects.forms,
+    'sol-intake-draft':async(f,v)=>{
+      const path='/api/clients/'+encodeURIComponent(v.get('client'))+'/form-link';
+      if(v.get('ready')==='1'){
+        const result=await api(path+'/email','POST',{recipient:v.get('email'),request_id:v.get('request_id')});
+        await saved(result.status==='queued'?'Intake email queued.':'Intake email status: '+result.status);
+        return;
+      }
+      const {path:intake}=await api(path,'POST');
+      const url=new URL(intake,location.origin).href;
+      const subject='Branded Hospitality Solutions | '+v.get('company')+' client intake';
+      const body='Hi,\n\nPlease complete the Branded Hospitality Solutions intake for '+v.get('company')+'. You can include existing files and shared links.\n\n'+url+'\n\nThank you!';
+      location.href='mailto:'+encodeURIComponent(v.get('email'))+'?subject='+encodeURIComponent(subject)+'&body='+encodeURIComponent(body);
+      close();
+    },
+  };
   for(const [name,resource,method] of [['sol-connection','connections','PUT'],['sol-person','people','PUT'],['sol-note','notes','POST'],['sol-step','milestones','PUT'],['sol-brief','project','PUT']]){
     forms[name]=async(f,values)=>{
       const d=Object.fromEntries(values), client=d.client || currentClient();

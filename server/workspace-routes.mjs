@@ -20,7 +20,7 @@ import { skillBundle, skillLines } from './skills.mjs';
 import { authorizedFile, billingDownload, dealUpload, intakeUpload, sendFile, uploadLimit } from './files.mjs';
 import { changePitch, createSource, pitches, source, submitInquiry } from './inquiries.mjs';
 import { ready, reconcileMatch, resolveMail } from './mail.mjs';
-import { salesColumns, addSalesColumn, removeSalesColumn } from './sales-stages.mjs';
+import { salesColumns, addSalesColumn, removeSalesColumn, renameSalesColumn, reorderSalesColumns } from './sales-stages.mjs';
 import { weeklyReportFile } from './pdf.mjs';
 
 const key = '([\\w-]{1,80})';
@@ -35,6 +35,8 @@ export function registerWorkspaceRoutes(route, s, config) {
   route('GET', '/api/workspaces', ({ actor }) => ({ lines: workspaceLines(s, actor) }));
   route('GET', '/api/work-due', ({ actor }) => ({ items: dueWork(s, actor, config) }));
   route('POST','/api/workspaces/solutions/stages',({actor,data})=>addSalesColumn(s,actor,data));
+  route('PUT','/api/workspaces/solutions/stages/order',({actor,data})=>reorderSalesColumns(s,actor,data));
+  route('PATCH','/api/workspaces/solutions/stages/'+key,({actor,ids,data})=>renameSalesColumn(s,actor,ids[0],data));
   route('DELETE','/api/workspaces/solutions/stages/'+key,({actor,ids,data})=>removeSalesColumn(s,actor,ids[0],data || {}));
   route('POST', '/api/workspaces/media/targets', ({ actor, data }) => addTargets(s, actor, data));
   route('GET', '/api/workspaces/' + line, ({ actor, ids: [line] }) => ({

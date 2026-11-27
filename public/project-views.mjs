@@ -1,5 +1,6 @@
 import { btn, emptyState, field, h, hidden, icon, link, select } from './ui.mjs';
-import { milestoneStates } from './solution-model.mjs';
+import { lines } from './business-lines.mjs';
+import { milestoneStates, projectIcons } from './solution-model.mjs';
 
 const frequencies={once:'One-time',week:'Weekly',month:'Monthly'};
 const choices=names=>Object.entries(names).map(([id,name])=>({id,name}));
@@ -10,15 +11,25 @@ const boardUrl=(id,date,client)=>'/projects?'+new URLSearchParams({board:id,...d
 const percent=(value,label)=>`<span class="progress-value"><progress max="100" value="${value}" aria-label="${h(label)}"></progress><b>${value}%</b></span>`;
 const exportLink=(key,date)=>`<a class="button" href="/api/project-library${key?'/'+h(key):''}/export?date=${h(date)}" download>${icon('download')}Export CSV</a>`;
 const art=['desk-bell','field-notes','room-key','correspondence'];
+function projectArt(key) {
+  return art.includes(key)?`<img src="/assets/artwork/${h(key)}.png" alt="" width="210" height="142">`:
+    `<span class="project-glyph">${icon(Object.hasOwn(projectIcons,key)?key:'board')}</span>`;
+}
+function projectMenu(p) {
+  if(!p.manage) return '';
+  return `<details class="project-menu"><summary aria-label="More options for ${h(p.name)}" title="Project options"><span aria-hidden="true">•••</span></summary>
+    <div><button type="button" data-action="project-edit" data-id="${h(p.id)}">${icon('edit')}Edit project</button>
+    <button type="button" data-action="project-delete" data-id="${h(p.id)}">${icon('close')}Delete project</button></div></details>`;
+}
 function libraryView(result,sales) {
   const total=result.projects.reduce((v,p)=>v+p.total,0),done=result.projects.reduce((v,p)=>v+p.done,0);
-  const open=sales.deals.filter(d=>!d.signed_at && !d.client_id),paused=open.filter(d=>['cold','dead'].includes(d.stage));
+  const open=sales.deals.filter(d=>!d.signed_at && !lines.solutions.delivery.includes(d.stage)),paused=open.filter(d=>['cold','dead'].includes(d.stage));
   return `<header class="studio-heading"><h1>Project management</h1>${percent(total?Math.round(100*done/total):0,'Overall project completion')}
     <div class="actions">${exportLink('',result.date)}${button('New project','project-new','plus','primary')}</div></header>
-    <div class="project-library">${result.projects.map((p,i)=>`<a class="project-tile tile-${i%4}" href="${boardUrl(p.id)}">
-      <div class="tile-cover"><img src="/assets/artwork/${art[i%4]}.png" alt="" width="210" height="142"/></div>
+    <div class="project-library">${result.projects.map(p=>`<article class="project-wrap"><a class="project-tile tile-${Math.max(0,Object.keys(projectIcons).indexOf(p.icon))%4}" href="${boardUrl(p.id)}">
+      <div class="tile-cover">${projectArt(p.icon)}</div>
       <div class="tile-body"><div class="tile-title"><h2>${h(p.name)}</h2>${icon('arrow')}</div>${p.description?`<p>${h(p.description)}</p>`:''}
-      <small>${p.count} client${p.count===1?'':'s'} · ${p.stage_count} stages · ${frequencies[p.cadence]}</small>${percent(p.percent,p.name+' completion')}</div></a>`).join('')}</div>
+      <small>${p.count} client${p.count===1?'':'s'} · ${p.stage_count} stages · ${frequencies[p.cadence]}</small>${percent(p.percent,p.name+' completion')}</div></a>${projectMenu(p)}</article>`).join('')}</div>
     ${open.length?`<details class="panel project-dispositions"><summary>Opportunity dispositions</summary>${paused.map(d=>`<p>${h(d.company)} · ${d.stage==='cold'?'Nurture':'Closed lost'} · ${h(d.details.due||d.details.outcome||'')}</p>`).join('')}${button('Manage opportunity disposition','sol-disposition','edit')}</details>`:''}`;
 }
 function shift(result,p,cadence,delta) {
@@ -36,7 +47,7 @@ function boardView(result,query) {
       <span class="status-pill"><i></i>${milestoneStates[state]}</span>${v.notes?`<span class="cell-note" title="${h(v.notes)}">${h(v.notes)}</span>`:''}${v.due?`<small>Due ${h(v.due)}</small>`:''}</button>`;
   };
   return `${link('/projects','Project management','back','back-link')}<header class="studio-heading"><h1>${h(p.name)}</h1>${percent(p.percent,p.name+' completion')}
-    <div class="actions">${p.manage&&!p.all_clients?button('Add clients','project-enroll','team'):''}${p.manage?button('Add stage','project-stage','plus'):''}${exportLink(p.id,result.date)}</div></header>
+    <div class="actions">${p.manage&&!p.all_clients?button('Add clients','project-enroll','team'):''}${p.manage?button('Add stage','project-stage','plus'):''}${exportLink(p.id,result.date)}${projectMenu(p)}</div></header>
     ${cadence!=='once'?`<nav class="period-nav" aria-label="Project period"><a href="${shift(result,p,cadence,-1)}" aria-label="Previous period">${icon('back')}</a>
       <span>${cadence==='week'?'Week of '+h(result.week):h(new Intl.DateTimeFormat('en',{month:'long',year:'numeric',timeZone:'UTC'}).format(new Date(result.month+'-01T12:00:00Z')))}</span>
       <a href="${shift(result,p,cadence,1)}" aria-label="Next period">${icon('arrow')}</a></nav>`:''}
@@ -48,18 +59,54 @@ function boardView(result,query) {
       <h3>Growth goals</h3><p class="multiline">${h(active.goals||'Awaiting goals')}</p><h3>Agreed deliverables</h3><p class="multiline">${h(active.deliverables||'Awaiting deliverables')}</p>
       <div class="actions">${btn('Edit project brief',{action:'sol-brief',data:`data-client="${h(active.id)}"`})}${link('/clients/'+active.id,'Open client','clients')}</div></aside>`:''}</div>`;
 }
-const picker=clients=>`<fieldset class="client-picks"><legend>Clients</legend>${clients.map(c=>`<label class="check"><input type="checkbox" name="clients" value="${h(c.id)}">${h(c.name)}</label>`).join('')||'<p>No available clients.</p>'}</fieldset>`;
+const picker=(clients,selected=[])=>`<fieldset class="client-picks"><legend>Clients</legend>${clients.map(c=>`<label class="check"><input type="checkbox" name="clients" value="${h(c.id)}"${selected.includes(c.id)?' checked':''}>${h(c.name)}</label>`).join('')||'<p>No available clients.</p>'}</fieldset>`;
+const icons=selected=>`<fieldset class="project-icons"><legend>Project icon</legend><div>${Object.entries(projectIcons).map(([key,name])=>
+  `<label title="${h(name)}"><input type="radio" name="icon" value="${key}"${key===selected?' checked':''}>${projectArt(key)}<span>${h(name)}</span></label>`).join('')}</div></fieldset>`;
+const stageRow=(stage,index)=>`<div class="project-stage-row" data-stage-id="${h(stage.id||'')}"><label class="field"><span>Stage ${index+1}</span>
+  <input name="stage_name" value="${h(stage.name||'')}" required maxlength="90"></label><button type="button" class="icon-button" data-action="project-remove-row" aria-label="Remove stage ${index+1}">${icon('close')}</button></div>`;
+function numberStages(list) {
+  const rows=[...list.children];
+  rows.forEach((row,i)=>{
+    row.querySelector('label span').textContent='Stage '+(i+1);
+    const remove=row.querySelector('button');remove.disabled=rows.length===1;remove.setAttribute('aria-label','Remove stage '+(i+1));
+  });
+}
 export function projectController({api,getUser,showDialog,render,navigate,notify}) {
   let current;
   const board=()=>current.projects[0];
   const close=()=>document.querySelector('#dialog').close();
   const saved=async message=>{close();await render();notify(message);};
+  function editProject(result,p) {
+    const existing=Boolean(p),stages=p?.stages||[{}];
+    const allClients=p?.all_clients?true:false;
+    showDialog(existing?'Edit project':'New project',form('project-save',(existing?hidden('id',p.id)+hidden('version',p.version):'')+
+      field('Project name','name',p?.name,{required:true,max:100})+icons(p?.icon||'field-notes')+
+      field('Description','description',p?.description,{max:500})+select(existing?'Schedule for new stages':'Schedule','cadence',choices(frequencies),p?.cadence||'once')+
+      `<fieldset class="project-stages"><legend>Stages</legend><div class="stage-inputs">${stages.map(stageRow).join('')}</div>${button('Add another stage','project-row','plus')}</fieldset>`+
+      (getUser().role==='admin'?`<label class="check"><input type="checkbox" name="all_clients"${allClients?' checked':''}> Include all current and future clients</label>`:allClients?hidden('all_clients','on'):'')+
+      picker(result.clients,allClients?[]:(p?.rows||[]).map(c=>c.id))+submit(existing?'Save project':'Create project')));
+    numberStages(document.querySelector('.stage-inputs'));
+  }
   const actions={
-    'project-new':()=>showDialog('New project',form('project-new',field('Project name','name','',{required:true,max:100})+
-      field('Description','description','',{max:500})+select('Schedule','cadence',choices(frequencies),'once')+
-      field('Stages, one per line','stages','',{required:true,type:'textarea',max:5500})+
-      (getUser().role==='admin'?'<label class="check"><input type="checkbox" name="all_clients"> Include all current and future clients</label>':'')+
-      picker(current.clients)+submit('Create project'))),
+    'project-new':()=>editProject(current,null),
+    'project-edit':async b=>{
+      const result=await api('/api/project-library/'+encodeURIComponent(b.dataset.id));
+      editProject(result,result.projects[0]);
+    },
+    'project-delete':async b=>{
+      const result=await api('/api/project-library/'+encodeURIComponent(b.dataset.id)),p=result.projects[0];
+      showDialog('Delete project',form('project-delete',hidden('id',p.id)+hidden('version',p.version)+
+        `<p>Remove <strong>${h(p.name)}</strong> from project management? Its clients will stay in the client directory.</p>`+submit('Delete project')));
+    },
+    'project-row':b=>{
+      const list=b.closest('fieldset').querySelector('.stage-inputs');
+      list.insertAdjacentHTML('beforeend',stageRow({},list.children.length));numberStages(list);list.lastElementChild.querySelector('input').focus();
+    },
+    'project-remove-row':b=>{
+      const row=b.closest('.project-stage-row'),list=row.parentElement,focus=row.nextElementSibling||row.previousElementSibling;
+      if(list.children.length<2) return;
+      row.remove();numberStages(list);focus.querySelector('input').focus();
+    },
     'project-stage':()=>showDialog('Add project stage',form('project-stage',field('Stage name','name','',{required:true,max:90})+
       field('Phase','phase','Milestones',{required:true,max:60})+select('Schedule','cadence',choices(frequencies),board().cadence)+submit('Add stage'))),
     'project-enroll':()=>showDialog('Add clients',form('project-enroll',picker(current.clients.filter(c=>!board().rows.some(r=>r.id===c.id)))+submit('Add clients'))),
@@ -73,9 +120,22 @@ export function projectController({api,getUser,showDialog,render,navigate,notify
     },
   };
   const forms={
-    'project-new':async(f,v)=>{
-      const d=Object.fromEntries(v);d.stages=d.stages.split(/\r?\n/).map(v=>v.trim()).filter(Boolean);d.all_clients=v.has('all_clients');d.clients=v.getAll('clients');
-      const p=await api('/api/project-library','POST',d);close();navigate(boardUrl(p.id));notify('Project created.');
+    'project-save':async(f,v)=>{
+      const key=v.get('id'),rows=[...f.querySelectorAll('.project-stage-row')].map(row=>({
+        ...(row.dataset.stageId?{id:row.dataset.stageId}:{}),name:row.querySelector('input').value.trim()}));
+      const payload={name:v.get('name'),description:v.get('description'),cadence:v.get('cadence'),icon:v.get('icon'),
+        stages:key?rows:rows.map(t=>t.name),all_clients:v.has('all_clients'),clients:v.getAll('clients')};
+      if(key) payload.version=Number(v.get('version'));
+      const result=await api('/api/project-library'+(key?'/'+encodeURIComponent(key):''),key?'PATCH':'POST',payload);
+      close();
+      if(key) await render();else navigate(boardUrl(result.id));
+      notify(key?'Project updated.':'Project created.');
+    },
+    'project-delete':async(f,v)=>{
+      const key=v.get('id');
+      await api('/api/project-library/'+encodeURIComponent(key),'DELETE',{version:Number(v.get('version'))});
+      close();if(new URLSearchParams(location.search).get('board')===key) navigate('/projects');else await render();
+      notify('Project deleted.');
     },
     'project-stage':async(f,v)=>{await api('/api/project-library/'+board().id+'/stages','POST',Object.fromEntries(v));await saved('Stage added.');},
     'project-enroll':async(f,v)=>{await api('/api/project-library/'+board().id+'/clients','POST',{clients:v.getAll('clients')});await saved('Client list updated.');},

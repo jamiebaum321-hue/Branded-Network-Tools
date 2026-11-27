@@ -2,7 +2,8 @@ import io
 import textwrap
 
 
-report_headings = {'Completed and outcomes', 'Outstanding work', 'Introductions and next steps'}
+report_headings = {'Goals and deliverables', 'Completed and outcomes', 'Outstanding work', 'Introductions and next steps',
+                   'Connection updates', 'Project milestones', 'Client notes', 'Intake and files', 'Pipeline changes'}
 
 
 def report_lines(report):

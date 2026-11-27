@@ -1,5 +1,6 @@
 import { btn, emptyState, field, formatDate, h, hidden, icon, link, outboundLink, select } from './ui.mjs';
-import { billingStates, kinds, labels, lines, money, stages, statuses, tiers } from './business-lines.mjs';
+import { billingStates, kinds, labels, lines, money, stages, statuses } from './business-lines.mjs';
+import { pipelineEditor } from './pipeline-editor.mjs';
 import { salesSummary } from './sales-summary.mjs';
 import { sections } from './intake-fields.mjs';
 
@@ -13,8 +14,6 @@ const action = (label, name, id = '', glyph = '', kind = '') =>
   btn(label, { action: name, glyph, kind, data: `data-id="${h(id)}"` });
 const panel = (title, contents, extra = '') =>
   `<section class="panel stack ${extra}"><h2>${h(title)}</h2>${contents}</section>`;
-const skillLink = (name, label) =>
-  `<a class="text-link" target="_blank" rel="noopener" href="/api/skills/branded-${name}">${icon('download')}${h(label)}</a>`;
 const grid = (children) => `<div class="form-grid">${children}</div>`;
 const fields = (values) =>
   `<dl class="deal-facts">${values.map(([k, v]) => `<div><dt>${h(k)}</dt><dd>${v}</dd></div>`).join('')}</dl>`;
@@ -59,7 +58,7 @@ const billingKeys = [
   'agreement_url',
 ];
 const emailKeys = ['contact_email', 'billing_email', 'report_email'];
-const longKeys = ['package', 'billing_terms', 'fee_terms', 'research_sources'];
+const longKeys = ['pipeline_note','package', 'billing_terms', 'fee_terms', 'research_sources'];
 const formField = (key, d = {}) => {
   if (key === 'billing_state')
     return select(
@@ -107,15 +106,10 @@ function detailValue(key, value) {
   if (key.endsWith('_url')) return outboundLink(value);
   return h(value);
 }
-function boardCard(row, today) {
-  const d = row.details;
-  const next = d.next_action || row.reply_followup?.title;
-  const due = followupDate(row);
-  return `<a class="deal-card" draggable="true" data-deal="${h(row.id)}" data-version="${row.version}" data-stage="${h(row.stage)}" href="${base(row.line, row.id)}">
-    <strong>${h(row.company)}</strong>${row.title !== row.company ? `<span>${h(row.title)}</span>` : ''}
-    ${d.campaign || d.contact ? `<span class="quiet">${h([d.campaign, d.contact].filter(Boolean).join(' · '))}</span>` : ''}
-    ${row.stage === 'first_meeting_scheduled' && d.first_meeting_day ? `<span>Meeting · <time datetime="${h(d.first_meeting_day)}">${h(d.first_meeting_day)}</time></span>` : ''}
-    ${next ? `<span class="next-action">${h(next)}</span>` : ''}<small><span>${h(row.owner)}</span><span class="${due && due <= today ? 'ws-due' : ''}">${stamp(row)}</span></small></a>`;
+function boardCard(row) {
+  const d=row.details, contact=d.contact || row.intake_contact || '', note=d.pipeline_note || row.card_note || d.next_action || '';
+  return `<a class="deal-card" draggable="true" data-deal="${h(row.id)}" data-version="${row.version}" data-stage="${h(row.stage)}" href="${base(row.line,row.id)}" title="${h([row.title,contact,note].filter(Boolean).join(' · '))}">
+    <strong>${h(row.company)}</strong>${contact?`<span class="lead-contact">${h(contact)}</span>`:''}${note?`<span class="lead-note">${h(note)}</span>`:''}</a>`;
 }
 const mailStatus = (k) =>
   ({
@@ -128,7 +122,7 @@ const mailStatus = (k) =>
 function boardView(data, query, admin) {
   const owner=query.get('owner') || '', search=(query.get('q') || '').trim().toLowerCase();
   const visible=data.deals.filter(row=>(!owner || row.owner_id===owner) &&
-    [row.company,row.title,row.owner,row.details.contact].join(' ').toLowerCase().includes(search));
+    [row.company,row.title,row.owner,row.details.contact,row.intake_contact].join(' ').toLowerCase().includes(search));
   const totals=salesSummary(data.deals), compact=localStorage.getItem('branded-card-density')==='compact';
   const definitions={won:'Total contract value of signed engagements',lost:'Total contract value of closed-lost opportunities',
     mrr:'Monthly recurring revenue from active signed retainers',arr:'Annual recurring revenue equals monthly recurring revenue multiplied by 12'};
@@ -136,10 +130,11 @@ function boardView(data, query, admin) {
     <dl class="sales-metrics">${['won','lost','arr','mrr'].map(key=>`<div title="${definitions[key]}"><dt>${{won:'Won',lost:'Lost',arr:'ARR',mrr:'MRR'}[key]}</dt><dd>${h(money(totals[key]).replace(/\.00$/,''))}</dd></div>`).join('')}</dl><img class="pipeline-illustration" src="/assets/artwork/correspondence.png" width="114" height="76" alt=""></header>
     <div class="sales-toolbar"><form class="compact-filter" data-form="filter">${field('Search pipeline','q',query.get('q')||'',{type:'search',placeholder:'Company or contact',glyph:'search'})}${select('Owner','owner',data.owners,owner,'All owners')}${btn('Apply',{type:'submit'})}${search||owner?link(base('solutions'),'Clear'):''}</form>
     <div class="actions">${admin?action('Edit stages','ws-columns','','settings'):''}<button type="button" class="density-switch" role="switch" aria-checked="${compact}" aria-label="Compact cards" data-action="ws-density"><i aria-hidden="true"></i>Compact cards</button>${action('New engagement','ws-new','solutions','plus','primary')}</div></div>
-    <div class="deal-board sales-board${compact?' compact-cards':''}" aria-label="Solutions sales stages">${data.stages.map(({id,name},i)=>{
+    <div class="board-scrollbar" hidden tabindex="0" role="region" aria-label="Scroll pipeline stages horizontally"><div></div></div>
+    <div class="deal-board sales-board${compact?' compact-cards':''}" aria-label="Solutions sales stages">${data.stages.map(({id,name,color})=>{
       const rows=visible.filter(row=>(row.signed_at?'signed':row.stage)===id);
-      return `<section class="deal-column tone-${i%6}" data-ws-stage="${h(id)}"><header><h2>${h(name)}</h2><span>${rows.length}</span></header>
-        ${rows.map(r=>boardCard(r,data.today)).join('') || '<p class="quiet empty-stage">No engagements</p>'}</section>`;
+      return `<section class="deal-column tone-${color}" data-ws-stage="${h(id)}"><header><h2>${h(name)}</h2><span>${rows.length}</span></header>
+        ${rows.map(r=>boardCard(r)).join('') || '<p class="quiet empty-stage">No engagements</p>'}</section>`;
     }).join('')}</div></section>`;
 }
 
@@ -311,114 +306,41 @@ export function profileView(data) {
   return `<div class="intake-summary"><h2>Client intake</h2>${latest}</div>
     <section class="panel intake-files"><div class="section-toolbar"><h3>Uploaded files</h3><small>${files.length} file${files.length===1?'':'s'}</small></div>${fileList(files)}
     <details><summary>Add files</summary>${uploadForm(e.id,false,'asset')}</details></section>
-    ${!submission?emptyState('Awaiting client intake.'):`<div class="intake-groups">${Object.entries(profileGroups).map(([name,keys])=>{
+    ${!submission?'':`<div class="intake-groups">${Object.entries(profileGroups).map(([name,keys])=>{
       const values=keys.filter(k=>submission.answers[k]!==undefined && submission.answers[k]!=='' && (!Array.isArray(submission.answers[k])||submission.answers[k].length));
       return `<section class="panel"><h3>${h(name)}</h3>${values.length?fields(values.map(k=>[fieldDefs[k]?.label||k,profileValue(k,submission.answers[k])])):'<p class="quiet">Not supplied.</p>'}</section>`;
     }).join('')}</div>`}`;
 }
 
-function researchView(data) {
-  const client = data.deal.client_id;
-  return `<div class="actions">${link('/pipeline?client_id=' + client, 'Introduction board', 'board')}${link('/pipeline/suggestions?client_id=' + client, 'Review suggested leads', 'shortlist')}${action('Add research', 'ws-research', data.deal.id, 'plus')}${skillLink('introductions', 'Download introductions skill')}</div>
-    <div class="research-grid">${Object.entries({ ...tiers, ungraded: 'Awaiting classification' })
-      .map(([tier, name]) => {
-        const rows = data.suggestions.filter((s) => (s.tier || 'ungraded') === tier);
-        if (!rows.length && tier === 'ungraded') return '';
-        return panel(
-          name,
-          rows.length
-            ? rows
-                .map(
-                  (
-                    s
-                  ) => `<article class="ws-entry"><small>${h(s.status)}</small><h3>${h([s.person, s.company].filter(Boolean).join(' · '))}</h3><p>${h(s.reason)}</p><p>${h(s.branded_relationship)}</p>
-        ${s.next_action ? `<strong>${h(s.next_action)}</strong>` : ''}${s.research ? `<p class="multiline">${h(s.research)}</p>` : ''}${(s.evidence || []).map((v) => `<small>${h(v.source)} · ${h(v.detail)} ${v.reference ? outboundLink(v.reference) : ''}</small>`).join('')}
-        ${link(s.card_id ? '/pipeline/cards/' + s.card_id : '/pipeline/suggestions/' + s.id, s.card_id ? 'Open introduction' : 'Review finding')}</article>`
-                )
-                .join('')
-            : emptyState('No findings in this group.')
-        );
-      })
-      .join('')}</div>`;
+export function reportsView(report,clientId) {
+  const period=new URLSearchParams({start_day:report.start_day,end_day:report.end_day,revision:report.revision});
+  const downloads=(base,suffix='')=>[['pdf','Export PDF'],['xlsx','Export workbook']].map(([fmt,label])=>
+    `<a class="button" href="${h(base+fmt+suffix)}" download>${icon('download')}${label}</a>`).join('');
+  return `<section class="weekly-update"><header class="section-toolbar"><h2>Weekly update</h2><div class="actions">${downloads('/api/clients/'+encodeURIComponent(clientId)+'/weekly-update/','?'+period)}</div></header>
+    <form class="report-period" data-form="filter">${hidden('tab','reports')}${field('Period starts','start_day',report.start_day,{type:'date',required:true})}
+    ${field('Period ends','end_day',report.end_day,{type:'date',required:true})}${submit('Update preview')}</form>
+    <article class="panel weekly-preview" aria-label="Weekly update preview"><h3>${h(report.client)} · Weekly update</h3><p>${h(report.start_day)} to ${h(report.end_day)}</p>
+    ${report.sections.map(s=>`<section><h4>${h(s.title)}</h4>${s.items.length?`<ul>${s.items.map(item=>`<li class="multiline">${h(item)}</li>`).join('')}</ul>`:'<p>No items recorded.</p>'}</section>`).join('')}</article>
+    ${report.saved.length?`<details class="panel"><summary>Previously saved updates</summary>${report.saved.map(r=>`<details><summary>${h(r.start_day)} to ${h(r.end_day)} · Revision ${r.version}</summary><p class="multiline">${h(r.body)}</p><div class="actions">${downloads('/api/engagements/'+encodeURIComponent(r.engagement_id)+'/reports/'+encodeURIComponent(r.id)+'/','?version='+r.version)}</div></details>`).join('')}</details>`:''}</section>`;
 }
-export function reportsView(data, today) {
-  const end = new Date(today + 'T12:00:00Z'),
-    start = new Date(end);
-  start.setUTCDate(start.getUTCDate() - 6);
-  return `${skillLink('weekly-update', 'Download weekly reporting skill')}${panel(
-    'Draft a weekly update',
-    form(
-      'ws-report',
-      grid(
-        field('Period starts', 'start_day', start.toISOString().slice(0, 10), {
-          type: 'date',
-          required: true,
-        }) + field('Period ends', 'end_day', today, { type: 'date', required: true })
-      ) + submit('Generate draft'),
-      data.deal.id
-    )
-  )}
-    <div class="stack">${
-      data.reports
-        .map((r) =>
-          panel(
-            r.start_day + ' to ' + r.end_day,
-            `<p class="quiet">${h(r.status)} · Revision ${r.version}</p>` +
-              (r.status === 'draft'
-                ? form(
-                    'ws-report-edit',
-                    hidden('version', r.version) +
-                      field('Client update', 'body', r.body, {
-                        type: 'textarea',
-                        required: true,
-                        max: 100000,
-                      }) +
-                      grid(
-                        select(
-                          'Action',
-                          'decision',
-                          choices({
-                            save: 'Save draft',
-                            send: 'Send by email',
-                            manual: 'Record sent separately',
-                          })
-                        ) +
-                          field('Recipient for email', 'send_to', data.deal.details.report_email || '', {
-                            type: 'email',
-                            max: 254,
-                          })
-                      ) +
-                      submit('Apply to report'),
-                    r.id
-                  )
-                : `<div class="multiline">${h(r.body)}</div>`) +
-              `<div class="actions">${[['pdf', 'Download saved PDF'], ['xlsx', 'Download saved workbook']].map(([format, label]) => `<a class="text-link" download="weekly-update.${format}" href="/api/engagements/${h(data.deal.id)}/reports/${h(r.id)}/${format}?version=${r.version}">${icon('download')}${label}</a>`).join('')}</div>`
-          )
-        )
-        .join('') || emptyState('No weekly updates yet.')
-    }</div>`;
-}
-function detailView(columns, data, owners, user, query, zone, today) {
+function detailView(columns, data, owners, user, query, zone) {
   const e = data.deal,
     path = base(e.line, e.id);
   const names = {
     overview: 'Overview',
     activity: 'Activity',
-    ...(e.client_id
-      ? { profile: 'Advisory intake', research: 'Introductions', reports: 'Weekly updates' }
-      : {}),
   };
   const selected = Object.hasOwn(names, query.get('tab')) ? query.get('tab') : 'overview';
   const board = history.state?.workBoard;
   const destination = typeof board === 'string' && board.split('?')[0] === base(e.line) ? board : base(e.line);
   return `${link(destination, 'Back to pipelines', 'back', 'back-link')}
-    <header class="ws-head"><div><p>${h(e.title === e.company ? lines[e.line].noun : e.title)} · ${h(columns.find(c=>c.id===e.stage)?.name || stages[e.stage])}</p><h1>${h(e.company)}</h1></div><div class="actions">${e.client_id && !e.signed_at ? action('Record existing agreement', 'ws-history', e.id) : ''}${action('Move stage', 'ws-stage', e.id, 'board')}${action('Edit engagement', 'ws-edit', e.id, 'edit', 'primary')}</div></header>
+    <header class="ws-head"><div><p>${h(e.title === e.company ? lines[e.line].noun : e.title)} · ${h(columns.find(c=>c.id===e.stage)?.name || stages[e.stage])}</p><h1>${h(e.company)}</h1></div><div class="actions">${e.client_id?link('/clients/'+e.client_id,'Client profile','user'):''}${action('Move stage', 'ws-stage', e.id, 'board')}${action('Edit engagement', 'ws-edit', e.id, 'edit', 'primary')}</div></header>
     ${tabs(
       Object.entries(names).map(([key, name]) => [key, name, urlWith(path, query, { tab: key })]),
       selected,
       'Engagement sections'
     )}
-    ${{ overview: () => overview(data, owners, user, zone), activity: () => workView(data, owners, zone), profile: () => profileView(data), research: () => researchView(data), reports: () => reportsView(data, today) }[selected]()}`;
+    ${{ overview: () => overview(data, owners, user, zone), activity: () => workView(data, owners, zone) }[selected]()}`;
 }
 
 export function operations(data) {
@@ -465,21 +387,23 @@ export function operations(data) {
     )}
     ${panel('Email delivery', dispatches || emptyState('No messages queued.'))}</div>`;
 }
-function editForm(e, users, user) {
+function editForm(e, users, user, context={}) {
   const key = e.id ? 'ws-save' : 'ws-create',
     d = e.details || {};
   return form(
     key,
     hidden('line', e.line) +
-      (e.id ? hidden('version', e.version) : '') +
+      (e.id ? hidden('version', e.version) : hidden('request_id',crypto.randomUUID())+hidden('client_mode',context.client?'existing':'new')) +
       grid(
-        (e.id ? '' : field('Company', 'company', '', { required: true, max: 180 })) +
+        (e.id ? '' : context.client?hidden('client_id',context.client.id)+`<div class="chosen-client"><small>Existing client</small><strong>${h(context.client.name)}</strong></div>`:field('Client name', 'company', '', { required: true, max: 180 })) +
           field('Engagement name', 'title', e.title || '', { required: Boolean(e.id), max: 240 }) +
-          (user.role === 'admin' ? select('Engagement owner', 'owner_id', users, e.owner_id || user.id) : '') +
-          ['contact', 'contact_email', 'next_action', 'due', 'first_meeting_day', 'source', 'source_url']
+          (user.role === 'admin' ? select(!e.id&&!context.client?'Client owner':'Engagement owner', 'owner_id', users, e.owner_id || context.client?.owner_id || user.id) : '') +
+          (!e.id && context.stages?select('Pipeline stage','stage',context.stages.filter(c=>c.id!=='signed'),'outreach'):'')+
+          ['contact', 'contact_email', 'pipeline_note', 'next_action', 'due', 'source', 'source_url']
             .map((k) => formField(k, d))
             .join('')
       ) +
+      (!e.id&&!context.client&&user.role==='admin'?'<details class="ws-fold"><summary>Additional client access</summary>'+users.map(u=>`<label class="check"><input type="checkbox" name="member_ids" value="${h(u.id)}">${h(u.name)}</label>`).join('')+'</details>':'')+
       `<details class="ws-fold"${e.line === 'media' ? ' open' : ''}><summary>Commercial terms${e.line === 'media' ? ' and campaign' : ''}</summary>${grid(workspaceKeys[e.line].map((k) => formField(k, d)).join(''))}</details>
     <details class="ws-fold"><summary>Agreement and billing</summary>${grid(billingKeys.map((k) => formField(k, d)).join(''))}</details>` +
       submit(e.id ? 'Save changes' : 'Create engagement'),
@@ -519,24 +443,6 @@ const splitDetails = (data) => {
     }
   return details;
 };
-function researchForm(client) {
-  return form(
-    'ws-finding',
-    hidden('client_id', client) +
-      grid(
-        field('Company', 'company', '', { required: true, max: 180 }) +
-          field('Person', 'person', '', { max: 150 }) +
-          select('Relationship group', 'tier', choices(tiers)) +
-          field('Source', 'source', '', { required: true, max: 120 }) +
-          field('Evidence link', 'reference', '', { type: 'url', max: 600 }) +
-          field('Relationship with Branded', 'branded_relationship', '', { required: true, max: 600 })
-      ) +
-      field('Why this contact fits', 'reason', '', { type: 'textarea', required: true, max: 2500 }) +
-      field('Evidence', 'detail', '', { type: 'textarea', required: true, max: 1800 }) +
-      field('Suggested next action', 'next_action', '', { required: true, max: 400 }) +
-      submit('Save finding')
-  );
-}
 export function workspaceController({
   api,
   navigate,
@@ -548,6 +454,7 @@ export function workspaceController({
   getZone,
   onIntakeUpload,
 }) {
+  const stageEditor=pipelineEditor({api,showDialog,render,notify});
   const currentKey = () => document.querySelector('[data-engagement-context]')?.dataset.engagementContext || location.pathname.split('/')[3];
   const currentDeal = () => api('/api/engagements/' + encodeURIComponent(currentKey()));
   const eligible = async (line) => (await api('/api/workspaces/' + line)).owners;
@@ -593,6 +500,29 @@ async function uploadFiles(f,values,external) {
         }) +
         submit('Add campaign targets')
     );
+  async function engagementForm(clientId) {
+    const [board,info]=await Promise.all([api('/api/workspaces/solutions'),clientId?api('/api/clients/'+encodeURIComponent(clientId)):null]);
+    const owners=info?info.owners:board.owners;
+    const previous=info?.engagement_id?await api('/api/engagements/'+encodeURIComponent(info.engagement_id)):null;
+    const details={contact:previous?.latest?.answers?.contact_name || previous?.deal.details.contact || '',
+      contact_email:previous?.latest?.answers?.contact_email || previous?.deal.details.contact_email || ''};
+    showDialog(info?'New engagement for '+info.client.name:'New client and engagement',editForm({line:'solutions',details},owners,getUser(),{client:info?.client,stages:board.stages}));
+  }
+  let clientSearch=0;
+  async function clientMatches(query,list) {
+    if(!list) return;
+    const sequence=++clientSearch;
+    const data=await api('/api/clients?limit=20&q='+encodeURIComponent(query));
+    if(sequence!==clientSearch||!list.isConnected) return;
+    list.innerHTML=data.items.map(c=>`<button type="button" data-action="ws-use-client" data-id="${h(c.id)}"><strong>${h(c.name)}</strong><small>${h(c.owner_name)}</small>${icon('chevron')}</button>`).join('')||'<p>No matching clients.</p>';
+    if(data.next_offset!=null) list.insertAdjacentHTML('beforeend','<small>Type more of the client name to narrow these results.</small>');
+  }
+  let searchTimer;
+  document.addEventListener('input',e=>{
+    if(!e.target.matches('[data-form="ws-client-search"] [name="q"]')) return;
+    const field=e.target,list=field.form.querySelector('.client-match-list');clientSearch++;
+    clearTimeout(searchTimer);searchTimer=setTimeout(()=>clientMatches(field.value.trim(),list).catch(err=>notify(err.message)),140);
+  });
   async function page(path, q) {
     if (path.startsWith('/inquire/')) {
       const key = path.split('/').at(-1),
@@ -621,21 +551,15 @@ async function uploadFiles(f,values,external) {
       api('/api/workspaces/solutions'), key ? api('/api/engagements/'+encodeURIComponent(key)) : null,
     ]);
     if (detail && detail.deal.line !== line) throw new Error('This engagement belongs to another workspace.');
-    if (detail?.deal.client_id) {
+    if (detail?.deal.client_id && (detail.deal.signed_at || lines.solutions.delivery.includes(detail.deal.stage))) {
       const tab = {overview:'account',profile:'intake',research:'map',reports:'reports',activity:'notes'}[q.get('tab')] || 'intake';
-      navigate('/clients/'+detail.deal.client_id+'?tab='+tab,{replace:true});
+      navigate('/clients/'+detail.deal.client_id+'?tab='+tab+'&engagement='+detail.deal.id,{replace:true});
       return '';
     }
-    return detail ? detailView(board.stages, detail, board.owners, getUser(), q, getZone(), board.today) : boardView(board,q,getUser()?.role==='admin');
+    return detail ? detailView(board.stages, detail, board.owners, getUser(), q, getZone()) : boardView(board,q,getUser()?.role==='admin');
   }
   const actions = {
-    'ws-columns': async () => {
-      const {stages:columns}=await api('/api/workspaces/solutions');
-      const open=columns.filter(c=>c.id!=='signed');
-      showDialog('Edit pipeline stages',form('ws-add-column',field('New stage name','name','',{required:true,max:55})+
-        select('Place after','after',open,open.at(-1).id)+submit('Add stage'))+
-        `<div class="stage-list">${columns.map(c=>`<div><span>${h(c.name)}</span>${!['outreach','signed'].includes(c.id)?action('Delete','ws-remove-column',c.id):''}</div>`).join('')}</div>`);
-    },
+    ...stageEditor.actions,
     'ws-remove-column':async b=>{
       const {stages:columns,deals}=await api('/api/workspaces/solutions');
       const key=b.dataset.id,stage=columns.find(c=>c.id===key),remaining=deals.filter(d=>d.stage===key).length;
@@ -659,13 +583,17 @@ async function uploadFiles(f,values,external) {
         )
       );
     },
-    'ws-new': async (b) => {
-      const line = b.dataset.id;
-      showDialog(
-        'New ' + lines[line].name + ' engagement',
-        editForm({ line }, await eligible(line), getUser())
-      );
+    'ws-new': async b=>{
+      if(b.dataset.client) return engagementForm(b.dataset.client);
+      showDialog('New engagement',`<div class="engagement-choices"><h3>Who is this engagement for?</h3>
+        ${action('Existing client','ws-existing-client','','clients')}${action('New client','ws-new-client','','plus')}</div>`);
     },
+    'ws-new-client':()=>engagementForm(),
+    'ws-existing-client':async()=>{
+      showDialog('Choose an existing client',form('ws-client-search',field('Search clients','q','',{type:'search',placeholder:'Client name',max:180})+'<div class="client-match-list" aria-live="polite"></div>'+submit('Search')));
+      await clientMatches('',document.querySelector('.client-match-list'));
+    },
+    'ws-use-client':b=>engagementForm(b.dataset.id),
     'ws-edit': async () => {
       const { deal } = await currentDeal();
       showDialog('Edit engagement', editForm(deal, await eligible(deal.line), getUser()));
@@ -673,14 +601,14 @@ async function uploadFiles(f,values,external) {
     'ws-stage': async () => {const [record,board]=await Promise.all([currentDeal(),api('/api/workspaces/solutions')]);showDialog('Move stage',stageForm(record.deal,record.deal.stage,board.stages));},
     'ws-targets': () => showDialog('Add campaign targets', targetForm()),
     'ws-item': async (b) => {
-      const record = await currentDeal(),
+      const record=b.dataset.engagement?await api('/api/engagements/'+encodeURIComponent(b.dataset.engagement)):await currentDeal(),
         w = record.work.find((x) => x.id === b.dataset.id);
       if (!w) throw new Error('Refresh to see the latest activity.');
       showDialog(
         'Update outcome',
         form(
           'ws-outcome',
-          hidden('previous_at', w.recorded_at) +
+          hidden('engagement_id',record.deal.id)+hidden('previous_at', w.recorded_at) +
             select('Status', 'status', choices(statuses), w.status) +
             select(
               'Responsible owner',
@@ -697,8 +625,6 @@ async function uploadFiles(f,values,external) {
         )
       );
     },
-    'ws-research': async () =>
-      showDialog('Add introduction research', researchForm((await currentDeal()).deal.client_id)),
     'ws-source': async () => {
       const { users } = await api('/api/admin/operations');
       showDialog(
@@ -732,7 +658,7 @@ async function uploadFiles(f,values,external) {
       ),
   };
   const forms = {
-    async 'ws-add-column'(f,v) {await api('/api/workspaces/solutions/stages','POST',Object.fromEntries(v));await saved('Stage added.');},
+    ...stageEditor.forms,
     async 'ws-delete-column'(f,v) {await api('/api/workspaces/solutions/stages/'+f.dataset.id,'DELETE',Object.fromEntries(v));await saved('Stage deleted.');},
     async 'ws-history'(f, v) {
       await api('/api/engagements/' + f.dataset.id + '/existing-agreement', 'POST', {
@@ -743,8 +669,10 @@ async function uploadFiles(f,values,external) {
       });
       await saved('Existing agreement recorded.');
     },
+    async 'ws-client-search'(f,v){await clientMatches(v.get('q').trim(),f.querySelector('.client-match-list'));},
     async 'ws-create'(f, v) {
-      const d = { company: v.get('company'), details: splitDetails(v) };
+      const d = { details:splitDetails(v),client_mode:v.get('client_mode'),request_id:v.get('request_id'),stage:v.get('stage')||'outreach' };
+      if(v.get('client_id')) d.client_id=v.get('client_id'); else {d.company=v.get('company');d.member_ids=v.getAll('member_ids');}
       for (const k of ['title', 'owner_id']) if (v.get(k)) d[k] = v.get(k);
       const line = v.get('line'),
         r = await api('/api/workspaces/' + line + '/engagements', 'POST', d);
@@ -780,25 +708,12 @@ async function uploadFiles(f,values,external) {
       await saved('Activity recorded.');
     },
     async 'ws-outcome'(f, v) {
-      await api('/api/engagements/' + currentKey() + '/work/' + f.dataset.id, 'PATCH', Object.fromEntries(v));
+      const {engagement_id,...changes}=Object.fromEntries(v);
+      await api('/api/engagements/'+encodeURIComponent(engagement_id)+'/work/'+f.dataset.id,'PATCH',changes);
       await saved('Outcome recorded.');
     },
     'ws-file': (f,v)=>uploadFiles(f,v,false),
     'ws-intake-file': (f,v)=>uploadFiles(f,v,true),
-    async 'ws-report'(f, v) {
-      await api('/api/engagements/' + f.dataset.id + '/reports', 'POST', Object.fromEntries(v));
-      await saved('Weekly draft ready.');
-    },
-    async 'ws-report-edit'(f, v) {
-      const d = { body: v.get('body'), version: Number(v.get('version')) };
-      if (v.get('decision') === 'send') {
-        if (!v.get('send_to')) throw new Error('Enter the client’s email before sending.');
-        d.send_to = v.get('send_to');
-      }
-      if (v.get('decision') === 'manual') d.manual_sent = true;
-      await api('/api/engagements/' + currentKey() + '/reports/' + f.dataset.id, 'PATCH', d);
-      await saved(d.send_to ? 'Report queued for delivery.' : 'Report saved.');
-    },
     async 'ws-target-list'(f, v) {
       const r = await api('/api/workspaces/media/targets', 'POST', {
         campaign: v.get('campaign'),
@@ -810,15 +725,6 @@ async function uploadFiles(f,values,external) {
           .map((company) => ({ company })),
       });
       await saved(`${r.added} targets added. ${r.skipped} already in this campaign.`);
-    },
-    async 'ws-finding'(f, v) {
-      const { detail, reference, ...d } = Object.fromEntries(v);
-      d.evidence = [{ source: d.source, detail, reference }];
-      d.fit = 'Owner reviewed';
-      d.score = 0;
-      d.candidate_key = 'staff:' + d.company.toLowerCase().trim() + ':' + d.person.toLowerCase().trim();
-      await api('/api/engagements/' + currentKey() + '/research', 'POST', d);
-      await saved('Research saved for review.');
     },
     async 'ws-pitch'(f, v) {
       await api('/api/podcast/' + f.dataset.id, 'PATCH', Object.fromEntries(v));

@@ -25,7 +25,7 @@ export function signInPage(demo) {
     ${subjectForm('signin', '', `${field('Email', 'email', demo ? 'demo@branded.example' : '', { type: 'email', autocomplete: 'username', required: true })}
     ${field('Password', 'password', demo ? 'Local-Demo-Pipeline-24' : '', { type: 'password', autocomplete: 'current-password', required: true, max: 256 })}
     ${btn('Sign in', { kind: 'primary', type: 'submit', endGlyph: 'arrow' })}`)}
-    ${demo ? '<p class="demo-note muted small">Local demo · Fictional records reset when the server stops.</p>' : ''}</div>
+    ${demo ? '<p class="demo-note muted small">Local demo · Fictional client records.</p>' : ''}</div>
     <div class="auth-art" aria-hidden="true"><img src="/assets/artwork/desk-bell.png" width="540" height="540" alt="" decoding="async"></div></div>`;
 }
 
@@ -236,7 +236,7 @@ export function clientRows(rows, zone) {
 }
 
 export function clientsPage(data, query, user, zone) {
-  return `${heading('Clients', 'Client profiles, introduction maps and team contacts.', user.role === 'admin' ? btn('Add client', { action: 'add-client', glyph: 'plus', kind: 'primary' }) : '',
+  return `${heading('Clients', 'Client profiles, introduction maps and team contacts.', btn('New engagement',{action:'ws-new',glyph:'board'})+(user.role === 'admin' ? btn('Add client', { action: 'add-client', glyph: 'plus', kind: 'primary' }) : ''),
     { art: 'signal-clients', signature: true })}
     <form class="client-search" data-form="filter">${field('Search clients', 'q', query.get('q'), { type: 'search', placeholder: 'Client name', max: 180, glyph: 'search' })}
     <div class="actions">${btn('Search', { type: 'submit' })}${query.size ? btn('Clear', { action: 'clear-filters', kind: 'quiet' }) : ''}</div></form>
@@ -246,11 +246,13 @@ export function clientsPage(data, query, user, zone) {
 const checkboxes = (label, key, rows, selected = []) => `<fieldset class="repeater"><legend>${h(label)}</legend><div class="check-list">${rows.map(row =>
   `<label class="check"><input type="checkbox" name="${h(key)}" value="${h(row.id)}"${selected.includes(row.id) ? ' checked' : ''}>${h(row.name)}</label>`).join('')}</div></fieldset>`;
 
-export function clientForm(context, data) {
+export function clientForm(context, data, pipelineStages=[]) {
   const client = data?.client;
   const owners = context.owners.filter(row => row.enabled || row.id === client?.owner_id);
   return subjectForm(client ? 'client-edit' : 'add-client', client?.id, `${field('Client name', 'name', client?.name, { required: true, max: 180 })}
     ${select('Client owner', 'owner_id', names(owners), client?.owner_id ?? context.user.id)}${checkboxes('Additional client access', 'member_ids', owners, data?.member_ids)}
+    ${client?'':field('Contact name','contact','',{max:150})+field('Contact email','contact_email','',{type:'email',max:254})+
+      select('Add to pipeline','pipeline_stage',pipelineStages.filter(s=>s.id!=='signed'),'','Add later')}
     <div>${btn(client ? 'Save client' : 'Add client', { kind: 'primary', type: 'submit' })}</div>`);
 }
 

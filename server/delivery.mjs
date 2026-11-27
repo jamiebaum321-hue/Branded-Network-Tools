@@ -84,7 +84,7 @@ export function dealDetail(s, a, key) {
   };
 }
 const reportFields = { start_day: str(10), end_day: str(10) };
-export function reportEvidence(s, a, key, input, zone = 'America/New_York') {
+export function reportEvidence(s, a, key, input, zone = 'America/New_York', wholeClient = false) {
   const e = engagement(s, a, key);
   if (!e.client_id || e.line !== 'solutions') throw new AppError(400, 'A Solutions client is required.');
   const { start_day: start, end_day: end } = validate(object(reportFields), input);
@@ -105,15 +105,14 @@ export function reportEvidence(s, a, key, input, zone = 'America/New_York') {
   const through = new Date(midnight(end, zone, 1)).toISOString();
   const work = s.all(
     `SELECT w.kind,w.title,CASE WHEN w.recorded_at<? THEN w.due ELSE '' END due,w.external_ref,
-      CASE WHEN w.recorded_at<? THEN (SELECT name FROM users WHERE id=coalesce(w.owner_id,?)) ELSE '' END owner,
-      h.at recorded_at,h.notes,h.status FROM work_items w JOIN work_history h ON h.seq=(
+      CASE WHEN w.recorded_at<? THEN (SELECT name FROM users WHERE id=coalesce(w.owner_id,owning.owner_id)) ELSE '' END owner,
+      h.at recorded_at,h.notes,h.status FROM work_items w JOIN engagements owning ON owning.id=w.engagement_id JOIN work_history h ON h.seq=(
     SELECT seq FROM work_history WHERE item_id=w.id AND at<? ORDER BY at DESC,seq DESC LIMIT 1)
-    WHERE w.engagement_id=? AND w.audience='client' ORDER BY h.at,w.id`,
+    WHERE ${wholeClient?'w.engagement_id IN (SELECT id FROM engagements WHERE client_id=?)':'w.engagement_id=?'} AND w.audience='client' ORDER BY h.at,w.id`,
     through,
     through,
-    e.owner_id,
     through,
-    key
+    wholeClient?e.client_id:key
   );
   const touches = s
     .all(

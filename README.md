@@ -4,9 +4,9 @@ Branded Network Tools manages advisory sales and delivery for Branded Hospitalit
 
 | Screen | Workflow |
 | --- | --- |
-| Pipelines | Move opportunities from Outreach to Signed. Admins can add or remove stages. Won and Lost use total contract value, or the fee plus the retainer over the recorded term. MRR totals active signed retainers. ARR equals MRR multiplied by 12. Signing opens the client record and queues the accounting handoff. |
-| Project management | Open Onboarding, Weekly report, Introductions or Client follow-ups, or create a project with its own stages, schedule and clients. Track completed milestones as a percentage and export progress, dates and notes to CSV. |
-| Clients | Start with intake and uploaded files. Add a note or connection beside the client name. Filter the introduction map by relationship health or date. Notes & activity includes submissions, changes between versions and recorded work. |
+| Pipelines | Move opportunities from Outreach to Signed. Choose an existing client or create their profile with the engagement. Admins can add, rename, reorder and remove stages. Won and Lost use total contract value, or the fee plus the retainer over the recorded term. MRR totals active signed retainers. ARR equals MRR multiplied by 12. Signing keeps the engagement on the same client profile and queues the accounting handoff. |
+| Project management | Open Onboarding, Weekly report, Introductions or Client follow-ups, or create a project with its own icon, stages, schedule and clients. Creators and admins can edit or delete projects from the three-dot menu. Track completed milestones as a percentage and export progress, dates and notes to CSV. |
+| Clients | Start with intake and uploaded files. Send the intake through the connected workspace mailbox, open a draft in your email app, or copy its link. Add an engagement from the client header, a connection on the introduction map, or a note in Notes & activity. Weekly updates previews the client’s activity across engagements for the selected dates and exports that same content to PDF or Excel. |
 | Settings | Invite admins and team members, manage accounts and workspace access, and review mail delivery, Claude access, imports and audit history. |
 | My profile | From the account menu, edit your name, job title, phone, bio, notification preference or password. |
 
@@ -49,4 +49,4 @@ Run `npm run db:backup -- /path/to/new-backup.sqlite` for an online SQLite backu
 npm test
 ```
 
-The integration tests use temporary loopback servers and isolated SQLite data. They cover version 1 and 2 upgrades, staff profiles, invitation delivery, project milestones, client map and roster imports, account and workspace isolation, contract signing, accounting, intake and PDF, campaign routing, mailbox replay, introductions, weekly reporting and Claude permissions. CI also runs `npm run test:browser` through a complete desktop and mobile pilot using Playwright and Chrome. For a local browser test, make `playwright-core` available to Node and set `BNT_SMOKE_CHROMIUM` to the Chrome executable.
+The integration tests use temporary loopback servers and isolated SQLite data. They cover legacy database upgrades and sales-to-client linking, staff profiles, invitation delivery, project milestones, client map and roster imports, account and workspace isolation, contract signing, accounting, intake and PDF, campaign routing, mailbox replay, introductions, weekly reporting and Claude permissions. CI also runs `npm run test:browser` through a complete desktop and mobile pilot using Playwright and Chrome. For a local browser test, make `playwright-core` available to Node and set `BNT_SMOKE_CHROMIUM` to the Chrome executable.

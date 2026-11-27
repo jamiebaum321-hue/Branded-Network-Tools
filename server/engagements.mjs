@@ -4,6 +4,7 @@ import {
   audit,
   clientFor,
   clientScope,
+  canAccessClient,
   decode,
   encode,
   id,
@@ -11,6 +12,7 @@ import {
   requireAdmin,
   requireHuman,
 } from './store.mjs';
+import { primaryEngagement } from './client-links.mjs';
 import { insertClient } from './clients.mjs';
 import { choice, email, int, list, num, object, str, validate } from './validation.mjs';
 import { salesColumns } from './sales-stages.mjs';
@@ -25,6 +27,7 @@ Object.assign(detailFields, {
   fee_percent: num(0, 100),
   fee_terms: str(2500, 0),
   package: str(4000, 0),
+  pipeline_note: str(1000, 0),
   research_sources: str(3000, 0),
   billing_terms: str(1500, 0),
   agreement_url: str(1200, 0),
@@ -181,6 +184,9 @@ export function deals(s, a, line, config) {
     (SELECT at FROM touches WHERE engagement_id=e.id AND kind='reply' ORDER BY julianday(at) DESC,id LIMIT 1) last_reply,
     (SELECT title FROM touches WHERE engagement_id=e.id AND kind='reply' ORDER BY julianday(at) DESC,id LIMIT 1) last_reply_subject,
     (SELECT title FROM touches WHERE engagement_id=e.id AND kind='meeting' ORDER BY julianday(at) DESC,id LIMIT 1) last_meeting,
+    (SELECT json_extract(answers,'$.contact_name') FROM submissions WHERE client_id=e.client_id ORDER BY version DESC LIMIT 1) intake_contact,
+    coalesce((SELECT substr(coalesce(nullif(w.notes,''),w.title),1,200) FROM work_items w WHERE w.engagement_id=e.id AND w.kind='note' AND instr(w.title,' → ')=0 ORDER BY w.recorded_at DESC,w.id LIMIT 1),
+      (SELECT substr(n.body,1,200) FROM client_notes n WHERE n.client_id=e.client_id ORDER BY n.created_at DESC,n.id LIMIT 1)) card_note,
     (SELECT max(submitted_at) FROM submissions WHERE client_id=e.client_id) intake_received,
     (SELECT max(end_day) FROM report_versions WHERE engagement_id=e.id AND status='sent') last_report,
     (SELECT status FROM dispatches WHERE engagement_id=e.id AND kind IN ('agreement_signed','billing_completed') ORDER BY created_at DESC LIMIT 1) billing_status
@@ -261,33 +267,54 @@ function validateDetails(data) {
 export function createDeal(s, a, line, input) {
   requireHuman(a);
   checkLine(s, a, line);
-  const data = validate(
-    object({ company: str(180), title: str(240), owner_id: str(80), details: detailsSchema }, ['company']),
-    input
-  );
-  const owner = data.owner_id || a.id;
-  if ((owner !== a.id && a.role !== 'admin') || !workspaceAccounts(s, a, line).some((u) => u.id === owner))
-    throw new AppError(403, 'Choose an assigned owner.');
-  return s.tx(() => insertDeal(s, a, line, data, owner));
+  const fields={company:str(180),title:str(240),owner_id:str(80),details:detailsSchema};
+  if(line==='solutions') Object.assign(fields,{client_mode:choice('new','existing'),client_id:str(80),member_ids:list(str(80),200),stage:str(80),request_id:str(80)});
+  const data=validate(object(fields,line==='solutions'?[]:['company']),input);
+  return s.tx(()=>{
+    if(data.request_id) {
+      const existing=s.get('SELECT engagement_id FROM engagement_requests WHERE actor_id=? AND request_id=?',a.id,data.request_id);
+      if(existing) {
+        const row=engagement(s,a,existing.engagement_id);
+        return {id:row.id,client_id:row.client_id};
+      }
+    }
+    let client;
+    if(data.client_id || data.client_mode==='existing') {
+      if(!data.client_id || data.client_mode==='new') throw new AppError(400,'Choose an existing client.');
+      client=clientFor(s,a,data.client_id);
+      data.company=client.name;
+      if(data.member_ids?.length) throw new AppError(400,'Manage this client’s access on its profile.');
+    }
+    if(!data.company) throw new AppError(400,'Enter the new client name.');
+    if(data.client_mode==='new') {
+      const [scope,args]=clientScope(a,'c.id');
+      if(s.get(`SELECT 1 FROM clients c WHERE (${scope}) AND lower(trim(c.name))=lower(trim(?))`,...args,data.company))
+        throw new AppError(409,'A client with this name already exists. Choose Existing client.');
+    }
+    const owner=data.owner_id || (a.role==='admin' && client?client.owner_id:a.id);
+    const people=workspaceAccounts(s,a,line);
+    if((owner!==a.id && a.role!=='admin') || !people.some(p=>p.id===owner) || (client && !canAccessClient(s,owner,client.id)))
+      throw new AppError(403,'Choose an owner with access to this client.');
+    if(data.member_ids?.length && (a.role!=='admin'||data.member_ids.some(key=>!people.some(p=>p.id===key))))
+      throw new AppError(403,'Choose eligible client team members.');
+    const result=insertDeal(s,a,line,data,owner);
+    if(data.request_id) s.run('INSERT INTO engagement_requests VALUES(?,?,?)',a.id,data.request_id,result.id);
+    return result;
+  });
 }
-export function insertDeal(s, a, line, data, owner) {
-  const key = id(),
-    at = iso();
-  s.run(
-    'INSERT INTO engagements(id,company_id,line,owner_id,title,stage,details,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)',
-    key,
-    companyId(s, data.company),
-    line,
-    owner,
-    data.title || data.company,
-    'outreach',
-    encode(validateDetails(data.details || {})),
-    at,
-    at
-  );
-  audit(s, a, 'engagement.created', 'engagement', key, null, { line });
-  return { id: key };
+export function insertDeal(s,a,line,data,owner) {
+  const key=id(),at=iso(),stage=data.stage||'outreach',details=validateDetails(data.details||{});
+  let client=data.client_id||null;
+  if(line==='solutions') {
+    if(stage==='signed'||!s.get('SELECT 1 FROM solution_sales_stages WHERE id=?',stage)) throw new AppError(400,'Choose an open sales stage.');
+    if(!client) client=insertClient(s,a,{name:data.company,owner_id:owner,member_ids:data.member_ids||[]},at,false).id;
+  }
+  s.run(`INSERT INTO engagements(id,company_id,line,owner_id,title,stage,client_id,details,created_at,updated_at)
+    VALUES(?,?,?,?,?,?,?,?,?,?)`,key,companyId(s,data.company),line,owner,data.title||data.company,stage,client,encode(details),at,at);
+  audit(s,a,'engagement.created','engagement',key,client,{line});
+  return {id:key,...(client?{client_id:client}:{})};
 }
+
 export function queueMail(s, { key, deal = null, pitch = null, report = null, kind, to = '', subject, body }) {
   s.run(
     'INSERT INTO dispatches(id,dedupe_key,engagement_id,pitch_id,report_id,kind,recipient,subject,body,created_at) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(dedupe_key) DO NOTHING',
@@ -381,7 +408,7 @@ function applyDealChange(s, a, key, input, config) {
     if (next === 'cold' && !d.due) throw new AppError(400, 'Set a date to revisit this opportunity.');
     if (next === 'dead' && !d.outcome) throw new AppError(400, 'Record why this opportunity closed.');
     const won =
-      !row.client_id && !row.signed_at && !def.delivery.includes(row.stage) && def.delivery.includes(next);
+      !row.signed_at && !def.delivery.includes(row.stage) && def.delivery.includes(next);
     if (won && next !== 'signed')
       throw new AppError(400, 'Record the signed agreement before starting delivery.');
     if (
@@ -394,7 +421,7 @@ function applyDealChange(s, a, key, input, config) {
       throw new AppError(400, 'Use Completed to close a signed engagement.');
     let client = row.client_id;
     const owner = data.owner_id || row.owner_id;
-    if (won && row.line === 'solutions') {
+    if (won && row.line === 'solutions' && !client) {
       client = insertClient(
         s,
         a,
@@ -409,7 +436,9 @@ function applyDealChange(s, a, key, input, config) {
         false
       ).id;
     }
-    if (client && owner !== row.owner_id) {
+    if(client && owner!==row.owner_id && s.get('SELECT 1 FROM engagements WHERE client_id=? AND id<>?',client,key)) {
+      if(!canAccessClient(s,owner,client)) throw new AppError(403,'Choose an owner with access to the client.');
+    } else if (client && owner !== row.owner_id) {
       if (
         s.get(
           "SELECT 1 FROM cards WHERE client_id=? AND owner_id=? AND stage<>'closed'",
@@ -496,7 +525,7 @@ export function recordHistoricalAgreement(s, a, key, input, config) {
     throw new AppError(400, 'Choose a past or current signature date.');
   return s.tx(() => {
     const e = engagement(s, a, key);
-    if (e.signed_at || e.version !== d.version || !e.client_id)
+    if (e.signed_at || e.version !== d.version || !e.client_id || !lines.solutions.delivery.includes(e.stage))
       throw new AppError(409, 'Refresh the existing advisory client before recording its agreement.');
     const url = httpLink(d.agreement_url) || e.details.agreement_url || '';
     if (!url && !s.get("SELECT 1 FROM attachments WHERE engagement_id=? AND purpose='agreement'", key))
@@ -519,7 +548,7 @@ export function recordHistoricalAgreement(s, a, key, input, config) {
 }
 export function applyIntakeBilling(s, client, answers, config) {
   const e = s.get(
-    'SELECT *, (SELECT name FROM companies WHERE companies.id=engagements.company_id) company FROM engagements WHERE client_id=?',
+    `SELECT e.*,co.name company FROM clients c JOIN engagements e ON e.id=(${primaryEngagement}) JOIN companies co ON co.id=e.company_id WHERE c.id=?`,
     client
   );
   if (!e || !config) return;
@@ -552,19 +581,12 @@ export function shareDeal(s, a, key, input) {
     if (users.some((v) => !allowed.has(v))) throw new AppError(400, 'Choose active workspace members.');
     s.run('DELETE FROM engagement_members WHERE engagement_id=?', key);
     if (row.client_id) {
-      const active = s.all(
-        "SELECT DISTINCT owner_id FROM cards WHERE client_id=? AND stage<>'closed'",
-        row.client_id
-      );
-      if (
-        active.some(
-          (v) =>
-            v.owner_id !== row.owner_id &&
-            !users.includes(v.owner_id) &&
-            s.get('SELECT role FROM users WHERE id=?', v.owner_id)?.role !== 'admin'
-        )
-      )
-        throw new AppError(409, 'Reassign open introductions first.');
+      const clientOwner=s.get('SELECT owner_id FROM clients WHERE id=?',row.client_id).owner_id;
+      const assigned=s.all(`SELECT owner_id FROM cards WHERE client_id=? AND stage<>'closed'
+        UNION SELECT owner_id FROM engagements WHERE client_id=?`,row.client_id,row.client_id);
+      if(assigned.some(v=>v.owner_id!==clientOwner && !users.includes(v.owner_id) && s.get('SELECT role FROM users WHERE id=?',v.owner_id)?.role!=='admin'))
+        throw new AppError(409,'Reassign open introductions and engagements before removing their owner’s access.');
+      s.run(`DELETE FROM engagement_members WHERE engagement_id IN (SELECT id FROM engagements WHERE client_id=?)`,row.client_id);
       s.run('DELETE FROM client_members WHERE client_id=?', row.client_id);
     }
     for (const person of new Set(users)) {

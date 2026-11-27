@@ -16,4 +16,8 @@ export const groups = {priority:'Priority targets', strategic:'Strategic and cha
 export const healthStates = {unrated:'Unrated', green:'Strong', yellow:'Developing', red:'At risk'};
 export const relationshipStages = {identified:'Identified', planning:'Planning introduction', contacted:'Contacted', introduced:'Introduced', followup:'Following up', closed:'Closed'};
 export const departments = ['Leadership','Sales','Business development','Marketing','Partnerships','Other'];
+export const projectIcons={
+  'desk-bell':'Service bell','field-notes':'Notebook','room-key':'Room key','correspondence':'Envelopes',
+  'target':'Target','team':'Team','network':'Connections','flag':'Flag','clock':'Clock','board':'Board','draft':'Document','building':'Building',
+};
 export const fileLimitMiB = 25;
