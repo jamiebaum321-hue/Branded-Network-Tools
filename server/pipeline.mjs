@@ -12,7 +12,7 @@ const cardCreate = object({ client_id: str(80), ...cardFields }, ['client_id', '
 const cardUpdate = object({ ...cardFields, version: int(1, 1000000000) }, ['version']);
 const bodyText = str(12000, 0);
 const draftFields = { subject: str(300), body: str(12000), recipient: str(254, 0) };
-const staffActivity = object({ kind: choice('sent', 'reply', 'note'), subject: str(300, 0), body: bodyText,
+const staffActivity = object({ kind: choice('sent', 'reply', 'note','introduction'), subject: str(300, 0), body: bodyText,
   occurred_at: str(40), mailbox_scope: str(160), outlook_message_id: str(1000), draft_id: str(80) }, ['kind']);
 
 export const mailToolFields = {
@@ -254,6 +254,7 @@ export function manualActivity(store, actor, cardId, input) {
   const data = validate(staffActivity, input);
   checkMailKey(data);
   if (data.kind === 'note' && (!data.body || data.outlook_message_id || data.draft_id)) throw new AppError(400, 'Enter a note.');
+  if(data.kind==='introduction' && !data.body) throw new AppError(400,'Summarize the introduction for the weekly client update.');
   if (data.draft_id && data.kind !== 'sent') throw new AppError(400, 'Link drafts to sent activity.');
   data.occurred_at = data.occurred_at ? time(data.occurred_at) : iso();
   return store.tx(() => {

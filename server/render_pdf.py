@@ -12,6 +12,7 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
+from weekly_export import report_headings, report_lines, workbook
 
 
 def font_name():
@@ -42,11 +43,18 @@ def render(data):
     head = ParagraphStyle('head', fontName=font, fontSize=15, leading=21, textColor=HexColor('#2753C7'), spaceBefore=15, spaceAfter=8, keepWithNext=True)
     label = ParagraphStyle('label', fontName=font, fontSize=10, leading=15, textColor=HexColor('#142540'), keepWithNext=True)
     body = ParagraphStyle('body', fontName=font, fontSize=10, leading=15, textColor=HexColor('#465772'), spaceAfter=7, splitLongWords=True)
-    story = [Paragraph('Solutions Partner Onboarding', title), Paragraph(mark(data['client']), head),
-             Paragraph(f"Submission {data['version']} &nbsp; | &nbsp; {mark(data['submitted_at'])}", body)]
-    if data['source']:
+    weekly = data.get('weekly', False)
+    document_title = 'Weekly client update' if weekly else 'Solutions Partner Onboarding'
+    period = (f"{data['start_day']} to {data['end_day']}" if weekly else
+              f"Submission {data['version']} · {data['submitted_at']}")
+    story = [Paragraph(document_title, title), Paragraph(mark(data['client']), head), Paragraph(mark(period), body)]
+    if weekly:
+        for line in report_lines(data):
+            if line.strip():
+                story.append(Paragraph(mark(line), head if line in report_headings else body))
+    if data.get('source'):
         story.append(Paragraph(f"Source: {mark(data['source'])}", body))
-    for section in data['pages']:
+    for section in data.get('pages', []):
         story.append(Paragraph(mark(section['title']), head))
         for field in section['fields']:
             story.append(Paragraph(mark(field['label']), label))
@@ -69,10 +77,11 @@ def render(data):
 
     buffer = io.BytesIO()
     document = SimpleDocTemplate(buffer, pagesize=letter, leftMargin=44, rightMargin=44, topMargin=42,
-                                 bottomMargin=57, title='Solutions Partner Onboarding', author='Branded Network Tools')
+                                 bottomMargin=57, title=document_title, author='Branded Network Tools')
     document.build(story, onFirstPage=footer, onLaterPages=footer)
     return buffer.getvalue()
 
 
 if __name__ == '__main__':
-    sys.stdout.buffer.write(render(json.load(sys.stdin)))
+    data = json.load(sys.stdin)
+    sys.stdout.buffer.write(workbook(data) if data.get('format') == 'xlsx' else render(data))

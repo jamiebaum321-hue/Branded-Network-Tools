@@ -3,12 +3,14 @@ import { createApp } from './app.mjs';
 import { configuration } from './config.mjs';
 import { demoEmail, demoPassword, loadDemo } from './demo.mjs';
 import { openStore } from './store.mjs';
+import { startMail } from './mail.mjs';
 
 const config = configuration(process.env, { demo: process.argv.includes('--demo') });
 const store = openStore(config.database);
-if (config.demo) await loadDemo(store);
+if (config.demo) await loadDemo(store,config);
 cleanExpired(store);
 const server = createApp(store, config);
+const stopMail=startMail(store,config);
 const cleanup = setInterval(() => {
   try { cleanExpired(store); } catch (error) { console.error('Session cleanup failed:', error.code ?? error.name); }
 }, 3600000).unref();
@@ -20,6 +22,7 @@ server.listen(config.port, config.host, () => {
 });
 for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => {
   clearInterval(cleanup);
+  stopMail();
   server.close(() => store.db.close());
   setTimeout(() => server.closeAllConnections(), 5000).unref();
 });

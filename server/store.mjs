@@ -1,3 +1,4 @@
+import { linkLegacySales } from './client-links.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync, mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -25,7 +26,7 @@ export function openStore(path) {
   const db = new DatabaseSync(file, { timeout: 5000, enableForeignKeyConstraints: true });
   db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA trusted_schema=OFF;');
   const version = db.prepare('PRAGMA user_version').get().user_version;
-  if (version > 1) {
+  if (version > 5) {
     db.close();
     throw new Error('The database requires a newer app version.');
   }
@@ -51,6 +52,31 @@ export function openStore(path) {
     if (store.get('PRAGMA user_version').user_version === 0) {
       db.exec(readFileSync(new URL('./schema.sql', import.meta.url), 'utf8'));
       db.exec('PRAGMA user_version=1');
+    }
+  });
+  if (version < 2) store.tx(() => {
+    if (store.get('PRAGMA user_version').user_version < 2) {
+      db.exec(readFileSync(new URL('./workspaces.sql', import.meta.url), 'utf8'));
+      db.exec('PRAGMA user_version=2');
+    }
+  });
+  if (version < 3) store.tx(() => {
+    if (store.get('PRAGMA user_version').user_version < 3) {
+      db.exec(readFileSync(new URL('./solutions.sql', import.meta.url), 'utf8'));
+      db.exec('PRAGMA user_version=3');
+    }
+  });
+  if (version < 4) store.tx(() => {
+    if (store.get('PRAGMA user_version').user_version < 4) {
+      db.exec(readFileSync(new URL('./project-library.sql', import.meta.url), 'utf8'));
+      db.exec('PRAGMA user_version=4');
+    }
+  });
+  if (version < 5) store.tx(() => {
+    if (store.get('PRAGMA user_version').user_version < 5) {
+      db.exec(readFileSync(new URL('./client-sales.sql', import.meta.url), 'utf8'));
+      linkLegacySales(store,id);
+      db.exec('PRAGMA user_version=5');
     }
   });
   return store;
@@ -81,9 +107,10 @@ export function clientScope(actor, column) {
     ];
   }
   if (actor.kind === 'user') return [
-    `EXISTS (SELECT 1 FROM clients owner WHERE owner.id=${column} AND owner.owner_id=?)
-      OR EXISTS (SELECT 1 FROM client_members member WHERE member.client_id=${column} AND member.user_id=?)`,
-    [actor.id, actor.id],
+    `EXISTS (SELECT 1 FROM workspace_members w WHERE w.user_id=? AND w.line='solutions') AND
+      (EXISTS (SELECT 1 FROM clients owner WHERE owner.id=${column} AND owner.owner_id=?)
+      OR EXISTS (SELECT 1 FROM client_members member WHERE member.client_id=${column} AND member.user_id=?))`,
+    [actor.id, actor.id, actor.id],
   ];
   return ['0=1', []];
 }

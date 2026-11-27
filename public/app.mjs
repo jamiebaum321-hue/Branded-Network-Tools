@@ -1,8 +1,11 @@
 import { sections } from './intake-fields.mjs';
+import { solutionController } from './solution-ui.mjs';
+import { workspaceController, intakeAssets, operations } from './workspace.mjs';
+import { connectBoardScrollbar } from './pipeline-editor.mjs';
 import { btn, emptyState, h, heading, icon, link, pathId, shell, stages } from './ui.mjs';
-import { activityItems, adminPage, alertRows, auditRows, boardCard, boardPage, cardPage, clientForm, clientPage,
-  clientRows, clientsPage, createCardForm, intakePage, inviteForm, jobTokenForm, metricsPage, setupPage, signInPage,
-  submissionPage, submissionRows, suggestionPage, suggestionRows, suggestionsPage, todayPage } from './views.mjs';
+import { activityItems, adminPage, alertRows, auditRows, boardCard, cardPage, clientForm,
+  clientRows, clientsPage, createCardForm, intakePage, inviteForm, jobTokenForm, setupPage, signInPage,
+  submissionPage, submissionRows, suggestionPage, suggestionRows, suggestionsPage } from './views.mjs';
 
 const main = document.querySelector('#main');
 const chrome = document.querySelector('#shell');
@@ -20,7 +23,6 @@ let seed = null;
 let dragged = null;
 let dropColumn = null;
 let toastTimer;
-let todayAcknowledgement = Promise.resolve();
 
 class RequestError extends Error {
   constructor(code, payload) {
@@ -94,13 +96,20 @@ function navigate(path, { replace = false } = {}) {
   if (!target.pathname.startsWith('/onboard/')) wizard = null;
   if (target.pathname !== '/admin' || target.searchParams.get('tab') !== 'import') { seed = null; imported = null; }
   const url = `${target.pathname}${target.search}${target.hash}`;
-  if (replace) history.replaceState(null, '', url);
-  else if (url !== `${location.pathname}${location.search}${location.hash}`) history.pushState(null, '', url);
+  const isDeal=/^\/work\/(?:solutions|media|capital)\/[\w-]+$/.test(target.pathname);
+  const boardPath=target.pathname.substring(0,target.pathname.lastIndexOf('/'));
+  const state=isDeal?{workBoard:location.pathname===boardPath?location.pathname+location.search:history.state?.workBoard}:null;
+  if (replace) history.replaceState(state, '', url);
+  else if (url !== `${location.pathname}${location.search}${location.hash}`) history.pushState(state, '', url);
   void render({ focus: true });
 }
 
 function show(html, focus, hash) {
+  const boardScroll=main.querySelector('.sales-board')?.scrollLeft || 0;
   main.innerHTML = html;
+  connectBoardScrollbar(boardScroll);
+  const selectedStage = main.querySelector('.deal-board > .chosen');
+  if (selectedStage) selectedStage.parentElement.scrollLeft = selectedStage.offsetLeft;
   main.setAttribute('aria-busy', 'false');
   if (hash) {
     let target;
@@ -136,7 +145,7 @@ function showError(error, focus = false) {
     return;
   }
   const title = error.code === 404 ? 'Page not found' : error.code === 403 ? 'Access required' : 'Couldn’t open this page';
-  show(`<div class="form-page">${heading(title, error.message || 'Please try again.')}<div class="actions">${user ? link('/today', 'Back to Today', 'back') : btn('Try again', { action: 'reload' })}</div></div>`, focus);
+  show(`<div class="form-page">${heading(title, error.message || 'Please try again.')}<div class="actions">${user ? link('/work', 'Back to pipelines', 'back') : btn('Try again', { action: 'reload' })}</div></div>`, focus);
 }
 
 async function render({ focus = false } = {}) {
@@ -144,13 +153,12 @@ async function render({ focus = false } = {}) {
   const path = location.pathname;
   const query = queryHere();
   const hash = location.hash;
-  const publicRoute = path.startsWith('/setup/') || path.startsWith('/onboard/');
+  const publicRoute = path.startsWith('/setup/') || path.startsWith('/onboard/') || path.startsWith('/inquire/');
   chrome.innerHTML = publicRoute ? '' : shell(user, path);
   main.setAttribute('aria-busy', 'true');
   if (focus) main.innerHTML = '<p class="loading" role="status">Loading…</p>';
   try {
     let html;
-    let todayResult;
     if (path.startsWith('/setup/')) {
       const key = path.split('/').at(-1);
       html = setupPage(await api(`/api/setup/${pathId(key)}`), key);
@@ -161,20 +169,20 @@ async function render({ focus = false } = {}) {
         if (current !== revision) return;
         wizard = { key, info, answers: info.draft, step: 0 };
       }
-      html = intakePage(wizard.info, key, wizard.step, wizard.answers);
+      html = intakePage(wizard.info, key, wizard.step, wizard.answers)+intakeAssets(wizard.info,key);
+    } else if (path.startsWith('/inquire/')) {
+      html=await workspace.page(path,query);
     } else if (!user) html = signInPage(demo);
-    else if (path === '/' || path === '/signin' || path === '/today') {
-      if (path !== '/today') history.replaceState(null, '', '/today');
-      todayResult = await api('/api/today');
-      html = todayPage(todayResult, zone);
-    } else if (path === '/pipeline') {
-      const [data, ctx] = await Promise.all([api(queryPath('/api/board', query)), getContext()]);
-      if (current !== revision) return;
-      context = ctx;
-      html = boardPage(data.groups, ctx, query, zone, stage);
-    } else if (path === '/pipeline/metrics') {
-      const [data, ctx] = await Promise.all([api(queryPath('/api/metrics', query)), getContext()]);
-      html = metricsPage(data, ctx, query, zone);
+    else if (path==='/' || path==='/signin') {navigate('/work',{replace:true});return;}
+    else if (path==='/operations') {navigate('/admin?tab=operations',{replace:true});return;}
+    else if (path==='/work'||path.startsWith('/work/')) {
+      html=await workspace.page(path,query);
+    } else if (path==='/today') {navigate('/work',{replace:true});return;}
+    else if (path==='/profile' || path==='/projects') {
+      html=await solutions.page(path,query);
+    } else if (path==='/pipeline' || path==='/pipeline/metrics') {
+      const client=query.get('client_id');
+      navigate(client?'/clients/'+pathId(client)+'?tab=map':'/clients',{replace:true});return;
     } else if (path === '/pipeline/suggestions') {
       const [data, ctx] = await Promise.all([api(queryPath('/api/suggestions', suggestionQuery(query))), getContext()]);
       html = suggestionsPage(data, ctx, query);
@@ -192,29 +200,29 @@ async function render({ focus = false } = {}) {
       context = ctx;
       html = clientsPage(data, query, user, zone);
     } else if (/^\/clients\/[\w-]+\/submissions\/[\w-]+$/.test(path)) {
-      html = submissionPage((await api(`/api${path}`)).submission, zone);
+      const {submission,previous,file_changes}=await api(`/api${path}?compare=1`);
+      html = submissionPage(submission,zone,previous,file_changes);
     } else if (path.startsWith('/clients/')) {
       const [data, ctx] = await Promise.all([api(`/api${path}`), getContext()]);
       if (current !== revision) return;
       context = ctx;
-      html = clientPage(data, ctx, zone);
+      html = await solutions.client(data,ctx,query,zone);
     } else if (path === '/admin') {
       if (user.role !== 'admin') throw new RequestError(403, { error: 'Ask an admin for access.' });
-      const tab = ['audit','import','mcp'].includes(query.get('tab')) ? query.get('tab') : 'accounts';
+      const tab = ['audit','import','mcp','operations'].includes(query.get('tab')) ? query.get('tab') : 'accounts';
       const ctxPromise = getContext();
       let data;
       if (tab === 'audit') {
         const [page, accounts] = await Promise.all([api(queryPath('/api/admin/audit', query)), api('/api/admin/accounts')]);
         data = { ...page, users: accounts.items };
-      } else data = tab === 'import' ? {} : await api(tab === 'mcp' ? '/api/admin/job-tokens' : '/api/admin/accounts');
+      } else data = tab === 'import' ? {} : await api(tab === 'mcp' ? '/api/admin/job-tokens' : tab==='operations' ? '/api/admin/operations' : '/api/admin/accounts');
       const ctx = await ctxPromise;
       if (current !== revision) return;
       context = ctx;
-      html = adminPage(tab, data, ctx, query, zone, imported);
+      html = adminPage(tab, data, ctx, query, zone, imported, tab==='operations'?operations(data):'');
     } else throw new RequestError(404, { error: 'This page doesn’t exist.' });
     if (current !== revision) return;
     show(html, focus, hash);
-    if (todayResult) todayAcknowledgement = api('/api/today/seen', 'POST', { reply_cursor: todayResult.reply_cursor }).catch(() => {});
     if (user && !publicRoute) refreshAlertDot();
   } catch (error) {
     if (current === revision) showError(error, focus);
@@ -250,6 +258,7 @@ function readWizard(form) {
 }
 
 async function advanceWizard(form, how) {
+  if(document.querySelector('form[data-form="ws-intake-file"][data-busy]')) throw new Error('Wait for the file upload to finish.');
   readWizard(form);
   const path = `/api/onboard/${pathId(wizard.key)}`;
   if (how === 'next' && wizard.step === sections.length - 1) {
@@ -272,13 +281,13 @@ const forms = {
   },
   async signin(form, data) {
     user = (await api('/api/session', 'POST', Object.fromEntries(data))).user;
-    if (['/', '/signin'].includes(location.pathname)) navigate('/today', { replace: true });
+    if (['/', '/signin'].includes(location.pathname)) navigate('/work', { replace: true });
     else await render({ focus: true });
   },
   async setup(form, data) {
     if (data.get('password') !== data.get('confirmation')) throw new Error('The passwords do not match.');
     user = (await api(`/api/setup/${pathId(form.dataset.id)}`, 'POST', { password: data.get('password') })).user;
-    navigate('/today', { replace: true });
+    navigate('/work', { replace: true });
   },
   async 'add-card'(form, data) {
     const value = Object.fromEntries(data);
@@ -325,7 +334,9 @@ const forms = {
     navigate(`${location.pathname}#draft-${pathId(draft.id)}`, { replace: true });
   },
   async 'add-client'(form, data) {
-    const { client } = await api('/api/clients', 'POST', { name: data.get('name'), owner_id: data.get('owner_id'), member_ids: data.getAll('member_ids') });
+    const payload={name:data.get('name'),owner_id:data.get('owner_id'),member_ids:data.getAll('member_ids'),contact:data.get('contact'),contact_email:data.get('contact_email')};
+    if(data.get('pipeline_stage')) payload.pipeline_stage=data.get('pipeline_stage');
+    const { client }=await api('/api/clients','POST',payload);
     notify('Client added.');
     navigate(`/clients/${pathId(client.id)}`);
   },
@@ -336,9 +347,9 @@ const forms = {
   },
   async intake(form) { await advanceWizard(form, 'next'); },
   async 'invite-account'(form, data) {
-    const result = await api('/api/admin/accounts', 'POST', Object.fromEntries(data));
+    const result = await api('/api/admin/accounts', 'POST', {...Object.fromEntries(data),workspaces:data.getAll('workspaces')});
     await render();
-    revealValue('One-time setup link', new URL(result.setup.path, location.origin).href, 'Share this link with the invited user. It expires in 24 hours.');
+    revealValue('One-time setup link', new URL(result.setup.path, location.origin).href, result.delivery==='queued' ? 'The invitation is queued for email. This link expires in 24 hours.' : 'Share this link with the invited person. It expires in 24 hours.');
   },
   async 'edit-account'(form, data) {
     const value = Object.fromEntries(data);
@@ -482,23 +493,23 @@ function changeRepeater(button, remove) {
     if (rows.length >= 40) throw new Error('Use a list link for more than 40 entries.');
     rows.push({});
   }
-  show(intakePage(wizard.info, wizard.key, wizard.step, wizard.answers));
+  show(intakePage(wizard.info, wizard.key, wizard.step, wizard.answers)+intakeAssets(wizard.info,wizard.key));
   const entry = remove ? null : main.querySelector(`[name^="rows|${button.dataset.key}|${rows.length - 1}|"]`);
   (entry ?? main.querySelector(`[data-action="add-row"][data-key="${button.dataset.key}"]`))?.focus();
 }
 
 const actions = {
-  reload: async () => { await todayAcknowledgement; await render({ focus: true }); },
+  reload: () => render({ focus:true }),
   alerts: showAlerts,
   'mark-alerts': async button => { await api('/api/alerts/seen', 'POST', { ids: button.dataset.ids.split(',') }); await showAlerts(); },
   account: () => showDialog('Account', `<div class="stack"><div><strong>${h(user.name)}</strong><p class="muted">${h(user.email)}</p></div>
-    <div>${btn('Sign out', { action: 'logout', glyph: 'logout' })}</div></div>`, { glyph: 'user' }),
+    <div class="actions">${link('/profile','My profile','user')}${user.role==='admin'?link('/admin','Team settings','settings'):''}${btn('Sign out', { action: 'logout', glyph: 'logout' })}</div></div>`, { glyph: 'user' }),
   logout: async () => { await api('/api/session/logout', 'POST'); user = null; context = null; navigate('/signin', { replace: true }); },
   'close-dialog': () => dialog.close(),
   'clear-filters': () => navigate(location.pathname),
   'pick-stage': button => pickStage(button.dataset.stage),
   'add-card': () => showDialog('Add contact', createCardForm(context), { glyph: 'leads' }),
-  'add-client': () => showDialog('Add client', clientForm(context), { glyph: 'building' }),
+  'add-client': async () => { const board=await api('/api/workspaces/solutions');showDialog('Add client',clientForm(context,null,board.stages),{glyph:'building'}); },
   'invite-account': () => showDialog('Invite user', inviteForm(), { glyph: 'team' }),
   'new-job': () => showDialog('Create Claude job credential', jobTokenForm(context), { glyph: 'lock' }),
   'copy-dialog-value': () => clipboard(dialog.querySelector('textarea').value, 'Copied.'),
@@ -522,7 +533,7 @@ const actions = {
     const data = await api(`/api/suggestions/${pathId(button.dataset.id)}/decision`, 'POST', { decision: button.dataset.decision });
     notify(data.suggestion.card_id ? 'Added to To Contact.' : 'Suggestion dismissed.');
     if (data.suggestion.card_id) navigate(`/pipeline/cards/${pathId(data.suggestion.card_id)}`);
-    else navigate('/pipeline/suggestions');
+    else navigate('/clients/'+pathId(data.suggestion.client_id)+'?tab=map');
   },
   'form-link': async button => {
     const value = await api(`/api/clients/${pathId(button.dataset.id)}/form-link`, 'POST');
@@ -562,13 +573,15 @@ const actions = {
   'more-audit': button => moreRows(button, 'audit'),
 };
 
-async function exportPdf(anchor) {
+async function downloadFile(anchor) {
   const response = await fetch(anchor.href, { credentials: 'same-origin' });
   if (!response.ok) throw new RequestError(response.status, await response.json().catch(() => ({})));
   const objectUrl = URL.createObjectURL(await response.blob());
   const download = document.createElement('a');
   download.href = objectUrl;
-  download.download = response.headers.get('content-disposition')?.match(/filename="([a-zA-Z0-9.-]+)"/)?.[1] || 'onboarding.pdf';
+  const disposition = response.headers.get('content-disposition') || '';
+  const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  download.download = encoded ? decodeURIComponent(encoded) : disposition.match(/filename="([^"]+)"/)?.[1] || anchor.download || 'onboarding.pdf';
   document.body.append(download);
   download.click();
   download.remove();
@@ -590,7 +603,7 @@ document.addEventListener('click', async event => {
   if (!anchor || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey || anchor.target) return;
   if (anchor.hasAttribute('download') && anchor.origin === location.origin && anchor.pathname.startsWith('/api/')) {
     event.preventDefault();
-    try { await exportPdf(anchor); } catch (error) { notify(error.message); }
+    try { await downloadFile(anchor); } catch (error) { notify(error.message); }
     return;
   }
   if (!['http:', 'https:'].includes(anchor.protocol) || anchor.origin !== location.origin || anchor.getAttribute('href').startsWith('#')) return;
@@ -663,6 +676,11 @@ document.addEventListener('drop', async event => {
   } catch (error) { notify(error.message); }
 });
 
+const workspace=workspaceController({api,navigate,render,showDialog,notify,clipboard,getUser:()=>user,getZone:()=>zone,
+  onIntakeUpload:(key,file)=>{if(wizard?.key!==key)return;if(!wizard.info.files.some((f)=>f.id===file.id))wizard.info.files.push(file);return wizard.info.files;}});
+const solutions=solutionController({api,navigate,render,showDialog,notify,getUser:()=>user,getZone:()=>zone,setUser:(value)=>{user=value;}});
+Object.assign(forms,workspace.forms,solutions.forms);
+Object.assign(actions,workspace.actions,solutions.actions);
 window.addEventListener('popstate', () => { if (dialog.open) dialog.close(); void render({ focus: true }); });
 document.addEventListener('visibilitychange', refreshAlertDot);
 setInterval(refreshAlertDot, 60000);

@@ -1,12 +1,12 @@
 # MCP and the Claude job
 
-The app exposes an authenticated Streamable HTTP endpoint at `https://<app-host>/mcp`. Use the app URL as the resource identifier, including `/mcp`. The Claude scheduled job uses an app-issued bearer credential. Interactive Claude or ChatGPT users use read-only OAuth identities when the operator enables OAuth.
+The app exposes an authenticated Streamable HTTP endpoint at `https://<app-host>/mcp`. Use the app URL as the resource identifier, including `/mcp`. A client-scoped integration job uses an app-issued bearer credential. A staff member's Claude connection uses their OAuth identity, workspace membership and engagement permissions.
 
 ## Configure the scheduled job
 
 In **Admin → MCP access**, create a credential with access to the clients the job manages. Save the displayed token in the job’s secret store. It is shown once. Send it as `Authorization: Bearer <token>` on each MCP request. Create a new credential before expiration and revoke the old one when the replacement works. MCP writes identify the credential as `claude` in audit records.
 
-Run the team’s scheduled job twice a day to start. Keep the timing, mailbox cursor, event cursor and email receipts in the job’s own storage. The same endpoint works if the team changes the schedule.
+For optional introduction discovery and follow-up collection, keep that job’s timing, mailbox cursor, event cursor and receipts in its own storage. The separate personal morning briefing is configured in Branded’s Claude.
 
 1. Read relevant cards and activity. Match confirmed Outlook sends and replies to an authorized card. Send each unambiguous match to `log_sent_email` or `log_reply` with the actual mail timestamp and stable message ID. Queue ambiguous matches for staff. A `409` with an activity ID can indicate a possible manual duplicate. The manager can link the stable message ID on the existing activity entry.
 2. Read due follow-ups, then prepare drafts from the card and authorized mail history. Call `save_draft` with the follow-up ID. The app creates a fallback when a follow-up first comes due. Claude can replace an untouched fallback. Staff-edited or reviewed drafts stay in place. The manager reviews and sends from the prefilled email composer or copies the draft.
@@ -49,10 +49,23 @@ curl --request POST "$APP_ORIGIN/mcp" \
 
 Use the negotiated `MCP-Protocol-Version` header on subsequent requests. Send the `notifications/initialized` notification and then use `tools/list` for input schemas and `tools/call` to invoke a tool. Inspect the returned `isError` and status as well as the HTTP response. This endpoint returns JSON responses and works without a persistent transport session.
 
-## Configure interactive read-only access
+## Configure a staff connection
 
 1. Register this MCP resource with a team-owned OAuth authorization server that provides client registration or pre-registration supported by the chosen Claude or ChatGPT client, authorization-code flow with PKCE, and token introspection. Configure `MCP_ISSUER`, `MCP_INTROSPECTION_URL`, `MCP_INTROSPECTION_CLIENT_ID` and `MCP_INTROSPECTION_CLIENT_SECRET` in the app. The authorization server must issue `pipeline:read` tokens with the exact MCP resource URL as their audience and a stable `sub`.
-2. In **Admin → Accounts**, bind each approved reader’s OAuth subject to their active account. The app evaluates that account’s client permissions on each request. A normal member sees their assigned clients, and an admin sees all clients. The interactive identity receives only the read tools.
+2. In **Admin → Accounts**, bind the person's stable OAuth subject to their active account. `pipeline:read` grants scoped reads. The issuer can also grant `pipeline:write` for research, activity, sales-stage and follow-up updates, campaign targets and report drafts. Account and workspace permissions are evaluated on every call. Staff approve introductions, sign contracts and release client communications in the app.
 3. Add the deployed HTTPS `/mcp` URL in the chosen client and authorize the approved reader. Verify `tools/list`, one permitted card, and denial of access to an unassigned client. If the client sends an `Origin` header, allow its exact trusted origin in `MCP_ALLOWED_ORIGINS`.
 
 The application exposes OAuth protected resource metadata at `/.well-known/oauth-protected-resource/mcp` when enabled. Configure authorization and registration on the OAuth server. Connector rollout and available authentication settings depend on the workspace. [Claude custom connector setup](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp) · [OpenAI custom MCP guide](https://developers.openai.com/api/docs/guides/custom-mcp-server) · [MCP authorization specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization)
+
+## Business tools
+
+| Tools | Purpose and access |
+| --- | --- |
+| `list_workspaces`, `list_engagements`, `list_guest_pitches` | Staff see their assigned workspaces and deals. Pitches follow the assigned Media owner or an administrator. |
+| `get_engagement`, `get_onboarding_submission`, `get_client_asset` | Read authorized account context and versioned documents. The asset tool returns 32 KiB base64 chunks. Decode each before concatenation. A job can open engagements linked to a client in its grant. |
+| `save_introduction_research`, `record_engagement_work` | Save sourced research and dated work. Client-scoped jobs and staff writers use stable keys. Setting the work audience to `client` makes it eligible for a report. |
+| `update_engagement_followup`, `move_sales_stage` | Record dated next actions. Staff writers may move prospects between pre-signature stages. Changing an existing record requires its current version. |
+| `add_media_campaign_targets` | Staff writers can import up to 100 sourced companies into their Media campaign. The campaign and company determine duplicates. |
+| `get_weekly_evidence`, `save_weekly_report_draft` | Read client-reportable work for the period and save a draft for the owner. Reusing the draft source key preserves staff edits. |
+
+Find the three installable skills in the **Introductions**, **Weekly updates** and **Media → Conversations** screens. An owner can also install the corresponding folders from the repository. HubSpot, Outlook and Teams access comes from the connectors available to that person's Claude account. [Skill sources](../skills/) · [Claude custom skills](https://support.claude.com/en/articles/12512198-how-to-create-custom-skills)

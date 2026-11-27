@@ -54,7 +54,10 @@ export function assertWebOrigin(req, config) {
   }
 }
 
-const cookieName = (config) => config.origin.protocol === 'https:' ? '__Host-branded_session' : 'branded_session';
+const cookieName = config => {
+  if(config.origin.protocol==='https:') return '__Host-branded_session';
+  return config.demo ? 'branded_demo_'+(config.origin.port||'80')+'_session' : 'branded_session';
+};
 
 export function readSession(req, config) {
   const prefix = `${cookieName(config)}=`;

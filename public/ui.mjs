@@ -80,8 +80,8 @@ export function localInput(value) {
 
 export function field(label, key, value = '', { type = 'text', required = false, max = 300, placeholder = '', min, hint, autocomplete, glyph } = {}) {
   const input = type === 'textarea'
-    ? `<textarea name="${h(key)}" rows="4" maxlength="${max}" ${required ? 'required' : ''} placeholder="${h(placeholder)}">${h(value)}</textarea>`
-    : `<input name="${h(key)}" type="${h(type)}" value="${h(value)}" maxlength="${max}" ${required ? 'required' : ''}
+    ? `<textarea aria-label="${h(label)}" name="${h(key)}" rows="4" maxlength="${max}" ${required ? 'required' : ''} placeholder="${h(placeholder)}">${h(value)}</textarea>`
+    : `<input aria-label="${h(label)}" name="${h(key)}" type="${h(type)}" value="${h(value)}" maxlength="${max}" ${required ? 'required' : ''}
       ${min !== undefined ? `min="${min}"` : ''} ${autocomplete ? `autocomplete="${h(autocomplete)}"` : ''} placeholder="${h(placeholder)}">`;
   return `<label class="field"><span>${h(label)}${required ? '<span class="required" aria-hidden="true"> *</span>' : ''}</span>
     ${glyph ? `<span class="field-control">${icon(glyph)}${input}</span>` : input}${hint ? `<small>${h(hint)}</small>` : ''}</label>`;
@@ -89,7 +89,7 @@ export function field(label, key, value = '', { type = 'text', required = false,
 
 export function select(label, key, rows, selected = '', emptyLabel) {
   const choices = [...(emptyLabel ? [{ id: '', name: emptyLabel }] : []), ...rows];
-  return `<label class="field"><span>${h(label)}</span><select name="${h(key)}">${choices.map(row =>
+  return `<label class="field"><span>${h(label)}</span><select aria-label="${h(label)}" name="${h(key)}">${choices.map(row =>
     `<option value="${h(row.id)}"${String(row.id) === String(selected ?? '') ? ' selected' : ''}>${h(row.name)}</option>`).join('')}</select></label>`;
 }
 
@@ -99,14 +99,20 @@ export const btn = (label, { kind = '', action, data = '', glyph, endGlyph, type
   `<button type="${type}" class="button ${h(kind)}"${action ? ` data-action="${h(action)}"` : ''}${data ? ` ${data}` : ''}>${glyph ? icon(glyph) : ''}${h(label)}${endGlyph ? `<span class="button-end">${icon(endGlyph)}</span>` : ''}</button>`;
 export const link = (href, label, glyph, extra = '') => `<a href="${h(href)}" class="text-link ${h(extra)}">${glyph ? icon(glyph) : ''}${h(label)}</a>`;
 export const emptyState = (title, detail = '') => `<div class="empty"><strong>${h(title)}</strong>${detail ? `<p>${h(detail)}</p>` : ''}</div>`;
+export const artwork = key => {
+  if (/intake|onboard|planner|control|insight/.test(key)) return 'field-notes';
+  if (/client|profile|lead|connect/.test(key)) return 'room-key';
+  if (/today|welcome/.test(key)) return 'desk-bell';
+  return 'correspondence';
+};
 export function heading(title, detail = '', action = '', { art, date, compact = false, signature = false } = {}) {
   const copy = `${date ? `<span class="date-label">${h(date)}</span>` : ''}<h1>${h(title)}</h1>${detail ? `<p>${h(detail)}</p>` : ''}`;
   if (!art) return `<div class="heading"><div>${copy}</div>${action}</div>`;
   return `<div class="heading page-hero${compact ? ' compact' : ''}${signature ? ' signature' : ''}" data-art="${h(art)}">
     <div class="hero-copy">${copy}${action ? `<div class="hero-actions">${action}</div>` : ''}</div>
-    <div class="hero-visual" aria-hidden="true"><img src="/assets/artwork/${h(art)}.webp" width="240" height="136" alt="" decoding="async"></div></div>`;
+    <div class="hero-visual" aria-hidden="true"><img src="/assets/artwork/${artwork(art)}.png" width="240" height="136" alt="" decoding="async"></div></div>`;
 }
-export const brand = () => '<a class="brand" href="/today"><img width="39" height="39" src="/assets/brand/network-mark.svg" alt=""><span>Branded Network<small>Solutions Pipeline</small></span></a>';
+export const brand = () => '<a class="brand" href="/work"><img width="39" height="39" src="/assets/brand/network-mark.svg" alt=""><span>Branded Network<small>Business workspace</small></span></a>';
 
 export function outboundLink(value) {
   try {
@@ -118,17 +124,24 @@ export function outboundLink(value) {
 
 export function shell(user, location) {
   if (!user) return '';
-  const sections = [
-    ['/today', 'Today', 'today', location === '/' || location === '/today'],
-    ['/pipeline', 'Pipeline', 'board', location.startsWith('/pipeline')],
-    ['/clients', 'Clients', 'clients', location.startsWith('/clients')],
-  ];
-  if (user.role === 'admin') sections.push(['/admin', 'Admin', 'shield', location === '/admin']);
+  const allowed=user.workspaces || [];
+  const routeLine=/^\/work\/(solutions|media|capital)(?:\/|$)/.exec(location)?.[1];
+  const line=routeLine || (location.startsWith('/clients') || location.startsWith('/projects') || location.startsWith('/pipeline') ? 'solutions' : sessionStorage.getItem('branded-line-'+user.id)) || allowed[0] || 'solutions';
+  sessionStorage.setItem('branded-line-'+user.id,line);
+  const names={solutions:'Solutions',media:'Media',capital:'Capital'};
+  const switcher=`<details class="workspace-switch"><summary aria-label="Switch workspace, ${h(names[line])}"><span class="workspace-monogram">${icon('network')}</span><strong>${h(names[line])}</strong>${icon('down')}</summary>
+    <div class="workspace-menu">${Object.entries(names).filter(([id])=>id!=='solutions' || allowed.includes(id) || user.role==='admin').map(([id,name])=>`<a href="/work/${id}" ${line===id?'aria-current="true"':''}><span class="ws-dot dot-${id}"></span>${name}${line===id?icon('check'):''}</a>`).join('')}</div></details>`;
+  const sections = line==='solutions' && (allowed.includes('solutions') || user.role==='admin') ? [
+    ['/work/solutions','Pipelines','board',location==='/' || location.startsWith('/work')],
+    ['/projects','Project management','stack',location==='/projects'],
+    ['/clients','Clients','clients',location.startsWith('/clients') || location.startsWith('/pipeline')],
+  ] : [];
+  if (user.role==='admin') sections.push(['/admin','Settings','settings',location==='/admin'||location==='/operations']);
   const current = sections.find(section => section[3]);
   const nav = sections.map(([url, label, glyph, active]) => `<a href="${url}"${active ? ' aria-current="page"' : ''}><span class="nav-icon">${icon(glyph)}</span><span>${label}</span></a>`).join('');
-  return `<header class="app-header"><div class="bar"><div class="bar-brand">${brand()}</div>
-    <div class="workspace-context" aria-hidden="true">${icon('network')}<span>Workspace</span>${icon('chevron')}<strong>${h(current?.[1] ?? 'Today')}</strong></div>
-    <div class="app-rail"><div class="rail-brand">${brand()}</div><span class="rail-caption" aria-hidden="true">Workspace</span><nav class="main-nav" aria-label="Main">${nav}</nav></div>
+  return `<header class="app-header"><div class="bar"><div class="bar-brand">${brand()}${switcher}</div>
+    <div class="workspace-context" aria-hidden="true">${icon('network')}<span>${h(names[line])}</span>${icon('chevron')}<strong>${h(current?.[1] || (location==='/profile'?'My profile':names[line]))}</strong></div>
+    <div class="app-rail"><div class="rail-brand">${brand()}</div><div class="rail-switch">${switcher}</div><nav class="main-nav" aria-label="Main">${nav}</nav></div>
     <div class="account-actions"><button class="icon-button" data-action="alerts" aria-label="Alerts" title="Alerts">${icon('bell')}<span id="alert-dot" class="alert-dot" hidden></span></button>
     <button class="account-button" data-action="account" aria-label="Account menu for ${h(user.name)}" title="${h(user.name)}"><span class="avatar" aria-hidden="true">${h(initials(user.name))}</span><span class="account-name" aria-hidden="true">${h(user.name)}${icon('down')}</span></button></div></div></header>`;
 }

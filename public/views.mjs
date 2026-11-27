@@ -1,5 +1,5 @@
 import { sections } from './intake-fields.mjs';
-import { badge, brand, btn, currentDate, emptyState, field, formatDate, h, heading, hidden, icon, initials, link,
+import { artwork, badge, brand, btn, emptyState, field, formatDate, h, heading, hidden, icon, initials, link,
   localInput, outboundLink, pathId, pipelineTabs, select, stageBadge, stageDuration, stageOptions, stages, timeLabel } from './ui.mjs';
 
 const names = rows => rows.map(row => ({ id: row.id, name: row.name }));
@@ -16,7 +16,7 @@ const subjectForm = (type, id, inner) => `<form class="stack" data-form="${type}
 
 function illustratedState(art, title, detail, action = '') {
   return `<div class="illustrated-state"><div class="state-art">
-    <img src="/assets/artwork/${h(art)}.webp" width="184" height="114" loading="lazy" decoding="async" alt=""></div>
+    <img src="/assets/artwork/${artwork(art)}.png" width="184" height="114" loading="lazy" decoding="async" alt=""></div>
     <div class="state-copy"><strong>${h(title)}</strong><p>${h(detail)}</p>${action}</div></div>`;
 }
 
@@ -25,8 +25,8 @@ export function signInPage(demo) {
     ${subjectForm('signin', '', `${field('Email', 'email', demo ? 'demo@branded.example' : '', { type: 'email', autocomplete: 'username', required: true })}
     ${field('Password', 'password', demo ? 'Local-Demo-Pipeline-24' : '', { type: 'password', autocomplete: 'current-password', required: true, max: 256 })}
     ${btn('Sign in', { kind: 'primary', type: 'submit', endGlyph: 'arrow' })}`)}
-    ${demo ? '<p class="demo-note muted small">Local demo · Fictional records reset when the server stops.</p>' : ''}</div>
-    <div class="auth-art" aria-hidden="true"><img src="/assets/artwork/signal-welcome.webp" width="540" height="540" alt="" decoding="async"></div></div>`;
+    ${demo ? '<p class="demo-note muted small">Local demo · Fictional client records.</p>' : ''}</div>
+    <div class="auth-art" aria-hidden="true"><img src="/assets/artwork/desk-bell.png" width="540" height="540" alt="" decoding="async"></div></div>`;
 }
 
 export function setupPage(info, key) {
@@ -34,31 +34,6 @@ export function setupPage(info, key) {
     <div class="panel">${subjectForm('setup', key, `${field('Password', 'password', '', { type: 'password', autocomplete: 'new-password', required: true, max: 256, hint: 'Use at least 12 characters.' })}
     ${field('Confirm password', 'confirmation', '', { type: 'password', autocomplete: 'new-password', required: true, max: 256 })}
     ${btn('Activate account', { kind: 'primary', type: 'submit', glyph: 'lock' })}`)}</div></div>`;
-}
-
-export function todayPage(data, zone) {
-  const today = formatDate(new Date(), zone, { year: 'numeric' });
-  const dueLabel = row => formatDate(row.at, zone, { year: 'numeric' }) === today
-    ? badge('Due today', 'amber', 'clock') : badge(`Overdue · ${formatDate(row.at, zone)}`, 'red', 'clock');
-  const panels = [
-    { key: 'followups', title: 'Follow-ups due', glyph: 'today', tone: 'amber', empty: 'No follow-ups are due.', label: dueLabel },
-    { key: 'drafts', title: 'Drafts awaiting review', glyph: 'draft', tone: 'violet', empty: 'You have no drafts to review.', label: row => row.extra === 'claude' ? badge('Claude draft', 'violet') : '' },
-    { key: 'replies', title: 'Replies since last visit', glyph: 'reply', tone: 'green', empty: 'No new replies since your last visit.', label: row => badge(timeLabel(row.at, zone), 'green') },
-    { key: 'leads', title: 'Suggested leads', glyph: 'shortlist', tone: 'blue', empty: 'No leads are waiting for your review.', label: row => badge(row.extra, 'blue') },
-  ];
-  const title = heading('Today', 'Follow-ups, drafts, and replies in one place.', '', { art: 'signal-today', date: currentDate(zone), signature: true });
-  if (!data.more_replies && panels.every(panel => !data[panel.key].length)) {
-    return `${title}<section class="panel flush">${illustratedState('today-caught-up', 'You’re caught up',
-      'There are no follow-ups, drafts, replies, or leads waiting for you.', link('/pipeline', 'Open pipeline', 'arrow'))}</section>`;
-  }
-  return `${title}<div class="today-grid">${panels.map(panel => {
-    const rows = data[panel.key];
-    return `<section class="panel flush today-panel" aria-label="${h(panel.title)}" data-tone="${panel.tone}"><div class="panel-title"><span class="panel-icon ${panel.tone}">${icon(panel.glyph)}</span>
-      <h2>${panel.title}</h2>${rows.length ? badge(`${rows.length}${panel.key === 'replies' && data.more_replies ? '+' : ''}`, panel.tone) : ''}</div>
-      ${rows.length ? rows.map(row => `<a class="queue-row" href="${h(row.href)}"><div class="row-main"><strong>${h(row.person || row.company)}</strong>
-        <small>${h(panel.key === 'drafts' ? row.description : row.person ? row.company : row.description || row.company)}</small></div>${panel.label(row)}${navArrow()}</a>`).join('') : emptyState(panel.empty)}
-      ${panel.key === 'replies' && data.more_replies ? `<div class="pagination">${btn('Show remaining replies', { action: 'reload' })}</div>` : ''}</section>`;
-  }).join('')}</div>`;
 }
 
 function filters(kind, query, context, expanded = Boolean(query.size)) {
@@ -171,7 +146,7 @@ export function activityItems(rows, zone) {
 }
 
 function logForm(card, drafts) {
-  return `<details>${disclosure('Log activity', 'plus')}${subjectForm('activity', card.id, `${select('Activity', 'kind', [{ id: 'note', name: 'Note' }, { id: 'sent', name: 'Sent email' }, { id: 'reply', name: 'Reply' }], 'note')}
+  return `<details>${disclosure('Log activity', 'plus')}${subjectForm('activity', card.id, `${select('Activity', 'kind', [{ id: 'note', name: 'Note' }, {id:'introduction',name:'Introduction made'}, { id: 'sent', name: 'Sent email' }, { id: 'reply', name: 'Reply' }], 'note')}
     <div class="stack" data-mail-fields hidden>${field('Occurred (your local time)', 'occurred_at', localInput(new Date()), { type: 'datetime-local' })}
     ${field('Subject', 'subject', '')}<div data-sent-field hidden>${select('Matching draft', 'draft_id', drafts.filter(row => !['sent', 'cancelled'].includes(row.status)).map(row => ({ id: row.id, name: row.subject })), '', 'None selected')}</div>
     <details><summary class="small">Outlook message ID (optional)</summary>${fieldset(`${field('Mailbox scope', 'mailbox_scope', '', { max: 160 })}${field('Message ID', 'outlook_message_id', '', { max: 1000 })}`)}</details></div>
@@ -182,7 +157,7 @@ export function cardPage(data, zone, toStage, hash) {
   const { card, drafts, history } = data;
   const fields = [['Client', card.client_name], ['Owner', card.owner_name], ['Next step', card.next_step || '—'], ['Time in stage', stageDuration(card.entered_at)],
     ['Last touch', timeLabel(card.last_touch, zone)], ['Follow-up', timeLabel(card.due_at, zone)], ['Closure outcome', card.outcome || '—']];
-  return `${link('/pipeline', 'Back to pipeline', 'back', 'back-link')}${heading(card.person || card.company, card.person ? card.company : '',
+  return `${link('/clients/'+pathId(card.client_id)+'?tab=map', 'Client introduction map', 'back', 'back-link')}${heading(card.person || card.company, card.person ? card.company : '',
     stageBadge(card.stage), { art: 'contact-profile', compact: true })}
     <div class="detail-grid"><div class="stack"><section class="panel stack"><dl class="summary-grid">${fields.filter(([key]) => key !== 'Closure outcome' || card.stage === 'closed').map(([label, value]) =>
       `<div><dt>${h(label)}</dt><dd>${h(value)}</dd></div>`).join('')}</dl>
@@ -228,13 +203,13 @@ export function suggestionRows(rows) {
 export function suggestionsPage(data, context, query) {
   const empty = query.size ? emptyState('No matching suggestions.')
     : illustratedState('suggested-connections', 'No suggestions to review', 'New leads will appear here when they’re ready for review.');
-  return `${heading('Suggested leads', 'Review the fit and source before adding a contact to the pipeline.', '',
-    { art: 'signal-leads' })}${toolbar('suggestions', filters('suggestions', query, context))}
+  return `${heading('Suggested leads', 'Review a proposed introduction and its sources.', '',
+    { art: 'signal-leads' })}${filters('suggestions', query, context)}
     <section class="panel flush"><div id="suggestion-list">${data.items.length ? suggestionRows(data.items) : empty}</div>${pageMore('more-suggestions', data.next_offset)}</section>`;
 }
 
 export function suggestionPage(row) {
-  return `${link('/pipeline/suggestions', 'Back to suggested leads', 'back', 'back-link')}
+  return `${link('/clients/'+pathId(row.client_id)+'?tab=map', 'Client introduction map', 'back', 'back-link')}
     ${heading(row.person || row.company, row.person ? [row.title, row.company].filter(Boolean).join(' · ') : row.client_name,
       badge(statusName(row.status), row.status === 'approved' ? 'green' : 'blue'), { art: 'contact-profile', compact: true })}
     <div class="detail-grid"><section class="panel stack"><div>${sectionLabel('Why it fits', 'target', 'violet')}<p class="multiline section-copy">${h(row.reason)}</p></div>
@@ -255,13 +230,13 @@ export function clientRows(rows, zone) {
       <div class="client-card-top"><span class="client-mark" aria-hidden="true">${h(initials(row.name))}</span>
         <div class="row-main"><strong>${h(row.name)}</strong><small>${icon('user')}<span>${h(row.owner_name)}</span></small></div>
         <span class="client-open">${icon('arrow')}</span></div>
-      <div class="client-facts"><span class="client-count">${icon('board')}${row.open_cards} open ${row.open_cards === 1 ? 'card' : 'cards'}</span>
+      <div class="client-facts"><span class="client-count">${icon('board')}${row.open_cards} active ${row.open_cards === 1 ? 'introduction' : 'introductions'}</span>
         ${row.latest_submission ? badge(`Intake ${formatDate(row.latest_submission, zone)}`, 'green', 'check') : badge('No intake yet', 'neutral', 'draft')}</div></a>`;
   }).join('');
 }
 
 export function clientsPage(data, query, user, zone) {
-  return `${heading('Clients', 'Manage onboarding and see each client’s open contacts.', user.role === 'admin' ? btn('Add client', { action: 'add-client', glyph: 'plus', kind: 'primary' }) : '',
+  return `${heading('Clients', 'Client profiles, introduction maps and team contacts.', btn('New engagement',{action:'ws-new',glyph:'board'})+(user.role === 'admin' ? btn('Add client', { action: 'add-client', glyph: 'plus', kind: 'primary' }) : ''),
     { art: 'signal-clients', signature: true })}
     <form class="client-search" data-form="filter">${field('Search clients', 'q', query.get('q'), { type: 'search', placeholder: 'Client name', max: 180, glyph: 'search' })}
     <div class="actions">${btn('Search', { type: 'submit' })}${query.size ? btn('Clear', { action: 'clear-filters', kind: 'quiet' }) : ''}</div></form>
@@ -271,11 +246,13 @@ export function clientsPage(data, query, user, zone) {
 const checkboxes = (label, key, rows, selected = []) => `<fieldset class="repeater"><legend>${h(label)}</legend><div class="check-list">${rows.map(row =>
   `<label class="check"><input type="checkbox" name="${h(key)}" value="${h(row.id)}"${selected.includes(row.id) ? ' checked' : ''}>${h(row.name)}</label>`).join('')}</div></fieldset>`;
 
-export function clientForm(context, data) {
+export function clientForm(context, data, pipelineStages=[]) {
   const client = data?.client;
   const owners = context.owners.filter(row => row.enabled || row.id === client?.owner_id);
   return subjectForm(client ? 'client-edit' : 'add-client', client?.id, `${field('Client name', 'name', client?.name, { required: true, max: 180 })}
     ${select('Client owner', 'owner_id', names(owners), client?.owner_id ?? context.user.id)}${checkboxes('Additional client access', 'member_ids', owners, data?.member_ids)}
+    ${client?'':field('Contact name','contact','',{max:150})+field('Contact email','contact_email','',{type:'email',max:254})+
+      select('Add to pipeline','pipeline_stage',pipelineStages.filter(s=>s.id!=='signed'),'','Add later')}
     <div>${btn(client ? 'Save client' : 'Add client', { kind: 'primary', type: 'submit' })}</div>`);
 }
 
@@ -288,7 +265,7 @@ export function clientPage(data, context, zone) {
   const { client, submissions, link: active } = data;
   return `${link('/clients', 'Back to clients', 'back', 'back-link')}${heading(client.name, `Owner · ${client.owner_name}`, '', { art: 'signal-clients', compact: true })}
     <div class="grid-two"><section class="panel stack"><div class="onboarding-entry"><div>${sectionLabel('Solutions Partner Onboarding', 'link')}<p class="muted section-copy">Share a form link so the client can enter their answers.</p></div>
-    <img src="/assets/artwork/signal-intake.webp" width="96" height="64" loading="lazy" decoding="async" alt=""></div>
+    <img src="/assets/artwork/field-notes.png" width="96" height="64" loading="lazy" decoding="async" alt=""></div>
     <div class="actions">${btn('Copy form link', { action: 'form-link', glyph: 'link', kind: 'primary', data: `data-id="${h(client.id)}"` })}</div>
     ${active ? `<div class="muted">Active link expires ${h(formatDate(active.expires_at, zone))}.</div><details>${disclosure('Link settings', 'settings')}
       ${btn('Revoke active link', { action: 'revoke-form', kind: 'danger', data: `data-id="${h(client.id)}"` })}</details>` : ''}</section>
@@ -304,22 +281,40 @@ function answerValue(value) {
   return `<span class="multiline">${h(value === '' || value === undefined ? 'Not provided' : value)}</span>`;
 }
 
-export function submissionPage(row, zone) {
+function submittedAnswer(field,value) {
+  if(field.rows && Array.isArray(value)){
+    return value.map(item=>`<div class="evidence">${field.rows.filter(child=>item[child.key]).map(child=>`<p>${h(child.label)} · ${answerValue(item[child.key])}</p>`).join('')}</div>`).join('')||answerValue('');
+  }
+  return answerValue(value);
+}
+function changes(row,previous,files) {
+  if(!previous) return '';
+  const canonical=(field,value)=>field.rows?JSON.stringify((Array.isArray(value)?value:[]).map(item=>field.rows.map(c=>item[c.key]??''))):JSON.stringify(value??'');
+  const entries=sections.flatMap(section=>section.fields).filter(f=>canonical(f,row.answers[f.key])!==canonical(f,previous.answers[f.key]))
+    .map(f=>[f.label,submittedAnswer(f,previous.answers[f.key]),submittedAnswer(f,row.answers[f.key])]);
+  const names=list=>list.map(f=>h(f.name)+' · '+h(f.purpose)).join('<br>')||'None';
+  if(files && (files.added.length || files.removed.length)) entries.push(['Files added, removed or replaced',names(files.removed),names(files.added)]);
+  return `<section class="panel version-changes"><h2>Changes since version ${previous.version}</h2>
+    ${entries.length?`<table><thead><tr><th>Field</th><th>Version ${previous.version}</th><th>Version ${row.version}</th></tr></thead><tbody>
+    ${entries.map(([name,before,after])=>`<tr><th scope="row">${h(name)}</th><td>${before}</td><td>${after}</td></tr>`).join('')}</tbody></table>`:'<p>The answers and files match the previous submission.</p>'}</section>`;
+}
+export function submissionPage(row, zone, previous, files) {
   const clientPath = `/clients/${pathId(row.client_id)}`;
-  return `${link(clientPath, 'Back to client', 'back', 'back-link')}${heading(`${row.client_name} onboarding`,
+  return `${link(clientPath+'?tab=notes', 'Back to notes and activity', 'back', 'back-link')}${heading(`${row.client_name} onboarding`,
     `Submission ${row.version} · ${timeLabel(row.submitted_at, zone)}`, `<a class="button" href="/api${clientPath}/submissions/${pathId(row.id)}/pdf" download>${icon('download')}Export PDF</a>`,
     { art: 'signal-intake', compact: true })}
+    ${changes(row,previous,files)}
+    ${row.files?.length?`<section class="panel"><h2>Submitted files</h2><ul>${row.files.map(f=>`<li><a href="/api/files/${pathId(f.id)}" target="_blank" rel="noopener">${h(f.name)}</a> · ${h(f.purpose)}</li>`).join('')}</ul></section>`:''}
     <div class="grid-two">${sections.map(section => `<section class="panel submission-section"><h2>${h(section.title)}</h2><dl>${section.fields.map(field => {
       const answer = row.answers[field.key];
-      const value = field.rows && Array.isArray(answer) && answer.length ? answer.map(item => `<div class="evidence">${field.rows.filter(child => item[child.key]).map(child =>
-        `<p>${h(child.label)} · ${answerValue(item[child.key])}</p>`).join('')}</div>`).join('') : answerValue(answer);
+      const value=submittedAnswer(field,answer);
       return `<div class="submission-field"><dt>${h(field.label)}</dt><dd>${value}</dd></div>`;
     }).join('')}</dl></section>`).join('')}</div>`;
 }
 
 function repeatField(definition, rows) {
   return `<fieldset class="repeater"><legend>${h(definition.label)}</legend>${rows.map((item, index) => `<div class="repeat-row stack">
-    ${fieldset(definition.rows.map(child => field(child.label, `rows|${definition.key}|${index}|${child.key}`, item[child.key], child)).join(''))}
+    ${fieldset(definition.rows.map(child => child.options ? select(child.label, `rows|${definition.key}|${index}|${child.key}`, child.options.map((name)=>({id:name,name})), item[child.key], 'Choose a function') : field(child.label, `rows|${definition.key}|${index}|${child.key}`, item[child.key], child)).join(''))}
     <div>${btn('Remove', { action: 'remove-row', kind: 'quiet', glyph: 'close', data: `data-key="${h(definition.key)}" data-index="${index}" aria-label="Remove ${h(definition.label)} entry ${index + 1}"` })}</div></div>`).join('')}
     ${btn(definition.add, { action: 'add-row', glyph: 'plus', data: `data-key="${h(definition.key)}"` })}</fieldset>`;
 }
@@ -328,14 +323,14 @@ export function intakePage(info, key, step, answers) {
   if (info.submitted) return `<div class="form-page">${brand()}${heading('Response submitted', info.client_name)}
     <section class="panel flush">${illustratedState('client-onboarding', 'Thank you', 'Your responses have been saved and shared with the Solutions team.')}</section></div>`;
   const section = sections[step];
-  const stepGlyph = ['building', 'target', 'leads', 'board', 'stack', 'team'][step];
-  return `<div class="form-page">${brand()}${heading('Solutions Partner Onboarding', info.client_name, '', { art: 'signal-intake', compact: true })}<div class="step-bar"><span class="step-label"><span class="step-icon">${icon('intake')}</span>Step ${step + 1} of ${sections.length}</span>
+  const stepGlyph = ['target','building','leads','board','network','stack','upload','metrics','team'][step];
+  return `<div class="form-page">${brand()}${heading('Welcome to Branded Hospitality Solutions!', info.client_name, '', { art: 'signal-intake', compact: true })}${step === 0 ? '<p>To hit the ground running, we’d like to understand your business, growth priorities and existing relationships. This information will help us identify opportunities, make strategic introductions and accelerate results.</p><p><strong>No need to create anything new.</strong> Existing documents, CRM exports, spreadsheets, decks and shared links are perfect.</p>' : ''}<div class="step-bar"><span class="step-label"><span class="step-icon">${icon('intake')}</span>Step ${step + 1} of ${sections.length}</span>
     <progress class="visually-hidden" value="${step + 1}" max="${sections.length}" aria-label="Onboarding progress"></progress>
     <div class="step-segments" aria-hidden="true">${sections.map((_, i) => `<span${i <= step ? ` class="${i === step ? 'current' : 'complete'}"` : ''}></span>`).join('')}</div></div>
-    <section class="panel"><div class="section-head">${sectionLabel(section.title, stepGlyph)}</div>${subjectForm('intake', key, `${fieldset(section.fields.map(definition =>
+    <section class="panel"><div class="section-head">${sectionLabel(section.title, stepGlyph)}</div><p class="intake-description">${h(section.description)}</p>${subjectForm('intake', key, `${fieldset(section.fields.map(definition =>
       definition.rows ? `<div class="wide">${repeatField(definition, answers[definition.key] ?? [])}</div>` :
         `<div class="${definition.type === 'textarea' ? 'wide' : ''}">${field(definition.label, definition.key, answers[definition.key], { ...definition, min: definition.type === 'number' ? 0 : undefined })}</div>`).join(''))}
-      ${step === sections.length - 1 ? '<p class="muted">Review earlier sections with Back, then submit your answers.</p>' : ''}
+      ${step === sections.length - 1 ? '<p class="muted">The more we understand your business and priorities, the more effectively we can put the Branded Hospitality ecosystem to work.</p>' : ''}
       <div class="wizard-footer"><div class="actions">${step ? btn('Back', { action: 'intake-back', glyph: 'back' }) : ''}${btn('Save draft', { action: 'intake-save', kind: 'quiet', glyph: 'draft' })}</div>
       ${btn(step < sections.length - 1 ? 'Save and continue' : 'Submit answers', { type: 'submit', kind: 'primary', endGlyph: step < sections.length - 1 ? 'arrow' : 'check' })}</div>`)}</section></div>`;
 }
@@ -346,21 +341,21 @@ export function alertRows(data, zone) {
     <div class="row-main"><strong>${h(row.title)}</strong><small>${h(row.client_name)} · ${h(timeLabel(row.occurred_at, zone))}</small></div>${row.seen_at ? '' : badge('New', 'blue')}${navArrow()}</a>`).join('') : emptyState('You’re caught up.');
 }
 
-const adminSections = [['accounts', 'Accounts', 'team'], ['audit', 'Audit log', 'history'], ['import', 'Import JSON', 'upload'], ['mcp', 'MCP access', 'lock']];
-const roleOptions = [{ id: 'member', name: 'Member' }, { id: 'admin', name: 'Admin' }];
+const adminSections = [['accounts', 'Team', 'team'], ['operations','Workspace settings','settings'], ['audit', 'Audit log', 'history'], ['import', 'Import JSON', 'upload'], ['mcp', 'MCP access', 'lock']];
+const roleOptions = [{ id: 'member', name: 'Team member' }, { id: 'admin', name: 'Admin' }];
 
 function accountList(rows) {
   return `<div class="panel flush admin-list">${rows.map(user => `<details><summary><strong>${h(user.name)}</strong><small>${h(user.role === 'admin' ? 'Admin' : 'Member')} · ${user.enabled ? user.has_password ? 'Active' : 'Invited' : 'Disabled'}</small></summary>
     <p class="muted wrap">${h(user.email)}</p>${subjectForm('edit-account', user.id, `${fieldset(`${field('Name', 'name', user.name, { max: 100, required: true })}
     ${select('Role', 'role', roleOptions, user.role)}${select('Status', 'enabled', [{ id: 'true', name: 'Enabled' }, { id: 'false', name: 'Disabled' }], user.enabled ? 'true' : 'false')}
-    ${field('Read-only MCP subject', 'oauth_subject', user.oauth_subject, { max: 300 })}`)}
+    ${field('Claude identity subject', 'oauth_subject', user.oauth_subject, { max: 300 })}`)}
     <label class="check"><input type="checkbox" name="onboarding_alerts" ${user.onboarding_alerts ? 'checked' : ''}>Receive onboarding alerts</label>
     <div class="actions">${btn('Save account', { type: 'submit', kind: 'primary' })}${user.enabled ? btn('Copy setup link', { action: 'setup-link', data: `data-id="${h(user.id)}"` }) : ''}</div>`)}</details>`).join('')}</div>`;
 }
 
 export function inviteForm() {
   return subjectForm('invite-account', '', `${field('Name', 'name', '', { required: true, max: 100 })}${field('Email', 'email', '', { type: 'email', required: true, max: 254 })}
-    ${select('Role', 'role', roleOptions, 'member')}<div>${btn('Create setup link', { type: 'submit', kind: 'primary' })}</div>`);
+    ${select('Role', 'role', roleOptions, 'member')}${checkboxes('Workspace access','workspaces',[{id:'solutions',name:'Solutions'},{id:'media',name:'Media'},{id:'capital',name:'Capital'}],['solutions'])}${select('Invitation delivery','delivery',[{id:'link',name:'Create shareable link'},{id:'email',name:'Send invitation by email'}],'link')}<div>${btn('Invite person', { type: 'submit', kind: 'primary' })}</div>`);
 }
 
 export function auditRows(rows, zone) {
@@ -394,17 +389,18 @@ export function jobTokenForm(context) {
     ${checkboxes('Or choose specific clients', 'client_ids', context.clients)}<div>${btn('Create credential', { kind: 'primary', type: 'submit' })}</div>`);
 }
 
-export function adminPage(tab, data, context, query, zone, preview) {
+export function adminPage(tab, data, context, query, zone, preview, workspaceSettings) {
   const nav = `<nav class="subnav admin-tabs" aria-label="Admin sections">${adminSections.map(([key, label, glyph]) => `<a href="/admin?tab=${key}"${key === tab ? ' aria-current="page"' : ''}>${icon(glyph)}${label}</a>`).join('')}</nav>`;
   let content;
   if (tab === 'audit') content = `<form class="filters" data-form="filter">${hidden('tab', 'audit')}
     ${select('User', 'user_id', names(data.users), query.get('user_id'), 'All actors')}${field('Action', 'action', query.get('action'), { placeholder: 'e.g. card.stage_changed', max: 100 })}
     <div class="actions">${btn('Apply filters', { type: 'submit' })}</div></form>
     <section class="panel flush"><div id="audit-list">${data.items.length ? auditRows(data.items, zone) : emptyState('No matching audit events.')}</div>${pageMore('more-audit', data.next)}</section>`;
+  else if (tab === 'operations') content = workspaceSettings;
   else if (tab === 'import') content = `<div class="stack"><section class="panel stack"><div><h2>Seed existing records</h2><p class="muted">Preview a version 1 JSON export, review its counts, then apply it.</p></div>
     ${subjectForm('preview-import', '', `<label class="field"><span>JSON export</span><input type="file" name="file" accept=".json,application/json" required></label><div>${btn('Preview import', { kind: 'primary', type: 'submit', glyph: 'upload' })}</div>`)}</section>${importPreview(preview)}</div>`;
   else if (tab === 'mcp') content = `<div class="stack"><section class="panel stack"><div class="section-head">${sectionLabel('Claude job credentials', 'lock')}${btn('Create credential', { action: 'new-job', kind: 'primary', glyph: 'plus' })}</div>
     <p class="muted wrap">Endpoint · <code>${h(location.origin)}/mcp</code></p></section><div class="panel flush">${tokenList(data.items, context, zone)}</div></div>`;
-  else content = `<div class="stack"><div class="section-head">${sectionLabel('Team accounts', 'team')}${btn('Invite user', { action: 'invite-account', glyph: 'plus', kind: 'primary' })}</div>${accountList(data.items)}</div>`;
-  return `${heading('Admin', 'Manage accounts, activity, and workspace access.', '', { art: 'workspace-controls' })}${nav}${content}`;
+  else content = `<div class="stack"><div class="section-head">${sectionLabel('Team accounts', 'team')}${btn('Invite people', { action: 'invite-account', glyph: 'plus', kind: 'primary' })}</div>${accountList(data.items)}</div>`;
+  return `${heading('Settings', 'Manage your team, workspace access and email delivery.', '', { art: 'workspace-controls' })}${nav}${content}`;
 }

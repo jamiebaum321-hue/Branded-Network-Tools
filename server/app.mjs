@@ -1,10 +1,15 @@
 import { createServer } from 'node:http';
+import { profile, saveProfile, changePassword } from './accounts.mjs';
+import { registerSolutionRoutes } from './solution-routes.mjs';
+import { registerWorkspaceRoutes } from './workspace-routes.mjs';
+import { workspaceLines } from './engagements.mjs';
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { AppError, audit, clientScope } from './store.mjs';
 import { auditPage, changeAccount, createJobToken, finishSetup, inviteAccount, listAccounts, listJobTokens, rateLimit,
   resetAccount, revokeJobToken, sessionUser, setupInfo, signIn, signOut } from './accounts.mjs';
-import { clientDetail, copyFormLink, createClient, getSubmission, listClients, listSubmissions, publicForm,
+import { ready as mailReady } from './mail.mjs';
+import { clientDetail, queueIntakeEmail, copyFormLink, createClient, getSubmission, listClients, listSubmissions, publicForm,
   revokeFormLinks, saveIntake, submitIntake, updateClient } from './clients.mjs';
 import { acknowledgeToday, metrics, today } from './dashboard.mjs';
 import { alerts, seeAlerts } from './events.mjs';
@@ -19,6 +24,16 @@ import { assertWebOrigin, empty, json, protect, readJson, readSession, sessionCo
 const assets = new Map(Object.entries({
   '/styles.css': ['styles.css', 'text/css; charset=utf-8'],
   '/app.mjs': ['app.mjs', 'text/javascript; charset=utf-8'],
+  '/workspace.mjs': ['workspace.mjs', 'text/javascript; charset=utf-8'],
+  '/business-lines.mjs': ['business-lines.mjs', 'text/javascript; charset=utf-8'],
+  '/pipeline-editor.mjs': ['pipeline-editor.mjs','text/javascript; charset=utf-8'],
+  '/sales-summary.mjs': ['sales-summary.mjs','text/javascript; charset=utf-8'],
+  '/project-views.mjs': ['project-views.mjs','text/javascript; charset=utf-8'],
+  '/studio.css': ['studio.css','text/css; charset=utf-8'],
+  '/solution-ui.mjs': ['solution-ui.mjs', 'text/javascript; charset=utf-8'],
+  '/solution-model.mjs': ['solution-model.mjs', 'text/javascript; charset=utf-8'],
+  '/solutions.css': ['solutions.css', 'text/css; charset=utf-8'],
+  '/workspace.css': ['workspace.css', 'text/css; charset=utf-8'],
   '/ui.mjs': ['ui.mjs', 'text/javascript; charset=utf-8'],
   '/views.mjs': ['views.mjs', 'text/javascript; charset=utf-8'],
   '/intake-fields.mjs': ['intake-fields.mjs', 'text/javascript; charset=utf-8'],
@@ -29,6 +44,7 @@ const assets = new Map(Object.entries({
   '/assets/type/plus-jakarta-sans-latin.woff2': ['assets/type/plus-jakarta-sans-latin.woff2', 'font/woff2'],
 }));
 const imageAssets = [
+  ...['desk-bell','room-key','field-notes','correspondence'].flatMap(name=>[['artwork/'+name+'.svg','image/svg+xml'],['artwork/'+name+'.png','image/png']]),
   ...['favicon-32', 'favicon-48', 'apple-touch-icon', 'social-share', 'network-touch'].map(name => [`brand/${name}.png`, 'image/png']),
   ...['focus-rings', 'iris-dot-grid', 'connection-ribbon'].map(name => [`accents/${name}.png`, 'image/png']),
   ...['today', 'pipeline', 'clients', 'settings', 'metrics', 'suggested-leads']
@@ -41,7 +57,7 @@ const imageAssets = [
     .map(name => [`artwork/${name}.webp`, 'image/webp']),
 ];
 for (const [path, type] of imageAssets) assets.set(`/assets/${path}`, [`assets/${path}`, type]);
-const shellPath = /^(?:\/|\/today|\/signin|\/pipeline(?:\/(?:metrics|cards\/[\w-]+|suggestions(?:\/[\w-]+)?))?|\/clients(?:\/[\w-]+(?:\/submissions\/[\w-]+)?)?|\/admin|\/setup\/[\w-]+|\/onboard\/[\w.-]+)$/;
+const shellPath = /^(?:\/|\/work(?:\/(?:solutions|media|capital)(?:\/[\w-]+)?)?|\/inquire\/[\w-]+|\/projects|\/profile|\/operations|\/today|\/signin|\/pipeline(?:\/(?:metrics|cards\/[\w-]+|suggestions(?:\/[\w-]+)?))?|\/clients(?:\/[\w-]+(?:\/submissions\/[\w-]+)?)?|\/admin|\/setup\/[\w-]+|\/onboard\/[\w.-]+)$/;
 const ident = '([a-zA-Z0-9_-]{1,80})';
 const options = { public: true };
 
@@ -62,10 +78,10 @@ function boardQuery(url) {
 }
 
 function visibleOwners(store, actor) {
-  if (actor.role === 'admin') return store.all('SELECT id,name,enabled FROM users ORDER BY name');
+  if (actor.role === 'admin') return store.all('SELECT id,name,enabled,role FROM users ORDER BY name');
   const [where, args] = clientScope(actor, 'c.id');
   return store.all(`WITH accessible AS (SELECT c.id,c.owner_id FROM clients c WHERE ${where})
-    SELECT DISTINCT u.id,u.name,u.enabled FROM users u WHERE u.id=? OR u.id IN (
+    SELECT DISTINCT u.id,u.name,u.enabled,u.role FROM users u WHERE u.id=? OR u.id IN (
       SELECT owner_id FROM accessible UNION SELECT m.user_id FROM client_members m JOIN accessible a ON a.id=m.client_id
       UNION SELECT p.owner_id FROM cards p JOIN accessible a ON a.id=p.client_id) ORDER BY u.name`, ...args, actor.id);
 }
@@ -73,6 +89,8 @@ function visibleOwners(store, actor) {
 export function createApp(store, config) {
   const routes = [];
   const route = (method, path, handle, policy = {}) => routes.push({ method, regex: new RegExp(`^${path}$`), handle, policy });
+  registerWorkspaceRoutes(route,store,config);
+  registerSolutionRoutes(route,store,config);
   const staticFiles = new Map([...assets].map(([path, [name, type]]) => [path, {
     bytes: readFileSync(new URL(`../public/${name}`, import.meta.url)), type,
   }]));
@@ -80,12 +98,16 @@ export function createApp(store, config) {
   const shareImage = new URL('/assets/brand/social-share.png', config.origin).href;
   const shell = { bytes: Buffer.from(shellTemplate.replace('{{SHARE_IMAGE_URL}}', shareImage)), type: 'text/html; charset=utf-8' };
 
+  route('GET','/api/profile',({actor})=>profile(store,actor));
+  route('PATCH','/api/profile',({actor,data})=>saveProfile(store,actor,data));
+  route('POST','/api/profile/password',({actor,session,data,ip})=>changePassword(store,actor,session,data,ip));
   route('GET', '/api/health', () => ({ ok: store.get('SELECT 1 AS ok').ok === 1 }), options);
-  route('GET', '/api/session', ({ actor }) => ({ user: actor, demo: config.demo, time_zone: config.timeZone }), options);
+  const sessionInfo=actor=>actor?{...actor,workspaces:workspaceLines(store,actor)}:null;
+  route('GET', '/api/session', ({ actor }) => ({ user: sessionInfo(actor), demo: config.demo, time_zone: config.timeZone }), options);
   route('POST', '/api/session', async ({ res, data, ip, session }) => {
     const auth = await signIn(store, data, ip, session);
     res.setHeader('Set-Cookie', sessionCookie(config, auth.value, auth.maxAge));
-    return { user: auth.user };
+    return { user: sessionInfo(auth.user) };
   }, options);
   route('POST', '/api/session/logout', ({ res, actor, session }) => {
     signOut(store, actor, session);
@@ -99,7 +121,7 @@ export function createApp(store, config) {
   route('POST', '/api/setup/([\\w-]{43})', async ({ ids, data, ip, res }) => {
     const auth = await finishSetup(store, ids[0], data?.password, ip);
     res.setHeader('Set-Cookie', sessionCookie(config, auth.value, auth.maxAge));
-    return { user: auth.user };
+    return { user: sessionInfo(auth.user) };
   }, options);
 
   route('GET', '/api/context', ({ actor }) => ({ clients: listClients(store, actor, { limit: 500 }).items, owners: visibleOwners(store, actor) }));
@@ -143,16 +165,23 @@ export function createApp(store, config) {
 
   route('GET', '/api/clients', ({ actor, url }) => listClients(store, actor, { ...pageQuery(url), q: selectQuery(url, 'q') }));
   route('POST', '/api/clients', ({ actor, data }) => ({ client: createClient(store, actor, data) }));
-  route('GET', `/api/clients/${ident}`, ({ actor, ids }) => clientDetail(store, actor, ids[0]));
+  route('GET', `/api/clients/${ident}`, ({ actor, ids }) => ({...clientDetail(store,actor,ids[0]),intake_email_ready:mailReady(config)}));
   route('PATCH', `/api/clients/${ident}`, ({ actor, ids, data }) => ({ client: updateClient(store, actor, ids[0], data) }));
   route('POST', `/api/clients/${ident}/form-link`, ({ actor, ids }) => copyFormLink(store, actor, ids[0], config.linkSecret));
+  route('POST', `/api/clients/${ident}/form-link/email`,({actor,ids,data})=>queueIntakeEmail(store,actor,ids[0],data,config,mailReady(config)));
   route('POST', `/api/clients/${ident}/form-link/revoke`, ({ actor, ids }) => revokeFormLinks(store, actor, ids[0]));
   route('GET', `/api/clients/${ident}/submissions`, ({ actor, ids, url }) => listSubmissions(store, actor, ids[0],
     { before: boundedInt(url.searchParams.get('before'), undefined, Number.MAX_SAFE_INTEGER) }));
-  route('GET', `/api/clients/${ident}/submissions/${ident}`, ({ actor, ids }) => {
+  route('GET', `/api/clients/${ident}/submissions/${ident}`, ({ actor, ids, url }) => {
     const result = getSubmission(store, actor, ...ids);
     audit(store, actor, 'intake.viewed', 'submission', result.id, result.client_id);
-    return { submission: result };
+    const previous=url.searchParams.get('compare')==='1' && store.get('SELECT id FROM submissions WHERE client_id=? AND version<? ORDER BY version DESC LIMIT 1',ids[0],result.version);
+    if(!previous) return {submission:result};
+    const unmatched=(from,to)=>store.all(`SELECT f.name,f.purpose FROM attachments f WHERE f.submission_id=? AND NOT EXISTS
+      (SELECT 1 FROM attachments other WHERE other.submission_id=? AND other.name=f.name AND other.purpose=f.purpose
+      AND other.mime=f.mime AND length(other.bytes)=length(f.bytes) AND other.bytes=f.bytes) ORDER BY f.name,f.id`,from,to);
+    return {submission:result,previous:getSubmission(store,actor,ids[0],previous.id),
+      file_changes:{removed:unmatched(previous.id,result.id),added:unmatched(result.id,previous.id)}};
   });
   route('GET', `/api/clients/${ident}/submissions/${ident}/pdf`, async ({ actor, ids, res }) => {
     const result = getSubmission(store, actor, ...ids);
@@ -173,11 +202,11 @@ export function createApp(store, config) {
   }, options);
   route('POST', '/api/onboard/([\\w.-]{80})/submit', ({ ids, data, ip }) => {
     rateLimit(store, `form-submit:${ip}`, 40, 900000);
-    return { submission: submitIntake(store, ids[0], data, config.linkSecret) };
+    return { submission: submitIntake(store, ids[0], data, config.linkSecret,config) };
   }, options);
 
   route('GET', '/api/admin/accounts', ({ actor }) => ({ items: listAccounts(store, actor) }));
-  route('POST', '/api/admin/accounts', ({ actor, data }) => inviteAccount(store, actor, data));
+  route('POST', '/api/admin/accounts', ({ actor, data }) => inviteAccount(store, actor, data, config));
   route('PATCH', `/api/admin/accounts/${ident}`, ({ actor, ids, data }) => ({ user: changeAccount(store, actor, ids[0], data) }));
   route('POST', `/api/admin/accounts/${ident}/setup`, ({ actor, ids }) => ({ setup: resetAccount(store, actor, ids[0]) }));
   route('GET', '/api/admin/job-tokens', ({ actor }) => ({ items: listJobTokens(store, actor) }));

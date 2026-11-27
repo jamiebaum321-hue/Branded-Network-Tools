@@ -1,5 +1,7 @@
 import { scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
+import { invitationToken } from './invite-link.mjs';
+import { ready as mailReady } from './mail.mjs';
 import { AppError, audit, clientFor, digest, id, iso, requireAdmin, system, token } from './store.mjs';
 import { bool, choice, email, int, list, object, str, validate } from './validation.mjs';
 
@@ -36,8 +38,7 @@ export function rateLimit(store, key, limit, windowMs) {
   if (row.attempts > limit) throw new AppError(429, 'Too many attempts. Try again shortly.');
 }
 
-function issueSetup(store, userId) {
-  const value = token();
+function issueSetup(store, userId, value = token()) {
   const expiresAt = Date.now() + setupMs;
   store.run('DELETE FROM setup_tokens WHERE user_id=?', userId);
   store.run('INSERT INTO setup_tokens VALUES(?,?,?)', digest(value), userId, expiresAt);
@@ -66,16 +67,24 @@ export function listAccounts(store, actor) {
   return store.all(`SELECT ${fields} FROM users ORDER BY name COLLATE NOCASE, id`);
 }
 
-export function inviteAccount(store, actor, input) {
+export function inviteAccount(store, actor, input, config = {}) {
   requireAdmin(actor);
-  const data = validate(object({ name: str(100), email: str(254), role: choice('admin', 'member') }), input);
+  const data = validate(object({ name:str(100), email:str(254), role:choice('admin','member'),
+    workspaces:list(choice('solutions','media','capital'),3), delivery:choice('link','email') }, ['name','email','role']),input);
+  if (data.delivery==='email' && !mailReady(config)) throw new AppError(409,'Connect Microsoft 365 in settings or choose a shareable link.');
   data.email = email(data.email);
   return store.tx(() => {
     if (store.get('SELECT 1 FROM users WHERE email=?', data.email)) throw new AppError(409, 'An account already uses that email.');
     const userId = id();
     store.run('INSERT INTO users(id,name,email,role,created_at) VALUES(?,?,?,?,?)', userId, data.name, data.email, data.role, iso());
     audit(store, actor, 'account.invited', 'user', userId, null, { role: data.role });
-    return { user: userRow(store, userId), setup: issueSetup(store, userId) };
+    for (const line of new Set(data.workspaces ?? ['solutions'])) store.run('INSERT OR IGNORE INTO workspace_members VALUES(?,?)',userId,line);
+    const mailId=id();
+    const setup=issueSetup(store,userId,data.delivery==='email'?invitationToken(config.linkSecret,mailId):token());
+    if (data.delivery==='email') store.run(`INSERT INTO dispatches(id,dedupe_key,kind,recipient,subject,body,created_at) VALUES(?,?,'team_invite',?,?,?,?)`,
+      mailId,'invite:'+mailId,data.email,'Your invitation to Branded Network',
+      actor.name+' invited you to Branded Network. Use this link within 24 hours to set your password and sign in.',iso());
+    return {user:userRow(store,userId),setup,delivery:data.delivery==='email'?'queued':'link'};
   });
 }
 
@@ -98,7 +107,7 @@ export function changeAccount(store, actor, userId, input) {
       throw new AppError(409, 'That OAuth subject is already assigned.');
     }
     const alerts = data.onboarding_alerts === undefined ? user.onboarding_alerts : Number(data.onboarding_alerts);
-    store.run('UPDATE users SET name=?,role=?,enabled=?,oauth_subject=?,onboarding_alerts=? WHERE id=?',
+    store.run('UPDATE users SET name=?,role=?,enabled=?,oauth_subject=?,onboarding_alerts=?,profile_version=profile_version+1 WHERE id=?',
       data.name ?? user.name, role, enabled, subject, alerts, userId);
     if (!enabled) {
       store.run('DELETE FROM sessions WHERE user_id=?', userId);
@@ -184,6 +193,32 @@ export function signOut(store, actor, value) {
   });
 }
 
+export function profile(s,a) {
+  return s.get('SELECT id,name,email,role,job_title,phone,bio,onboarding_alerts,profile_version FROM users WHERE id=? AND enabled=1',a.id);
+}
+export function saveProfile(s,a,input) {
+  const d=validate(object({name:str(100),job_title:str(150,0),phone:str(70,0),bio:str(1500,0),onboarding_alerts:bool,version:int(1,2147483647)}),input);
+  return s.tx(()=>{
+    if (!s.run('UPDATE users SET name=?,job_title=?,phone=?,bio=?,onboarding_alerts=?,profile_version=profile_version+1 WHERE id=? AND profile_version=?',
+      d.name,d.job_title,d.phone,d.bio,Number(d.onboarding_alerts),a.id,d.version).changes) throw new AppError(409,'Your profile changed. Refresh before saving.');
+    audit(s,a,'profile.updated','user',a.id);
+    return profile(s,a);
+  });
+}
+export async function changePassword(s,a,session,input,ip) {
+  const d=validate(object({current:str(256),password:str(256,12)}),input);
+  rateLimit(s,'profile-password:'+a.id+':'+ip,10,900000);
+  const old=s.get('SELECT password_hash FROM users WHERE id=?',a.id)?.password_hash;
+  if (!await matchesPassword(d.current,old)) throw new AppError(400,'The current password is incorrect.');
+  const next=await hashPassword(d.password);
+  return s.tx(()=>{
+    if (!s.run('UPDATE users SET password_hash=? WHERE id=? AND enabled=1 AND password_hash=?',next,a.id,old).changes) throw new AppError(409,'Sign in again before changing your password.');
+    s.run('DELETE FROM sessions WHERE user_id=? AND token_hash<>?',a.id,digest(session));
+    s.run('DELETE FROM setup_tokens WHERE user_id=?',a.id);
+    audit(s,a,'profile.password_changed','user',a.id);
+    return {ok:true};
+  });
+}
 export function listJobTokens(store, actor) {
   requireAdmin(actor);
   return store.all(`SELECT id,label,all_clients,created_at,expires_at,revoked_at,
@@ -251,5 +286,6 @@ export function cleanExpired(store) {
     store.run('DELETE FROM setup_tokens WHERE expires_at<=?', now);
     store.run('DELETE FROM rate_limits WHERE expires_at<=?', now);
     store.run("UPDATE form_links SET draft='{}' WHERE expires_at<=? AND draft<>'{}'", now);
+    store.run('DELETE FROM attachments WHERE submission_id IS NULL AND form_key IN (SELECT token_hash FROM form_links WHERE expires_at<=? OR revoked=1)',now);
   });
 }
